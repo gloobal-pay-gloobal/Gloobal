@@ -1,5 +1,5 @@
 {
-  "name": "glooble-frontend",
+  "name": "gloobal-frontend",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -29,3 +29,4 @@
     "vite": "^8.0.12"
   }
 }
+
