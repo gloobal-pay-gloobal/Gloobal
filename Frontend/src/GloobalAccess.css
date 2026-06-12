@@ -1,0 +1,129 @@
+/* GloobalAccess.css */
+.ga-wrapper {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #f4f5f7; /* Light background */
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.ga-card {
+  background-color: #e8eaed; /* The slightly darker card color */
+  width: 420px;
+  padding: 32px;
+  border-radius: 16px;
+  border: 1px solid #d1d5db;
+}
+
+.ga-title {
+  text-align: center;
+  color: #4b5563;
+  letter-spacing: 2px;
+  font-weight: 600;
+  margin-top: 0;
+  margin-bottom: 24px;
+  text-transform: uppercase;
+  font-size: 16px;
+}
+
+.ga-input {
+  width: 100%;
+  padding: 12px 16px;
+  background-color: transparent;
+  border: 1px solid #b0b8c4;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  box-sizing: border-box;
+  color: #1f2937;
+}
+
+.ga-id-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #4b5563;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.ga-display-box {
+  background-color: rgba(255, 255, 255, 0.3);
+  border: 1px solid #b0b8c4;
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.ga-symbols {
+  flex: 1;
+  text-align: center;
+  letter-spacing: 4px;
+  font-size: 20px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.ga-hide-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 20px;
+}
+
+.ga-keypad-container {
+  border: 1px solid #b0b8c4;
+  padding: 16px;
+  border-radius: 12px;
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.ga-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.ga-btn {
+  height: 48px;
+  background-color: #f3f4f6;
+  border: 1px solid #b0b8c4;
+  border-radius: 6px;
+  font-size: 20px;
+  font-weight: bold;
+  cursor: pointer;
+  color: #1f2937;
+}
+
+.ga-btn:hover { background-color: #ffffff; }
+
+.ga-btn-del {
+  background-color: #fee2e2; /* Light red */
+  color: #ef4444;
+  border-color: #fca5a5;
+}
+
+.ga-btn-phi {
+  background-color: #cbd5e1; /* Grey */
+  border-color: #94a3b8;
+}
+
+.ga-btn-submit {
+  background-color: #9ca3af; /* Darker Grey */
+  color: white;
+  border-color: #6b7280;
+  grid-column: span 2; /* Makes it wide */
+  font-size: 24px;
+}
+
+.ga-footer {
+  text-align: center;
+  margin-top: 24px;
+  font-size: 13px;
+  color: #4b5563;
+  font-weight: 500;
+}
+
