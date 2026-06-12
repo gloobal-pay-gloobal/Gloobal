@@ -30,7 +30,7 @@ export default function GloobalRegistration() {
 
   try {
     // 1. Save data to your secure Web2 Database
-    const response = await axios.post('http://127.0.0.1:5000/api/register', {
+    const response = await axios.post('https://gloobal-pay.onrender.com/api/register', {
       secureId: secureId,
       documentedName: "Test User", // Replace with an input field value if you have one
       pin: "1234",                // The PIN configured during setup
@@ -145,4 +145,5 @@ export default function GloobalRegistration() {
     </div>
   );
 }
+
 

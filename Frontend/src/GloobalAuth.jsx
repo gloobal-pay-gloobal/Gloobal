@@ -48,7 +48,7 @@ export default function GloobalAuth({ symbolId, onSuccess }) {
     setStatus("Verifying security matrix...");
     try {
       // 1. Try to talk to your local backend server
-      const response = await axios.post('http://localhost:5000/api/login', {
+      const response = await axios.post('https://gloobal-pay.onrender.com/api/login', {
         secureId: enteredSymbols.join(''),
         pin: completedPin
       });
@@ -199,4 +199,5 @@ export default function GloobalAuth({ symbolId, onSuccess }) {
     </div>
   );
 }
+
 

@@ -27,8 +27,8 @@ export default function GloobalAccess({ onComplete }) {
       };
       
       try {
-        // 1. Send the data to your local server running on port 5000
-        await axios.post('http://localhost:5000/api/register-symbol', userData);
+        // 1. Send the data to your deployed backend server
+        await axios.post('https://gloobal-pay.onrender.com/api/register-symbol', userData);
         
         // 2. If backend saves successfully, show the welcome animation
         setRegisteredUser(userData);
@@ -40,7 +40,7 @@ export default function GloobalAccess({ onComplete }) {
 
       } catch (err) {
         console.error("Registration saving error:", err);
-        alert(err.response?.data?.message || "Could not connect to local server. Make sure node server.js is running!");
+        alert(err.response?.data?.message || "Could not connect to server. Please try again.");
       }
 
     } else {
@@ -129,5 +129,7 @@ export default function GloobalAccess({ onComplete }) {
     </div>
   );
 }
+
+
 
 
