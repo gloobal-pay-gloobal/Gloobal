@@ -1,30 +1,69 @@
 /* GloobalAccess.css */
+
 .ga-wrapper {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #f4f5f7; /* Light background */
-  font-family: system-ui, -apple-system, sans-serif;
+  background-color: #f4f5f7;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 20px;
+  box-sizing: border-box;
 }
 
 .ga-card {
-  background-color: #e8eaed; /* The slightly darker card color */
+  background-color: #e8eaed;
   width: 420px;
-  padding: 32px;
-  border-radius: 16px;
+  max-width: 100%;
+  padding: 28px 26px;
+  border-radius: 18px;
   border: 1px solid #d1d5db;
+  box-sizing: border-box;
+}
+
+.ga-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.ga-logo-circle {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background-color: #ffffff;
+  border: 1px solid #d1d5db;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.ga-logo-img {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  display: block;
 }
 
 .ga-title {
   text-align: center;
   color: #4b5563;
   letter-spacing: 2px;
-  font-weight: 600;
-  margin-top: 0;
-  margin-bottom: 24px;
+  font-weight: 700;
+  margin: 0;
   text-transform: uppercase;
-  font-size: 16px;
+  font-size: 15px;
+}
+
+.ga-brand-tagline {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #4b5563;
+  font-weight: 500;
 }
 
 .ga-input {
@@ -32,11 +71,17 @@
   padding: 12px 16px;
   background-color: transparent;
   border: 1px solid #b0b8c4;
-  border-radius: 6px;
+  border-radius: 7px;
   margin-bottom: 16px;
   font-size: 14px;
   box-sizing: border-box;
   color: #1f2937;
+  outline: none;
+}
+
+.ga-input:focus {
+  border-color: #64748b;
+  background-color: rgba(255, 255, 255, 0.25);
 }
 
 .ga-id-header {
@@ -51,34 +96,54 @@
 .ga-display-box {
   background-color: rgba(255, 255, 255, 0.3);
   border: 1px solid #b0b8c4;
-  border-radius: 6px;
+  border-radius: 7px;
   padding: 12px;
   display: flex;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.ga-display-box:focus {
+  outline: 2px solid rgba(100, 116, 139, 0.25);
 }
 
 .ga-symbols {
   flex: 1;
   text-align: center;
   letter-spacing: 4px;
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 700;
   color: #111827;
+  min-height: 24px;
+  overflow-wrap: anywhere;
+}
+
+.ga-empty-slot {
+  color: #64748b;
 }
 
 .ga-hide-btn {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 20px;
+  font-size: 19px;
+  padding: 0 0 0 10px;
+}
+
+.ga-keyboard-hint {
+  margin: 0 0 14px 0;
+  text-align: center;
+  color: #64748b;
+  font-size: 11px;
 }
 
 .ga-keypad-container {
   border: 1px solid #b0b8c4;
-  padding: 16px;
-  border-radius: 12px;
-  background-color: rgba(255, 255, 255, 0.1);
+  padding: 14px;
+  border-radius: 13px;
+  background-color: rgba(255, 255, 255, 0.12);
+  margin-top: 2px;
 }
 
 .ga-grid {
@@ -88,42 +153,120 @@
 }
 
 .ga-btn {
-  height: 48px;
+  height: 46px;
   background-color: #f3f4f6;
   border: 1px solid #b0b8c4;
-  border-radius: 6px;
-  font-size: 20px;
-  font-weight: bold;
+  border-radius: 7px;
+  font-size: 19px;
+  font-weight: 700;
   cursor: pointer;
   color: #1f2937;
 }
 
-.ga-btn:hover { background-color: #ffffff; }
+.ga-btn:hover {
+  background-color: #ffffff;
+}
+
+.ga-btn:active {
+  transform: scale(0.98);
+}
 
 .ga-btn-del {
-  background-color: #fee2e2; /* Light red */
-  color: #ef4444;
+  background-color: #fee2e2;
+  color: #dc2626;
   border-color: #fca5a5;
 }
 
 .ga-btn-phi {
-  background-color: #cbd5e1; /* Grey */
+  background-color: #cbd5e1;
   border-color: #94a3b8;
 }
 
 .ga-btn-submit {
-  background-color: #9ca3af; /* Darker Grey */
+  background-color: #9ca3af;
   color: white;
   border-color: #6b7280;
-  grid-column: span 2; /* Makes it wide */
-  font-size: 24px;
+  grid-column: span 2;
+  font-size: 23px;
 }
 
 .ga-footer {
   text-align: center;
-  margin-top: 24px;
+  margin-top: 22px;
   font-size: 13px;
   color: #4b5563;
   font-weight: 500;
 }
 
+.ga-welcome-view {
+  text-align: center;
+  padding: 24px 0;
+}
+
+.ga-welcome-avatar {
+  font-size: 42px;
+  margin-bottom: 12px;
+}
+
+.ga-welcome-name {
+  color: #1f2937;
+  font-size: 20px;
+  margin: 0 0 8px 0;
+}
+
+.ga-subtitle {
+  color: #64748b;
+  font-size: 13px;
+  margin: 0 0 18px 0;
+  overflow-wrap: anywhere;
+}
+
+.ga-welcome-status {
+  display: inline-block;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background-color: rgba(34, 197, 94, 0.12);
+  color: #15803d;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ga-welcome-footer {
+  margin-top: 40px;
+}
+
+@media (max-width: 480px) {
+  .ga-wrapper {
+    align-items: flex-start;
+    padding-top: 28px;
+  }
+
+  .ga-card {
+    width: 100%;
+    padding: 24px 18px;
+  }
+
+  .ga-logo-circle {
+    width: 62px;
+    height: 62px;
+  }
+
+  .ga-logo-img {
+    width: 45px;
+    height: 45px;
+  }
+
+  .ga-title {
+    font-size: 14px;
+  }
+
+  .ga-symbols {
+    font-size: 17px;
+    letter-spacing: 3px;
+  }
+
+  .ga-btn {
+    height: 44px;
+    font-size: 18px;
+  }
+}
