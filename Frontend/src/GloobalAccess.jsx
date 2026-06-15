@@ -23,7 +23,7 @@ export default function GloobalAccess({ onComplete }) {
   };
 
   const handleSubmit = async () => {
-    if (symbols.length > 0 && name.trim() !== '') {
+    if (symbols.length === 12 && name.trim() !== '') {
       const userData = {
         symbolId: symbols.join(''),
         fullName: name.trim(),
@@ -31,7 +31,7 @@ export default function GloobalAccess({ onComplete }) {
       };
 
       try {
-        await axios.post('https://gloobal-pay.onrender.com/api/register-symbol', userData);
+        const response = await axios.post('https://gloobal-pay.onrender.com/api/register-symbol', userData);
 
         setRegisteredUser(userData);
 
@@ -43,7 +43,7 @@ export default function GloobalAccess({ onComplete }) {
         alert(err.response?.data?.message || "Could not connect to server. Please try again.");
       }
     } else {
-      alert("Please enter your Documented Name and at least 1 symbol.");
+      alert("Please enter your Documented Name and complete all 12 symbols.");
     }
   };
 
