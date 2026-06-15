@@ -1,32 +1,66 @@
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
-  fullName: { 
-    type: String, 
-    required: true 
+  fullName: {
+    type: String,
+    required: true
   },
-  symbolId: { 
-    type: String, 
-    required: true, 
-    unique: true 
+  symbolId: {
+    type: String,
+    required: true,
+    unique: true
   },
   // The direct person who invited them
-  referredBy: { 
-    type: String, 
-    default: null 
+  referredBy: {
+    type: String,
+    default: null
   },
   // NEW: The complete history of who invited who [Parent, Grandparent, Great-Grandparent]
-  referralChain: { 
-    type: Array, 
-    default: [] 
+  referralChain: {
+    type: Array,
+    default: []
   },
-  referralCount: { 
-    type: Number, 
-    default: 0 
+  referralCount: {
+    type: Number,
+    default: 0
   },
-  createdAt: { 
-    type: Date, 
-    default: Date.now 
+  passkeys: [{
+    id: {
+      type: String,
+      required: true
+    },
+    publicKey: {
+      type: Buffer,
+      required: true
+    },
+    counter: {
+      type: Number,
+      default: 0
+    },
+    transports: {
+      type: [String],
+      default: []
+    },
+    deviceType: {
+      type: String,
+      default: null
+    },
+    backedUp: {
+      type: Boolean,
+      default: false
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  currentChallenge: {
+    type: String,
+    default: null
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
   }
 });
 

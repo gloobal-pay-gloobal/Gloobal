@@ -123,6 +123,225 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+
+
+// --- 3. DEVICE AUTHENTICATION PROTOTYPE ---
+app.post('/api/passkey/register/options', async (req, res) => {
+  try {
+    const { symbolId } = req.body;
+
+    if (!symbolId) {
+      return res.status(400).json({ message: 'Secure ID is required.' });
+    }
+
+    const user = await User.findOne({ symbolId });
+
+    if (!user) {
+      return res.status(404).json({ message: 'Secure ID not found.' });
+    }
+
+    const {
+      generateRegistrationOptions
+    } = await getWebAuthnServer();
+
+    const { rpName, rpID } = getWebAuthnConfig(req);
+    const existingPasskeys = Array.isArray(user.passkeys) ? user.passkeys : [];
+
+    const options = await generateRegistrationOptions({
+      rpName,
+      rpID,
+      userID: Buffer.from(user.symbolId, 'utf8'),
+      userName: user.symbolId,
+      userDisplayName: user.fullName,
+      attestationType: 'none',
+      excludeCredentials: existingPasskeys.map((passkey) => ({
+        id: passkey.id,
+        transports: passkey.transports || []
+      })),
+      authenticatorSelection: {
+        residentKey: 'preferred',
+        userVerification: 'preferred',
+        authenticatorAttachment: 'platform'
+      }
+    });
+
+    user.currentChallenge = options.challenge;
+    await user.save();
+
+    return res.status(200).json(options);
+  } catch (error) {
+    console.error('Passkey registration options error:', error);
+    return res.status(500).json({ message: 'Could not create passkey registration options.' });
+  }
+});
+
+app.post('/api/passkey/register/verify', async (req, res) => {
+  try {
+    const { symbolId, response } = req.body;
+
+    if (!symbolId || !response) {
+      return res.status(400).json({ message: 'Secure ID and device response are required.' });
+    }
+
+    const user = await User.findOne({ symbolId });
+
+    if (!user || !user.currentChallenge) {
+      return res.status(400).json({ message: 'Passkey registration was not started.' });
+    }
+
+    const {
+      verifyRegistrationResponse
+    } = await getWebAuthnServer();
+
+    const { rpID, origin } = getWebAuthnConfig(req);
+
+    const verification = await verifyRegistrationResponse({
+      response,
+      expectedChallenge: user.currentChallenge,
+      expectedOrigin: origin,
+      expectedRPID: rpID
+    });
+
+    if (!verification.verified) {
+      return res.status(400).json({ verified: false, message: 'Device authentication setup failed.' });
+    }
+
+    const { registrationInfo } = verification;
+    const { credential, credentialDeviceType, credentialBackedUp } = registrationInfo;
+
+    const passkeys = Array.isArray(user.passkeys) ? user.passkeys : [];
+
+    passkeys.push({
+      id: credential.id,
+      publicKey: Buffer.from(credential.publicKey),
+      counter: credential.counter,
+      transports: credential.transports || response.response?.transports || [],
+      deviceType: credentialDeviceType,
+      backedUp: credentialBackedUp
+    });
+
+    user.passkeys = passkeys;
+    user.currentChallenge = null;
+    await user.save();
+
+    return res.status(200).json({
+      verified: true,
+      message: 'Device authentication enabled.'
+    });
+  } catch (error) {
+    console.error('Passkey registration verify error:', error);
+    return res.status(500).json({ verified: false, message: 'Could not verify device authentication setup.' });
+  }
+});
+
+app.post('/api/passkey/auth/options', async (req, res) => {
+  try {
+    const { symbolId } = req.body;
+
+    if (!symbolId) {
+      return res.status(400).json({ message: 'Secure ID is required.' });
+    }
+
+    const user = await User.findOne({ symbolId });
+
+    if (!user) {
+      return res.status(404).json({ message: 'Secure ID not found.' });
+    }
+
+    const passkeys = Array.isArray(user.passkeys) ? user.passkeys : [];
+
+    if (passkeys.length === 0) {
+      return res.status(404).json({ message: 'No device authentication is registered yet.' });
+    }
+
+    const {
+      generateAuthenticationOptions
+    } = await getWebAuthnServer();
+
+    const { rpID } = getWebAuthnConfig(req);
+
+    const options = await generateAuthenticationOptions({
+      rpID,
+      allowCredentials: passkeys.map((passkey) => ({
+        id: passkey.id,
+        transports: passkey.transports || []
+      })),
+      userVerification: 'preferred'
+    });
+
+    user.currentChallenge = options.challenge;
+    await user.save();
+
+    return res.status(200).json(options);
+  } catch (error) {
+    console.error('Passkey authentication options error:', error);
+    return res.status(500).json({ message: 'Could not create device authentication options.' });
+  }
+});
+
+app.post('/api/passkey/auth/verify', async (req, res) => {
+  try {
+    const { symbolId, response } = req.body;
+
+    if (!symbolId || !response) {
+      return res.status(400).json({ message: 'Secure ID and device response are required.' });
+    }
+
+    const user = await User.findOne({ symbolId });
+
+    if (!user || !user.currentChallenge) {
+      return res.status(400).json({ message: 'Device authentication was not started.' });
+    }
+
+    const passkeys = Array.isArray(user.passkeys) ? user.passkeys : [];
+    const passkey = passkeys.find((item) => item.id === response.id);
+
+    if (!passkey) {
+      return res.status(404).json({ message: 'Registered device was not found.' });
+    }
+
+    const {
+      verifyAuthenticationResponse
+    } = await getWebAuthnServer();
+
+    const { rpID, origin } = getWebAuthnConfig(req);
+
+    const verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge: user.currentChallenge,
+      expectedOrigin: origin,
+      expectedRPID: rpID,
+      credential: {
+        id: passkey.id,
+        publicKey: passkey.publicKey,
+        counter: passkey.counter,
+        transports: passkey.transports || []
+      }
+    });
+
+    if (!verification.verified) {
+      return res.status(400).json({ verified: false, message: 'Device authentication failed.' });
+    }
+
+    passkey.counter = verification.authenticationInfo.newCounter;
+    user.passkeys = passkeys;
+    user.currentChallenge = null;
+    await user.save();
+
+    return res.status(200).json({
+      verified: true,
+      message: 'Device authentication successful.',
+      user: {
+        fullName: user.fullName,
+        symbolId: user.symbolId
+      }
+    });
+  } catch (error) {
+    console.error('Passkey authentication verify error:', error);
+    return res.status(500).json({ verified: false, message: 'Could not verify device authentication.' });
+  }
+});
+
 // --- 4. START SERVER ---
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

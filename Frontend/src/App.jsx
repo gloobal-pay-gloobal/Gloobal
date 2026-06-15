@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import GloobalAccess from './GloobalAccess';
 import GloobalAuth from './GloobalAuth';
 import Dashboard from './Dashboard';
+import DeviceAuth from './DeviceAuth';
 
 export default function App() {
   // Explicitly track which page should be visible: 'register', 'login', or 'dashboard'
@@ -26,7 +27,7 @@ export default function App() {
         <GloobalAuth 
           symbolId={session.symbolId} 
           onSuccess={() => {
-            setCurrentPage('dashboard'); // Instantly switch to scrollable dashboard!
+            setCurrentPage('device-auth'); // Continue to device authentication
           }} 
         />
       )}
