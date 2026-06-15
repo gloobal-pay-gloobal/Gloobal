@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import axios from 'axios';
 
 export default function GloobalAuth({ symbolId, onSuccess }) {
-  const [step, setStep] = useState('id'); // 'id' or 'pin'
-  const [enteredSymbols, setEnteredSymbols] = useState([]); 
+  const initialSymbols = symbolId ? symbolId.split('').slice(0, 12) : [];
+  const [step, setStep] = useState(initialSymbols.length === 12 ? 'pin' : 'id'); // 'id' or 'pin'
+  const [enteredSymbols, setEnteredSymbols] = useState(initialSymbols);
   const [pin, setPin] = useState("");
   const [status, setStatus] = useState("");
   const [isHidden, setIsHidden] = useState(false);
@@ -59,11 +60,11 @@ export default function GloobalAuth({ symbolId, onSuccess }) {
       }
     } catch (error) {
       console.error("Database connection issue:", error);
-      
-      // ➔ DEVELOPMENT BYPASS: If the server is offline or the ID isn't found, 
+
+      // ➔ DEVELOPMENT BYPASS: If the server is offline or the ID isn't found,
       // we print a warning but STILL let you see your dashboard!
       setStatus("⚠️ Database offline. Bypassing login for testing...");
-      
+
       setTimeout(() => {
         onSuccess(); // This forces App.jsx to load your Dashboard!
       }, 1500);
@@ -95,15 +96,15 @@ export default function GloobalAuth({ symbolId, onSuccess }) {
     borderRadius: '50%',
     cursor: 'pointer',
     display: 'flex',
-    alignItems: 'center',      
-    justifyContent: 'center',  
+    alignItems: 'center',
+    justifyContent: 'center',
     margin: '0 auto',
     outline: 'none'
   };
 
   return (
     <div style={{ padding: '30px', maxWidth: '400px', margin: '60px auto', fontFamily: 'sans-serif', background: '#fff', borderRadius: '24px', boxShadow: '0 10px 40px rgba(0,0,0,0.1)', textAlign: 'center' }}>
-      
+
       <h2 style={{ color: '#0f172a', margin: '0 0 10px 0', textTransform: 'uppercase', letterSpacing: '2px', fontSize: '22px', fontWeight: '700' }}>
         Secure Login
       </h2>
@@ -116,7 +117,7 @@ export default function GloobalAuth({ symbolId, onSuccess }) {
         <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#334155', letterSpacing: '1px' }}>
           ID: {renderSymbolSlots()}
         </div>
-        
+
         {/* Toggle View Button for symbols */}
         {step === 'id' && enteredSymbols.length > 0 && (
           <button onClick={() => setIsHidden(!isHidden)} style={{ background: 'none', border: 'none', cursor: 'pointer', marginTop: '4px' }}>
@@ -136,7 +137,7 @@ export default function GloobalAuth({ symbolId, onSuccess }) {
 
       {/* --- KEYPAD GRID CONTAINER --- */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '18px', maxWidth: '260px', margin: '0 auto' }}>
-        
+
         {/* VIEW A: Custom Symbol Keyboard (Step 1) */}
         {step === 'id' && (
           <>
@@ -146,16 +147,16 @@ export default function GloobalAuth({ symbolId, onSuccess }) {
               </button>
             ))}
             <button onClick={() => handleSymbolPress('Φ')} style={roundBtnStyle}>Φ</button>
-            
+
             {/* Back/Reset Option */}
             <button onClick={() => setEnteredSymbols([])} style={{ background: 'none', border: 'none', color: '#64748b', fontWeight: 'bold', cursor: 'pointer' }}>
               Clear
             </button>
             <button onClick={handleBackspace} style={roundBtnStyle}>⌫</button>
-            
+
             {/* Submit Arrow to move to PIN entry */}
-            <button 
-              onClick={() => enteredSymbols.length === 12 ? setStep('pin') : alert('Please enter all 12 symbols')} 
+            <button
+              onClick={() => enteredSymbols.length === 12 ? setStep('pin') : alert('Please enter all 12 symbols')}
               style={{ ...roundBtnStyle, gridColumn: 'span 3', width: '100%', borderRadius: '12px', height: '50px', marginTop: '10px', background: '#0f172a', color: '#fff' }}
             >
               Proceed to PIN ⇆
@@ -171,24 +172,24 @@ export default function GloobalAuth({ symbolId, onSuccess }) {
                 {num}
               </button>
             ))}
-            
+
             {/* Back Button to return to symbol tuning */}
-            <button 
-              onClick={() => { setStep('id'); setPin(""); setStatus(""); }} 
+            <button
+              onClick={() => { setStep('id'); setPin(""); setStatus(""); }}
               style={{ background: 'none', border: 'none', color: '#64748b', fontWeight: 'bold', fontSize: '15px', cursor: 'pointer' }}
             >
               Back
             </button>
-            
+
             <button onClick={() => handlePinPress('0')} style={roundBtnStyle}>0</button>
-            
+
             <button onClick={handleBackspace} style={roundBtnStyle}>
               ☒
             </button>
           </>
         )}
       </div>
-      
+
       {/* --- STATUS MESSAGE FOOTER --- */}
       {status && (
         <p style={{ marginTop: '25px', fontWeight: 'bold', color: status.includes('❌') ? '#ef4444' : (status.includes('⚠️') ? '#d97706' : '#10b981'), fontSize: '15px' }}>

@@ -31,7 +31,14 @@ app.post('/api/register-symbol', async (req, res) => {
     // Ensure the 12-Symbol ID isn't already taken by someone else
     const existingUser = await User.findOne({ symbolId: symbolId });
     if (existingUser) {
-      return res.status(409).json({ message: 'This Secure ID is already registered.' });
+      return res.status(200).json({
+        message: 'This Secure ID is already registered. Continue to login.',
+        alreadyRegistered: true,
+        user: {
+          fullName: existingUser.fullName,
+          symbolId: existingUser.symbolId
+        }
+      });
     }
 
     let validReferrerId = null;
@@ -78,7 +85,45 @@ app.post('/api/register-symbol', async (req, res) => {
 });
 
 
-// --- 3. START SERVER ---
+
+// --- 3. SECURE LOGIN PROTOTYPE ---
+app.post('/api/login', async (req, res) => {
+  try {
+    const { secureId, symbolId, pin } = req.body;
+    const loginSymbolId = secureId || symbolId;
+
+    if (!loginSymbolId || !pin) {
+      return res.status(400).json({ message: 'Secure ID and PIN are required.' });
+    }
+
+    const user = await User.findOne({ symbolId: loginSymbolId });
+
+    if (!user) {
+      return res.status(404).json({ message: 'Secure ID not found.' });
+    }
+
+    const prototypePin = process.env.DEFAULT_LOGIN_PIN || '1234';
+
+    if (String(pin) !== prototypePin) {
+      return res.status(401).json({ message: 'Invalid PIN.' });
+    }
+
+    return res.status(200).json({
+      message: 'Login successful.',
+      user: {
+        fullName: user.fullName,
+        symbolId: user.symbolId,
+        referralCount: user.referralCount,
+        referredBy: user.referredBy
+      }
+    });
+  } catch (error) {
+    console.error('Login Error:', error);
+    return res.status(500).json({ message: 'Server error during login.' });
+  }
+});
+
+// --- 4. START SERVER ---
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
