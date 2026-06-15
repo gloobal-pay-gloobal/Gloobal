@@ -33,6 +33,23 @@ export default function App() {
       )}
 
       {/* 3. LIVE DASHBOARD STEP */}
+      {currentPage === 'device-auth' && (
+
+        <DeviceAuth
+
+          symbolId={session.symbolId}
+
+          onSuccess={() => {
+
+            setCurrentPage('dashboard');
+
+          }}
+
+        />
+
+      )}
+
+
       {currentPage === 'dashboard' && (
         <Dashboard symbolId={session.symbolId} />
       )}
