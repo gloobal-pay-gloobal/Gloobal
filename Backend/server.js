@@ -150,7 +150,7 @@ app.post('/api/passkey/register/options', async (req, res) => {
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
-      userID: Buffer.from(user.symbolId, 'utf8'),
+      userID: new Uint8Array(Buffer.from(user.symbolId, 'utf8')),
       userName: user.symbolId,
       userDisplayName: user.fullName,
       attestationType: 'none',
@@ -171,7 +171,7 @@ app.post('/api/passkey/register/options', async (req, res) => {
     return res.status(200).json(options);
   } catch (error) {
     console.error('Passkey registration options error:', error);
-    return res.status(500).json({ message: 'Could not create passkey registration options.' });
+    return res.status(500).json({ message: `Could not create passkey registration options: ${error.message}` });
   }
 });
 
@@ -230,7 +230,7 @@ app.post('/api/passkey/register/verify', async (req, res) => {
     });
   } catch (error) {
     console.error('Passkey registration verify error:', error);
-    return res.status(500).json({ verified: false, message: 'Could not verify device authentication setup.' });
+    return res.status(500).json({ verified: false, message: `Could not verify device authentication setup: ${error.message}` });
   }
 });
 
@@ -275,7 +275,7 @@ app.post('/api/passkey/auth/options', async (req, res) => {
     return res.status(200).json(options);
   } catch (error) {
     console.error('Passkey authentication options error:', error);
-    return res.status(500).json({ message: 'Could not create device authentication options.' });
+    return res.status(500).json({ message: `Could not create device authentication options: ${error.message}` });
   }
 });
 
@@ -338,7 +338,7 @@ app.post('/api/passkey/auth/verify', async (req, res) => {
     });
   } catch (error) {
     console.error('Passkey authentication verify error:', error);
-    return res.status(500).json({ verified: false, message: 'Could not verify device authentication.' });
+    return res.status(500).json({ verified: false, message: `Could not verify device authentication: ${error.message}` });
   }
 });
 
