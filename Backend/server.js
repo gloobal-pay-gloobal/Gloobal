@@ -125,6 +125,21 @@ app.post('/api/login', async (req, res) => {
 
 
 
+async function getWebAuthnServer() {
+  return await import('@simplewebauthn/server');
+}
+
+function getWebAuthnConfig(req) {
+  const requestOrigin = req.get('origin') || 'https://gloobal.netlify.app';
+  const parsedOrigin = new URL(requestOrigin);
+
+  return {
+    rpName: 'Gloobal Pay',
+    rpID: parsedOrigin.hostname,
+    origin: requestOrigin
+  };
+}
+
 // --- 3. DEVICE AUTHENTICATION PROTOTYPE ---
 app.post('/api/passkey/register/options', async (req, res) => {
   try {
