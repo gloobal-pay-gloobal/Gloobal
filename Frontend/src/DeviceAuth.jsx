@@ -1,20 +1,68 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'https://gloobal-pay.onrender.com';
 
 export default function DeviceAuth({ symbolId, onSuccess }) {
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState('Checking device authentication status...');
   const [busy, setBusy] = useState(false);
+  const [hasPasskey, setHasPasskey] = useState(null);
+  const [profileName, setProfileName] = useState('');
+
+  const cleanSymbolId = String(symbolId || '').trim();
+
+  const checkPasskeyStatus = async () => {
+    if (!cleanSymbolId) {
+      setStatus('Secure ID is missing.');
+      setHasPasskey(false);
+      return;
+    }
+
+    setBusy(true);
+    setStatus('Checking device authentication status...');
+
+    try {
+      const response = await axios.post(API_BASE + '/api/passkey/status', {
+        symbolId: cleanSymbolId
+      });
+
+      const alreadyHasPasskey = Boolean(response.data?.hasPasskey);
+
+      setHasPasskey(alreadyHasPasskey);
+      setProfileName(response.data?.user?.fullName || '');
+
+      if (alreadyHasPasskey) {
+        setStatus('Device already registered. Verify existing device to continue.');
+      } else {
+        setStatus('No device registered yet. Set up device authentication once.');
+      }
+    } catch (error) {
+      console.error('Could not check passkey status:', error);
+
+      setStatus(
+        error.response?.data?.message ||
+        'Could not check device authentication status.'
+      );
+
+      setHasPasskey(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    checkPasskeyStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cleanSymbolId]);
 
   const setupDeviceAuth = async () => {
     setBusy(true);
-    setStatus('Starting device authentication setup...');
+    setStatus('Starting first-time device authentication setup...');
 
     try {
       const optionsResponse = await axios.post(API_BASE + '/api/passkey/register/options', {
-        symbolId
+        symbolId: cleanSymbolId
       });
 
       const registrationResponse = await startRegistration({
@@ -22,19 +70,36 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
       });
 
       const verifyResponse = await axios.post(API_BASE + '/api/passkey/register/verify', {
-        symbolId,
+        symbolId: cleanSymbolId,
         response: registrationResponse
       });
 
       if (verifyResponse.data?.verified) {
+        setHasPasskey(true);
         setStatus('Device authentication enabled.');
         setTimeout(onSuccess, 900);
       } else {
-        setStatus(verifyResponse.data?.message || 'Device authentication setup failed.');
+        setStatus(
+          verifyResponse.data?.message ||
+          'Device authentication setup failed.'
+        );
       }
     } catch (error) {
       console.error('Device authentication setup failed:', error);
-      setStatus(error.response?.data?.message || error.message || 'Device authentication setup failed.');
+
+      const message =
+        error.response?.data?.message ||
+        error.message ||
+        'Device authentication setup failed.';
+
+      setStatus(message);
+
+      if (
+        error.response?.status === 409 ||
+        message.toLowerCase().includes('already')
+      ) {
+        setHasPasskey(true);
+      }
     } finally {
       setBusy(false);
     }
@@ -46,7 +111,7 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
 
     try {
       const optionsResponse = await axios.post(API_BASE + '/api/passkey/auth/options', {
-        symbolId
+        symbolId: cleanSymbolId
       });
 
       const authenticationResponse = await startAuthentication({
@@ -54,7 +119,7 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
       });
 
       const verifyResponse = await axios.post(API_BASE + '/api/passkey/auth/verify', {
-        symbolId,
+        symbolId: cleanSymbolId,
         response: authenticationResponse
       });
 
@@ -62,14 +127,44 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
         setStatus('Device authentication successful.');
         setTimeout(onSuccess, 700);
       } else {
-        setStatus(verifyResponse.data?.message || 'Device authentication failed.');
+        setStatus(
+          verifyResponse.data?.message ||
+          'Device authentication failed.'
+        );
       }
     } catch (error) {
       console.error('Device authentication failed:', error);
-      setStatus(error.response?.data?.message || error.message || 'Device authentication failed.');
+
+      setStatus(
+        error.response?.data?.message ||
+        error.message ||
+        'Device authentication failed.'
+      );
     } finally {
       setBusy(false);
     }
+  };
+
+  const statusLower = status.toLowerCase();
+
+  const isError =
+    statusLower.includes('failed') ||
+    statusLower.includes('not found') ||
+    statusLower.includes('could not') ||
+    statusLower.includes('missing') ||
+    statusLower.includes('required');
+
+  const primaryButtonStyle = {
+    width: '100%',
+    border: 'none',
+    borderRadius: '14px',
+    padding: '14px',
+    background: '#0f172a',
+    color: '#ffffff',
+    fontSize: '15px',
+    fontWeight: 700,
+    cursor: busy ? 'not-allowed' : 'pointer',
+    marginBottom: '12px'
   };
 
   return (
@@ -121,8 +216,19 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
           fontSize: '14px',
           lineHeight: 1.6
         }}>
-          Use your device security such as fingerprint, face unlock, screen lock, or passkey to protect your Gloobal profile.
+          Passkey uses this phone/browser security. It may use fingerprint,
+          face unlock, screen lock, or device PIN depending on the device.
         </p>
+
+        {profileName && (
+          <p style={{
+            margin: '0 0 12px',
+            color: '#0f172a',
+            fontWeight: 800
+          }}>
+            {profileName}
+          </p>
+        )}
 
         <div style={{
           padding: '12px',
@@ -133,54 +239,68 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
           marginBottom: '18px',
           wordBreak: 'break-all'
         }}>
-          Secure ID: {symbolId}
+          Secure ID: {cleanSymbolId}
         </div>
 
-        <button
-          type="button"
-          onClick={setupDeviceAuth}
-          disabled={busy}
-          style={{
-            width: '100%',
-            border: 'none',
-            borderRadius: '14px',
-            padding: '14px',
-            background: '#0f172a',
-            color: '#ffffff',
-            fontSize: '15px',
-            fontWeight: 700,
-            cursor: busy ? 'not-allowed' : 'pointer',
-            marginBottom: '12px'
-          }}
-        >
-          Set up face / fingerprint
-        </button>
+        {hasPasskey === false && (
+          <button
+            type="button"
+            onClick={setupDeviceAuth}
+            disabled={busy}
+            style={primaryButtonStyle}
+          >
+            Set up face / fingerprint
+          </button>
+        )}
+
+        {hasPasskey === true && (
+          <button
+            type="button"
+            onClick={verifyDeviceAuth}
+            disabled={busy}
+            style={primaryButtonStyle}
+          >
+            Verify existing device
+          </button>
+        )}
+
+        {hasPasskey === null && (
+          <button
+            type="button"
+            disabled
+            style={{
+              ...primaryButtonStyle,
+              background: '#94a3b8',
+              cursor: 'not-allowed'
+            }}
+          >
+            Checking device...
+          </button>
+        )}
 
         <button
           type="button"
-          onClick={verifyDeviceAuth}
+          onClick={checkPasskeyStatus}
           disabled={busy}
           style={{
             width: '100%',
             border: '1px solid #cbd5e1',
             borderRadius: '14px',
-            padding: '14px',
+            padding: '13px',
             background: '#ffffff',
             color: '#0f172a',
-            fontSize: '15px',
+            fontSize: '14px',
             fontWeight: 700,
             cursor: busy ? 'not-allowed' : 'pointer'
           }}
         >
-          Verify existing device
+          Refresh status
         </button>
 
         {status && (
           <p style={{
             marginTop: '18px',
-            color: status.toLowerCase().includes('failed') || status.toLowerCase().includes('not') || status.toLowerCase().includes('could not')
-              ? '#dc2626'
-              : '#16a34a',
+            color: isError ? '#dc2626' : '#16a34a',
             fontWeight: 700,
             fontSize: '14px',
             lineHeight: 1.5

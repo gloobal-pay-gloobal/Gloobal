@@ -1,8 +1,9 @@
 require('dotenv').config();
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const User = require('./models/User'); // Ensure your User.js model is inside the 'models' folder
+const User = require('./models/User');
 
 const app = express();
 
@@ -10,120 +11,151 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// --- 1. MONGODB CONNECTION ---
-// Replace 'YOUR_MONGODB_CONNECTION_STRING_HERE' with your actual Atlas string!
+// MongoDB Connection
 const mongoURI = process.env.MONGO_URI || 'YOUR_MONGODB_CONNECTION_STRING_HERE';
+
 mongoose.connect(mongoURI)
-  .then(() => console.log('✅ Connected to MongoDB Atlas'))
-  .catch((err) => console.error('❌ MongoDB Connection Error:', err));
+  .then(() => console.log('Connected to MongoDB Atlas'))
+  .catch((err) => console.error('MongoDB Connection Error:', err));
 
+const normalizeText = (value) =>
+  String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
-// --- 2. REGISTRATION & MULTI-LEVEL REFERRAL ENGINE ---
+const publicUserPayload = (user) => ({
+  fullName: user.fullName,
+  symbolId: user.symbolId,
+  referralCount: user.referralCount,
+  referredBy: user.referredBy,
+  hasPasskey: Array.isArray(user.passkeys) && user.passkeys.length > 0
+});
+
+// Registration and Multi-Level Referral Engine
 app.post('/api/register-symbol', async (req, res) => {
   try {
     const { fullName, symbolId, referredBy } = req.body;
 
-    // Basic validation
-    if (!fullName || !symbolId) {
-      return res.status(400).json({ message: 'Documented Name and Symbol ID are required.' });
+    const cleanFullName = String(fullName || '').trim().replace(/\s+/g, ' ');
+    const cleanSymbolId = String(symbolId || '').trim();
+    const cleanReferrer = String(referredBy || '').trim();
+
+    if (!cleanFullName || !cleanSymbolId) {
+      return res.status(400).json({
+        message: 'Documented Name and Symbol ID are required.'
+      });
     }
 
-    // Ensure the 12-Symbol ID isn't already taken by someone else
-    const existingUser = await User.findOne({ symbolId: symbolId });
+    if (Array.from(cleanSymbolId).length !== 12) {
+      return res.status(400).json({
+        message: 'Secure ID must be exactly 12 symbols.'
+      });
+    }
+
+    const existingUser = await User.findOne({ symbolId: cleanSymbolId });
+
     if (existingUser) {
+      if (normalizeText(existingUser.fullName) !== normalizeText(cleanFullName)) {
+        return res.status(409).json({
+          message: 'This Secure ID already belongs to another documented name. Please use the original name or create a new Secure ID.',
+          alreadyRegistered: true,
+          ownerMismatch: true
+        });
+      }
+
       return res.status(200).json({
         message: 'This Secure ID is already registered. Continue to login.',
         alreadyRegistered: true,
-        user: {
-          fullName: existingUser.fullName,
-          symbolId: existingUser.symbolId
-        }
+        user: publicUserPayload(existingUser)
       });
     }
 
     let validReferrerId = null;
-    let newReferralChain = []; // This array will hold the user's "ancestors"
-    
-    // The Multi-Level Referral Logic
-    if (referredBy) {
-      // Look up the database to see if the friend's ID actually exists
-      const referrerUser = await User.findOne({ symbolId: referredBy });
-      
+    let newReferralChain = [];
+
+    if (cleanReferrer) {
+      const referrerUser = await User.findOne({ symbolId: cleanReferrer });
+
       if (referrerUser) {
         validReferrerId = referrerUser.symbolId;
-        
-        // Add +1 to the direct friend's referral count
+
         referrerUser.referralCount += 1;
         await referrerUser.save();
 
-        // THE MAGIC TRICK: 
-        // Build the deep network chain: [The Direct Parent] + [The Parent's Entire Chain]
-        newReferralChain = [referrerUser.symbolId, ...referrerUser.referralChain];
+        newReferralChain = [
+          referrerUser.symbolId,
+          ...referrerUser.referralChain
+        ];
       }
     }
 
-    // Create and save the brand new user with their full family tree attached
     const newUser = new User({
-      fullName: fullName,
-      symbolId: symbolId,
+      fullName: cleanFullName,
+      symbolId: cleanSymbolId,
       referredBy: validReferrerId,
-      referralChain: newReferralChain // Saves the deep network for future transaction cuts!
+      referralChain: newReferralChain
     });
 
     await newUser.save();
 
-    // Send success back to the frontend
-    res.status(201).json({ 
-      message: 'Registration complete!', 
-      user: newUser 
+    return res.status(201).json({
+      message: 'Registration complete!',
+      user: publicUserPayload(newUser)
     });
-
   } catch (error) {
     console.error('Registration Error:', error);
-    res.status(500).json({ message: 'Server error during registration.' });
+
+    if (error && error.code === 11000) {
+      return res.status(409).json({
+        message: 'This Secure ID is already registered.',
+        alreadyRegistered: true
+      });
+    }
+
+    return res.status(500).json({
+      message: 'Server error during registration.'
+    });
   }
 });
 
-
-
-// --- 3. SECURE LOGIN PROTOTYPE ---
+// Secure Login Prototype
 app.post('/api/login', async (req, res) => {
   try {
     const { secureId, symbolId, pin } = req.body;
-    const loginSymbolId = secureId || symbolId;
+    const loginSymbolId = String(secureId || symbolId || '').trim();
 
     if (!loginSymbolId || !pin) {
-      return res.status(400).json({ message: 'Secure ID and PIN are required.' });
+      return res.status(400).json({
+        message: 'Secure ID and PIN are required.'
+      });
     }
 
     const user = await User.findOne({ symbolId: loginSymbolId });
 
     if (!user) {
-      return res.status(404).json({ message: 'Secure ID not found.' });
+      return res.status(404).json({
+        message: 'Secure ID not found.'
+      });
     }
 
     const prototypePin = process.env.DEFAULT_LOGIN_PIN || '1234';
 
     if (String(pin) !== prototypePin) {
-      return res.status(401).json({ message: 'Invalid PIN.' });
+      return res.status(401).json({
+        message: 'Invalid PIN.'
+      });
     }
 
     return res.status(200).json({
       message: 'Login successful.',
-      user: {
-        fullName: user.fullName,
-        symbolId: user.symbolId,
-        referralCount: user.referralCount,
-        referredBy: user.referredBy
-      }
+      user: publicUserPayload(user)
     });
   } catch (error) {
     console.error('Login Error:', error);
-    return res.status(500).json({ message: 'Server error during login.' });
+
+    return res.status(500).json({
+      message: 'Server error during login.'
+    });
   }
 });
-
-
 
 async function getWebAuthnServer() {
   return await import('@simplewebauthn/server');
@@ -140,27 +172,69 @@ function getWebAuthnConfig(req) {
   };
 }
 
-// --- 3. DEVICE AUTHENTICATION PROTOTYPE ---
+// Passkey Status
+app.post('/api/passkey/status', async (req, res) => {
+  try {
+    const { symbolId } = req.body;
+    const cleanSymbolId = String(symbolId || '').trim();
+
+    if (!cleanSymbolId) {
+      return res.status(400).json({
+        message: 'Secure ID is required.'
+      });
+    }
+
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+
+    if (!user) {
+      return res.status(404).json({
+        message: 'Secure ID not found.'
+      });
+    }
+
+    return res.status(200).json({
+      hasPasskey: Array.isArray(user.passkeys) && user.passkeys.length > 0,
+      user: publicUserPayload(user)
+    });
+  } catch (error) {
+    console.error('Passkey status error:', error);
+
+    return res.status(500).json({
+      message: 'Could not check device authentication status.'
+    });
+  }
+});
+
+// Device Authentication Prototype - Register Options
 app.post('/api/passkey/register/options', async (req, res) => {
   try {
     const { symbolId } = req.body;
+    const cleanSymbolId = String(symbolId || '').trim();
 
-    if (!symbolId) {
-      return res.status(400).json({ message: 'Secure ID is required.' });
+    if (!cleanSymbolId) {
+      return res.status(400).json({
+        message: 'Secure ID is required.'
+      });
     }
 
-    const user = await User.findOne({ symbolId });
+    const user = await User.findOne({ symbolId: cleanSymbolId });
 
     if (!user) {
-      return res.status(404).json({ message: 'Secure ID not found.' });
+      return res.status(404).json({
+        message: 'Secure ID not found.'
+      });
     }
 
-    const {
-      generateRegistrationOptions
-    } = await getWebAuthnServer();
-
-    const { rpName, rpID } = getWebAuthnConfig(req);
     const existingPasskeys = Array.isArray(user.passkeys) ? user.passkeys : [];
+
+    if (existingPasskeys.length > 0) {
+      return res.status(409).json({
+        message: 'Device authentication is already registered for this Secure ID. Please verify existing device.'
+      });
+    }
+
+    const { generateRegistrationOptions } = await getWebAuthnServer();
+    const { rpName, rpID } = getWebAuthnConfig(req);
 
     const options = await generateRegistrationOptions({
       rpName,
@@ -186,28 +260,46 @@ app.post('/api/passkey/register/options', async (req, res) => {
     return res.status(200).json(options);
   } catch (error) {
     console.error('Passkey registration options error:', error);
-    return res.status(500).json({ message: `Could not create passkey registration options: ${error.message}` });
+
+    return res.status(500).json({
+      message: `Could not create passkey registration options: ${error.message}`
+    });
   }
 });
 
+// Device Authentication Prototype - Register Verify
 app.post('/api/passkey/register/verify', async (req, res) => {
   try {
     const { symbolId, response } = req.body;
+    const cleanSymbolId = String(symbolId || '').trim();
 
-    if (!symbolId || !response) {
-      return res.status(400).json({ message: 'Secure ID and device response are required.' });
+    if (!cleanSymbolId || !response) {
+      return res.status(400).json({
+        message: 'Secure ID and device response are required.'
+      });
     }
 
-    const user = await User.findOne({ symbolId });
+    const user = await User.findOne({ symbolId: cleanSymbolId });
 
     if (!user || !user.currentChallenge) {
-      return res.status(400).json({ message: 'Passkey registration was not started.' });
+      return res.status(400).json({
+        message: 'Passkey registration was not started.'
+      });
     }
 
-    const {
-      verifyRegistrationResponse
-    } = await getWebAuthnServer();
+    const passkeys = Array.isArray(user.passkeys) ? user.passkeys : [];
 
+    if (passkeys.length > 0) {
+      user.currentChallenge = null;
+      await user.save();
+
+      return res.status(409).json({
+        verified: false,
+        message: 'Device authentication is already registered for this Secure ID. Please verify existing device.'
+      });
+    }
+
+    const { verifyRegistrationResponse } = await getWebAuthnServer();
     const { rpID, origin } = getWebAuthnConfig(req);
 
     const verification = await verifyRegistrationResponse({
@@ -218,13 +310,14 @@ app.post('/api/passkey/register/verify', async (req, res) => {
     });
 
     if (!verification.verified) {
-      return res.status(400).json({ verified: false, message: 'Device authentication setup failed.' });
+      return res.status(400).json({
+        verified: false,
+        message: 'Device authentication setup failed.'
+      });
     }
 
     const { registrationInfo } = verification;
     const { credential, credentialDeviceType, credentialBackedUp } = registrationInfo;
-
-    const passkeys = Array.isArray(user.passkeys) ? user.passkeys : [];
 
     passkeys.push({
       id: credential.id,
@@ -241,38 +334,48 @@ app.post('/api/passkey/register/verify', async (req, res) => {
 
     return res.status(200).json({
       verified: true,
-      message: 'Device authentication enabled.'
+      message: 'Device authentication enabled.',
+      user: publicUserPayload(user)
     });
   } catch (error) {
     console.error('Passkey registration verify error:', error);
-    return res.status(500).json({ verified: false, message: `Could not verify device authentication setup: ${error.message}` });
+
+    return res.status(500).json({
+      verified: false,
+      message: `Could not verify device authentication setup: ${error.message}`
+    });
   }
 });
 
+// Device Authentication Prototype - Auth Options
 app.post('/api/passkey/auth/options', async (req, res) => {
   try {
     const { symbolId } = req.body;
+    const cleanSymbolId = String(symbolId || '').trim();
 
-    if (!symbolId) {
-      return res.status(400).json({ message: 'Secure ID is required.' });
+    if (!cleanSymbolId) {
+      return res.status(400).json({
+        message: 'Secure ID is required.'
+      });
     }
 
-    const user = await User.findOne({ symbolId });
+    const user = await User.findOne({ symbolId: cleanSymbolId });
 
     if (!user) {
-      return res.status(404).json({ message: 'Secure ID not found.' });
+      return res.status(404).json({
+        message: 'Secure ID not found.'
+      });
     }
 
     const passkeys = Array.isArray(user.passkeys) ? user.passkeys : [];
 
     if (passkeys.length === 0) {
-      return res.status(404).json({ message: 'No device authentication is registered yet.' });
+      return res.status(404).json({
+        message: 'No device authentication is registered yet.'
+      });
     }
 
-    const {
-      generateAuthenticationOptions
-    } = await getWebAuthnServer();
-
+    const { generateAuthenticationOptions } = await getWebAuthnServer();
     const { rpID } = getWebAuthnConfig(req);
 
     const options = await generateAuthenticationOptions({
@@ -290,35 +393,43 @@ app.post('/api/passkey/auth/options', async (req, res) => {
     return res.status(200).json(options);
   } catch (error) {
     console.error('Passkey authentication options error:', error);
-    return res.status(500).json({ message: `Could not create device authentication options: ${error.message}` });
+
+    return res.status(500).json({
+      message: `Could not create device authentication options: ${error.message}`
+    });
   }
 });
 
+// Device Authentication Prototype - Auth Verify
 app.post('/api/passkey/auth/verify', async (req, res) => {
   try {
     const { symbolId, response } = req.body;
+    const cleanSymbolId = String(symbolId || '').trim();
 
-    if (!symbolId || !response) {
-      return res.status(400).json({ message: 'Secure ID and device response are required.' });
+    if (!cleanSymbolId || !response) {
+      return res.status(400).json({
+        message: 'Secure ID and device response are required.'
+      });
     }
 
-    const user = await User.findOne({ symbolId });
+    const user = await User.findOne({ symbolId: cleanSymbolId });
 
     if (!user || !user.currentChallenge) {
-      return res.status(400).json({ message: 'Device authentication was not started.' });
+      return res.status(400).json({
+        message: 'Device authentication was not started.'
+      });
     }
 
     const passkeys = Array.isArray(user.passkeys) ? user.passkeys : [];
     const passkey = passkeys.find((item) => item.id === response.id);
 
     if (!passkey) {
-      return res.status(404).json({ message: 'Registered device was not found.' });
+      return res.status(404).json({
+        message: 'Registered device was not found.'
+      });
     }
 
-    const {
-      verifyAuthenticationResponse
-    } = await getWebAuthnServer();
-
+    const { verifyAuthenticationResponse } = await getWebAuthnServer();
     const { rpID, origin } = getWebAuthnConfig(req);
 
     const verification = await verifyAuthenticationResponse({
@@ -335,7 +446,10 @@ app.post('/api/passkey/auth/verify', async (req, res) => {
     });
 
     if (!verification.verified) {
-      return res.status(400).json({ verified: false, message: 'Device authentication failed.' });
+      return res.status(400).json({
+        verified: false,
+        message: 'Device authentication failed.'
+      });
     }
 
     passkey.counter = verification.authenticationInfo.newCounter;
@@ -346,19 +460,21 @@ app.post('/api/passkey/auth/verify', async (req, res) => {
     return res.status(200).json({
       verified: true,
       message: 'Device authentication successful.',
-      user: {
-        fullName: user.fullName,
-        symbolId: user.symbolId
-      }
+      user: publicUserPayload(user)
     });
   } catch (error) {
     console.error('Passkey authentication verify error:', error);
-    return res.status(500).json({ verified: false, message: `Could not verify device authentication: ${error.message}` });
+
+    return res.status(500).json({
+      verified: false,
+      message: `Could not verify device authentication: ${error.message}`
+    });
   }
 });
 
-// --- 4. START SERVER ---
+// Start Server
 const PORT = process.env.PORT || 5000;
+
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
