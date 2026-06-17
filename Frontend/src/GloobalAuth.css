@@ -1,4 +1,4 @@
-.ga-wrapper {
+.auth-wrapper {
   --bg: #dde3ef;
   --sd: #b3bacb;
   --sl: #ffffff;
@@ -26,7 +26,7 @@
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-.ga-shell {
+.auth-shell {
   width: 100%;
   max-width: 420px;
   min-height: min(760px, calc(100vh - 36px));
@@ -39,7 +39,7 @@
   overflow: hidden;
 }
 
-.ga-shell::before {
+.auth-shell::before {
   content: "";
   position: absolute;
   top: -160px;
@@ -51,19 +51,23 @@
   pointer-events: none;
 }
 
-.ga-shell > * {
+.auth-shell > * {
   position: relative;
   z-index: 1;
 }
 
-.ga-step-bar {
+.auth-step-view {
+  animation: authStepIn 0.35s ease both;
+}
+
+.auth-step-bar {
   display: flex;
   gap: 6px;
   width: 100%;
   margin-bottom: 18px;
 }
 
-.ga-segment {
+.auth-segment {
   flex: 1;
   height: 4px;
   border-radius: 999px;
@@ -72,25 +76,20 @@
   opacity: 0.72;
 }
 
-.ga-segment.ga-active {
+.auth-segment.auth-active {
   background: var(--blue);
   opacity: 1;
   box-shadow: 0 1px 10px rgba(61, 90, 241, 0.28);
 }
 
-.ga-segment.ga-done {
-  background: var(--blue);
-  opacity: 0.35;
-}
-
-.ga-brand {
+.auth-brand {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 24px;
 }
 
-.ga-logo-circle {
+.auth-logo-circle {
   width: 78px;
   height: 78px;
   border-radius: 999px;
@@ -100,17 +99,24 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  animation: gaLogoFloat 3.4s ease-in-out infinite;
 }
 
-.ga-logo-img {
+.auth-logo-img {
   width: 44px;
   height: 44px;
   object-fit: contain;
   display: block;
 }
 
-.ga-eyebrow {
+.auth-brand-text {
+  color: var(--ink2);
+  font-size: 13px;
+  letter-spacing: 2.6px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.auth-eyebrow {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -122,7 +128,7 @@
   margin-bottom: 12px;
 }
 
-.ga-eyebrow-dot {
+.auth-eyebrow-dot {
   width: 6px;
   height: 6px;
   border-radius: 999px;
@@ -130,7 +136,7 @@
   opacity: 0.65;
 }
 
-.ga-heading {
+.auth-heading {
   margin: 0;
   color: var(--ink);
   font-size: 31px;
@@ -139,7 +145,7 @@
   letter-spacing: -0.8px;
 }
 
-.ga-heading strong {
+.auth-heading strong {
   font-weight: 750;
   background: linear-gradient(135deg, var(--blue), var(--blue2));
   -webkit-background-clip: text;
@@ -147,63 +153,215 @@
   background-clip: text;
 }
 
-.ga-subtitle {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.65;
-  margin: 12px 0 22px;
-}
-
-.ga-field-block {
+.auth-id-box {
+  border-radius: 18px;
+  background: var(--bg);
+  box-shadow: var(--raise-xs);
+  padding: 14px;
+  border: 1px solid rgba(61, 90, 241, 0.08);
+  position: relative;
   margin-top: 22px;
 }
 
-.ga-label {
-  display: block;
+.auth-id-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   color: var(--muted);
   font-size: 10px;
-  letter-spacing: 2.2px;
+  letter-spacing: 1.7px;
   text-transform: uppercase;
-  font-weight: 800;
-  margin-bottom: 8px;
+  font-weight: 850;
+  margin-bottom: 10px;
 }
 
-.ga-input {
-  width: 100%;
-  height: 58px;
-  border: none;
-  outline: none;
-  border-radius: 18px;
+.auth-id-top small {
+  color: var(--blue);
+  font-size: 10px;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.auth-slots {
+  min-height: 35px;
+  border-radius: 13px;
   background: var(--bg);
   box-shadow: var(--inset);
-  box-sizing: border-box;
-  padding: 0 18px;
-  color: var(--ink);
-  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 12px;
+  overflow: hidden;
+}
+
+.auth-slot {
+  min-width: 13px;
+  text-align: center;
+  font-size: 17px;
+  font-weight: 850;
+  color: var(--ink2);
+}
+
+.auth-slot-filled {
+  color: var(--blue);
+  animation: authPop 0.2s ease both;
+}
+
+.auth-slot-empty {
+  color: var(--muted2);
   font-weight: 650;
 }
 
-.ga-input::placeholder {
-  color: var(--muted2);
-  font-weight: 400;
+.auth-slot-divider {
+  width: 1px;
+  height: 20px;
+  background: rgba(126, 138, 166, 0.45);
+  margin: 0 4px;
 }
 
-.ga-input:focus {
-  box-shadow: var(--inset), 0 0 0 2px rgba(61, 90, 241, 0.18);
+.auth-mini-action {
+  position: absolute;
+  right: 13px;
+  bottom: 12px;
+  border: none;
+  background: transparent;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  cursor: pointer;
 }
 
-.ga-mobile-preview {
-  margin-top: 10px;
-  color: #dc2626;
+.auth-editing-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
   font-size: 12px;
   font-weight: 750;
+  margin: 16px 2px 10px;
 }
 
-.ga-mobile-ok {
-  color: #15803d;
+.auth-editing-row button {
+  border: none;
+  background: transparent;
+  color: #dc2626;
+  font-weight: 850;
+  cursor: pointer;
 }
 
-.ga-main-cta {
+.auth-dial {
+  width: 238px;
+  height: 238px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: var(--raise);
+  margin: 10px auto 6px;
+  position: relative;
+}
+
+.auth-dial::before {
+  content: "";
+  position: absolute;
+  inset: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(61, 90, 241, 0.16);
+  pointer-events: none;
+}
+
+.auth-dial-key,
+.auth-dial-center {
+  position: absolute;
+  border: none;
+  background: var(--bg);
+  box-shadow: var(--raise-xs);
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.16s ease, opacity 0.16s ease, box-shadow 0.16s ease;
+}
+
+.auth-dial-key {
+  width: 54px;
+  height: 54px;
+  border-radius: 20px;
+  font-size: 22px;
+  font-weight: 850;
+}
+
+.auth-dial-key:not(:disabled):active {
+  transform: scale(0.9);
+  box-shadow: var(--inset);
+}
+
+.auth-dial-key:disabled,
+.auth-dial-center:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.auth-dial-center {
+  width: 72px;
+  height: 72px;
+  border-radius: 999px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--blue);
+  font-size: 27px;
+  font-weight: 900;
+}
+
+.auth-dial-center:not(:disabled):active {
+  transform: translate(-50%, -50%) scale(0.9);
+  box-shadow: var(--inset);
+}
+
+.auth-dial-key-0 {
+  left: 92px;
+  top: 12px;
+}
+
+.auth-dial-key-1 {
+  right: 35px;
+  top: 35px;
+}
+
+.auth-dial-key-2 {
+  right: 12px;
+  top: 92px;
+}
+
+.auth-dial-key-3 {
+  right: 35px;
+  bottom: 35px;
+}
+
+.auth-dial-key-4 {
+  left: 92px;
+  bottom: 12px;
+}
+
+.auth-dial-key-5 {
+  left: 35px;
+  bottom: 35px;
+}
+
+.auth-dial-key-6 {
+  left: 12px;
+  top: 92px;
+}
+
+.auth-dial-key-7 {
+  left: 35px;
+  top: 35px;
+}
+
+.auth-main-cta {
   width: 100%;
   height: 58px;
   border: none;
@@ -217,253 +375,88 @@
   letter-spacing: 1px;
   text-transform: uppercase;
   cursor: pointer;
-  transition: transform 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
 }
 
-.ga-main-cta:not(:disabled):active {
-  transform: scale(0.96);
-  box-shadow: var(--raise-xs);
-}
-
-.ga-main-cta:disabled {
+.auth-main-cta:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }
 
-.ga-id-grid {
+.auth-pin-dots {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  justify-content: center;
+  gap: 14px;
+  margin: 24px 0 24px;
 }
 
-.ga-id-box {
-  border-radius: 18px;
-  background: var(--bg);
-  box-shadow: var(--raise-xs);
-  padding: 14px;
-  cursor: pointer;
-  border: 1px solid rgba(61, 90, 241, 0.08);
-  position: relative;
-}
-
-.ga-id-box-active {
-  box-shadow: var(--inset), 0 0 0 2px rgba(61, 90, 241, 0.14);
-}
-
-.ga-id-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--muted);
-  font-size: 10px;
-  letter-spacing: 1.7px;
-  text-transform: uppercase;
-  font-weight: 850;
-  margin-bottom: 10px;
-}
-
-.ga-id-top small {
-  color: var(--blue);
-  font-size: 10px;
-  letter-spacing: 0;
-  white-space: nowrap;
-}
-
-.ga-slots {
-  min-height: 35px;
-  border-radius: 13px;
+.auth-pin-dot {
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
   background: var(--bg);
   box-shadow: var(--inset);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 0 12px;
-  overflow: hidden;
 }
 
-.ga-slot {
-  min-width: 13px;
-  text-align: center;
-  font-size: 17px;
-  font-weight: 850;
-  color: var(--ink2);
+.auth-pin-dot-filled {
+  background: var(--blue);
+  box-shadow: 0 0 10px rgba(61, 90, 241, 0.35);
 }
 
-.ga-slot-empty {
-  color: var(--muted2);
-  font-weight: 650;
+.auth-pin-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 15px;
+  max-width: 252px;
+  margin: 0 auto;
 }
 
-.ga-slot-divider {
-  width: 1px;
-  height: 20px;
-  background: rgba(126, 138, 166, 0.45);
-  margin: 0 4px;
-}
-
-.ga-mini-action {
-  position: absolute;
-  right: 13px;
-  bottom: 12px;
-  border: none;
-  background: transparent;
-  color: var(--blue);
-  font-size: 11px;
-  font-weight: 900;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.ga-editing-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 750;
-  margin: 16px 2px 10px;
-}
-
-.ga-editing-row button {
-  border: none;
-  background: transparent;
-  color: #dc2626;
-  font-weight: 850;
-  cursor: pointer;
-}
-
-.ga-dial {
-  width: 238px;
-  height: 238px;
+.auth-pin-key {
+  width: 64px;
+  height: 64px;
   border-radius: 999px;
-  background: var(--bg);
-  box-shadow: var(--raise);
-  margin: 10px auto 6px;
-  position: relative;
-}
-
-.ga-dial::before {
-  content: "";
-  position: absolute;
-  inset: 18px;
-  border-radius: 999px;
-  border: 1px solid rgba(61, 90, 241, 0.16);
-  pointer-events: none;
-}
-
-.ga-dial-key,
-.ga-dial-center {
-  position: absolute;
   border: none;
   background: var(--bg);
-  box-shadow: var(--raise-xs);
+  box-shadow: var(--raise-sm);
   color: var(--ink);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.16s ease, opacity 0.16s ease, box-shadow 0.16s ease;
-}
-
-.ga-dial-key {
-  width: 54px;
-  height: 54px;
-  border-radius: 20px;
-  font-size: 22px;
+  font-size: 23px;
   font-weight: 850;
+  cursor: pointer;
 }
 
-.ga-dial-key:not(:disabled):active,
-.ga-dial-center:not(:disabled):active {
-  transform: scale(0.9);
+.auth-pin-key:active {
   box-shadow: var(--inset);
+  transform: scale(0.94);
 }
 
-.ga-dial-key:disabled,
-.ga-dial-center:disabled {
-  opacity: 0.38;
-  cursor: not-allowed;
+.auth-pin-text {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 850;
+  cursor: pointer;
 }
 
-.ga-dial-center {
-  width: 72px;
-  height: 72px;
-  border-radius: 999px;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  color: var(--blue);
-  font-size: 27px;
-  font-weight: 900;
+.auth-prototype-note {
+  display: none;
 }
 
-.ga-dial-key-0 {
-  left: 92px;
-  top: 12px;
-}
-
-.ga-dial-key-1 {
-  right: 35px;
-  top: 35px;
-}
-
-.ga-dial-key-2 {
-  right: 12px;
-  top: 92px;
-}
-
-.ga-dial-key-3 {
-  right: 35px;
-  bottom: 35px;
-}
-
-.ga-dial-key-4 {
-  left: 92px;
-  bottom: 12px;
-}
-
-.ga-dial-key-5 {
-  left: 35px;
-  bottom: 35px;
-}
-
-.ga-dial-key-6 {
-  left: 12px;
-  top: 92px;
-}
-
-.ga-dial-key-7 {
-  left: 35px;
-  top: 35px;
-}
-
-.ga-status {
-  margin: 14px 0 0;
-  color: #dc2626;
+.auth-status {
+  margin: 16px 0 0;
   font-weight: 800;
   font-size: 13px;
   line-height: 1.55;
   text-align: center;
 }
 
-.ga-status-good {
+.auth-status-good {
   color: #15803d;
 }
 
-.ga-back-btn {
-  width: 100%;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 750;
-  margin-top: 12px;
-  cursor: pointer;
+.auth-status-error {
+  color: #dc2626;
 }
 
-.ga-footer {
+.auth-footer {
   text-align: center;
   margin-top: 24px;
   color: var(--muted);
@@ -471,170 +464,99 @@
   font-weight: 700;
 }
 
-.ga-success {
-  text-align: center;
+@keyframes authStepIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-.ga-success-orb {
-  width: 112px;
-  height: 112px;
-  border-radius: 999px;
-  margin: 38px auto 22px;
-  background: var(--bg);
-  box-shadow: var(--raise);
-  color: var(--green);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 44px;
-  font-weight: 900;
-}
+@keyframes authPop {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
 
-.ga-summary-card {
-  margin-top: 12px;
-  border-radius: 16px;
-  background: var(--bg);
-  box-shadow: var(--raise-xs);
-  padding: 13px 14px;
-  text-align: left;
-  overflow-wrap: anywhere;
-}
-
-.ga-summary-card span {
-  display: block;
-  color: var(--muted);
-  font-size: 10px;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  font-weight: 850;
-  margin-bottom: 5px;
-}
-
-.ga-summary-card strong {
-  display: block;
-  color: var(--ink2);
-  font-size: 14px;
-  letter-spacing: 0.5px;
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 @media (max-width: 480px) {
-  .ga-wrapper {
+  .auth-wrapper {
     align-items: flex-start;
     padding: 10px;
   }
 
-  .ga-shell {
+  .auth-shell {
     min-height: calc(100vh - 20px);
     border-radius: 22px;
     padding: 22px 18px 18px;
   }
 
-  .ga-heading {
+  .auth-heading {
     font-size: 28px;
   }
 
-  .ga-dial {
+  .auth-dial {
     width: 224px;
     height: 224px;
   }
 
-  .ga-dial-key {
+  .auth-dial-key {
     width: 50px;
     height: 50px;
     border-radius: 18px;
   }
 
-  .ga-dial-center {
+  .auth-dial-center {
     width: 68px;
     height: 68px;
   }
 
-  .ga-dial-key-0 {
+  .auth-dial-key-0 {
     left: 87px;
     top: 10px;
   }
 
-  .ga-dial-key-1 {
+  .auth-dial-key-1 {
     right: 32px;
     top: 32px;
   }
 
-  .ga-dial-key-2 {
+  .auth-dial-key-2 {
     right: 10px;
     top: 87px;
   }
 
-  .ga-dial-key-3 {
+  .auth-dial-key-3 {
     right: 32px;
     bottom: 32px;
   }
 
-  .ga-dial-key-4 {
+  .auth-dial-key-4 {
     left: 87px;
     bottom: 10px;
   }
 
-  .ga-dial-key-5 {
+  .auth-dial-key-5 {
     left: 32px;
     bottom: 32px;
   }
 
-  .ga-dial-key-6 {
+  .auth-dial-key-6 {
     left: 10px;
     top: 87px;
   }
 
-  .ga-dial-key-7 {
+  .auth-dial-key-7 {
     left: 32px;
     top: 32px;
-  }
-
-  .ga-slot {
-    min-width: 11px;
-    font-size: 15px;
-  }
-}
-
-/* cleanup: hide extra helper messages */
-.ga-subtitle-clean,
-.ga-mobile-preview {
-  display: none;
-}
-
-/* polish: bottom footer + theme status color */
-.ga-shell {
-  display: flex;
-  flex-direction: column;
-}
-
-.ga-step-view,
-.ga-success {
-  flex: 1;
-}
-
-.ga-footer {
-  margin-top: auto;
-  padding-top: 18px;
-  color: #7e8aa6;
-}
-
-.ga-status,
-.ga-status-good {
-  color: #3d5af1 !important;
-  background: rgba(61, 90, 241, 0.08);
-  border-radius: 999px;
-  padding: 9px 14px;
-  font-weight: 800;
-  animation: gaStatusPulse 1.4s ease-in-out infinite;
-}
-
-@keyframes gaStatusPulse {
-  0%,
-  100% {
-    opacity: 0.72;
-  }
-
-  50% {
-    opacity: 1;
   }
 }

@@ -1,70 +1,122 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import axios from 'axios';
 import './GloobalAccess.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'https://gloobal-pay.onrender.com';
 
+const SYMBOL_KEYS = ['+', '-', '\u00D7', '=', '\u25A1', '\u25A0', '\u25CB', '\u25CF'];
+const PROTOTYPE_OTP = '0000';
+
+function formatMobileIdentity(digits) {
+  if (!digits) return '';
+
+  if (digits.length === 10) {
+    return `+91${digits}`;
+  }
+
+  if (digits.length === 11 && digits.startsWith('0')) {
+    return `+91${digits.slice(1)}`;
+  }
+
+  if (digits.length === 12 && digits.startsWith('91')) {
+    return `+${digits}`;
+  }
+
+  return `+${digits}`;
+}
+
 export default function GloobalAccess({ onComplete }) {
-  const [name, setName] = useState('');
+  const [step, setStep] = useState(1);
+  const [mobile, setMobile] = useState('');
+  const [otp, setOtp] = useState('');
   const [secureSymbols, setSecureSymbols] = useState([]);
   const [referrerSymbols, setReferrerSymbols] = useState([]);
   const [activeField, setActiveField] = useState('secure');
-  const [isHidden, setIsHidden] = useState(false);
+  const [hideSecure, setHideSecure] = useState(false);
   const [registeredUser, setRegisteredUser] = useState(null);
-  const [showKeyboard, setShowKeyboard] = useState(false);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const keys = ['+', '-', '×', '=', '□', '■', '○', '●'];
+  const mobileDigits = mobile.replace(/\D/g, '');
+
+  const mobileIdentity = useMemo(() => {
+    return formatMobileIdentity(mobileDigits);
+  }, [mobileDigits]);
 
   const secureId = secureSymbols.join('');
   const referredBy = referrerSymbols.join('');
 
-  const getActiveSymbols = () => {
-    return activeField === 'secure' ? secureSymbols : referrerSymbols;
-  };
+  const isMobileValid = mobileDigits.length >= 10 && mobileDigits.length <= 15;
+  const isOtpValid = otp === PROTOTYPE_OTP;
+  const activeSymbols = activeField === 'secure' ? secureSymbols : referrerSymbols;
 
-  const setActiveSymbols = (newSymbols) => {
+  const updateActiveSymbols = (nextSymbols) => {
     if (activeField === 'secure') {
-      setSecureSymbols(newSymbols);
+      setSecureSymbols(nextSymbols);
       return;
     }
 
-    setReferrerSymbols(newSymbols);
+    setReferrerSymbols(nextSymbols);
   };
 
-  const handleKeyPress = (char) => {
-    const currentSymbols = getActiveSymbols();
+  const handleSymbolPress = (symbol) => {
+    if (busy) return;
 
-    if (currentSymbols.length >= 12) {
+    if (activeSymbols.length >= 12) {
       setStatus(
         activeField === 'secure'
           ? 'Secure ID already has 12 symbols.'
-          : 'Referrer Secure ID already has 12 symbols.'
+          : 'Referral ID already has 12 symbols.'
       );
       return;
     }
 
-    setActiveSymbols([...currentSymbols, char]);
+    updateActiveSymbols([...activeSymbols, symbol]);
     setStatus('');
   };
 
   const handleDelete = () => {
-    const currentSymbols = getActiveSymbols();
-    setActiveSymbols(currentSymbols.slice(0, -1));
+    if (busy) return;
+    updateActiveSymbols(activeSymbols.slice(0, -1));
     setStatus('');
   };
 
-  const handleClearActive = () => {
-    setActiveSymbols([]);
+  const handleClear = () => {
+    if (busy) return;
+    updateActiveSymbols([]);
     setStatus('');
+  };
+
+  const goToOtp = () => {
+    if (!isMobileValid) {
+      setStatus('Please enter a valid mobile number.');
+      return;
+    }
+
+    setOtp('');
+    setStatus('');
+    setStep(2);
+  };
+
+  const verifyOtp = () => {
+    if (!isOtpValid) {
+      setStatus('Enter OTP 0000 to verify mobile.');
+      return;
+    }
+
+    setStatus('');
+    setStep(3);
   };
 
   const handleSubmit = async () => {
-    const cleanName = name.trim();
+    if (!isMobileValid) {
+      alert('Please enter a valid mobile number.');
+      return;
+    }
 
-    if (!cleanName) {
-      alert('Please enter your Documented Name.');
+    if (!isOtpValid) {
+      alert('Please verify mobile OTP first.');
+      setStep(2);
       return;
     }
 
@@ -74,12 +126,12 @@ export default function GloobalAccess({ onComplete }) {
     }
 
     if (referrerSymbols.length > 0 && referrerSymbols.length !== 12) {
-      alert('Referrer Secure ID is optional, but if entered it must be 12 symbols.');
+      alert('Referral ID is optional, but if entered it must be 12 symbols.');
       return;
     }
 
     const userData = {
-      fullName: cleanName,
+      fullName: mobileIdentity,
       symbolId: secureId,
       referredBy: referredBy || ''
     };
@@ -88,11 +140,12 @@ export default function GloobalAccess({ onComplete }) {
     setStatus('Checking Secure ID...');
 
     try {
-      const response = await axios.post(API_BASE + '/api/register-symbol', userData);
+      const response = await axios.post(`${API_BASE}/api/register-symbol`, userData);
       const savedUser = response.data?.user || userData;
 
       const nextUser = {
-        fullName: savedUser.fullName || cleanName,
+        fullName: savedUser.fullName || mobileIdentity,
+        mobileNumber: mobileIdentity,
         symbolId: savedUser.symbolId || secureId,
         referralCount: savedUser.referralCount || 0,
         referredBy: savedUser.referredBy || referredBy || null,
@@ -111,7 +164,7 @@ export default function GloobalAccess({ onComplete }) {
         if (typeof onComplete === 'function') {
           onComplete(nextUser);
         }
-      }, 1400);
+      }, 1200);
     } catch (err) {
       console.error('Registration saving error:', err);
 
@@ -126,59 +179,84 @@ export default function GloobalAccess({ onComplete }) {
     }
   };
 
-  const renderDisplay = (symbols, hideSymbols = false) => {
+  const renderSymbolSlots = (symbols, shouldHide = false) => {
     const slots = [];
 
     for (let i = 0; i < 12; i += 1) {
-      if (i < symbols.length) {
-        slots.push(
-          <span key={i}>
-            {hideSymbols ? '*' : symbols[i]}
-          </span>
-        );
-      } else {
-        slots.push(
-          <span key={i} className="ga-empty-slot">
-            -
-          </span>
-        );
+      slots.push(
+        <span
+          key={`slot-${i}`}
+          className={i < symbols.length ? 'ga-slot ga-slot-filled' : 'ga-slot ga-slot-empty'}
+        >
+          {i < symbols.length ? (shouldHide ? '\u2022' : symbols[i]) : '\u00B7'}
+        </span>
+      );
+
+      if (i === 5) {
+        slots.push(<span key="divider" className="ga-slot-divider" />);
       }
     }
 
     return slots;
   };
 
-  const activeSymbols = getActiveSymbols();
+  const canSubmit = isMobileValid && isOtpValid && secureSymbols.length === 12 && !busy;
 
   return (
     <div className="ga-wrapper">
-      <div className="ga-card">
+      <div className="ga-shell">
         {registeredUser ? (
-          <div className="ga-welcome-view">
-            <div className="ga-welcome-avatar">👋</div>
-
-            <h2 className="ga-welcome-name">
-              Welcome, {registeredUser.fullName}
-            </h2>
-
-            <p className="ga-subtitle">
-              @{registeredUser.symbolId}
-            </p>
-
-            <div className="ga-welcome-status">
-              {registeredUser.hasPasskey
-                ? 'Secure ID Found'
-                : 'Registration Complete'}
+          <div className="ga-success">
+            <div className="ga-step-bar">
+              <div className="ga-segment ga-done" />
+              <div className="ga-segment ga-done" />
+              <div className="ga-segment ga-done" />
             </div>
 
-            <p className="ga-footer ga-welcome-footer">
+            <div className="ga-success-orb">{'\u2713'}</div>
+
+            <div className="ga-eyebrow">
+              <span className="ga-eyebrow-dot" />
+              Ready
+            </div>
+
+            <h1 className="ga-heading">
+              Mobile identity
+              <br />
+              <strong>connected</strong>
+            </h1>
+
+            <div className="ga-summary-card">
+              <span>Mobile</span>
+              <strong>{registeredUser.mobileNumber || registeredUser.fullName}</strong>
+            </div>
+
+            <div className="ga-summary-card">
+              <span>Secure ID</span>
+              <strong>{registeredUser.symbolId}</strong>
+            </div>
+
+            {registeredUser.referredBy && (
+              <div className="ga-summary-card">
+                <span>Referral ID</span>
+                <strong>{registeredUser.referredBy}</strong>
+              </div>
+            )}
+
+            <p className="ga-status">
               Preparing device authentication...
             </p>
           </div>
         ) : (
           <>
+            <div className="ga-step-bar">
+              <div className={`ga-segment ${step >= 1 ? 'ga-active' : ''} ${step > 1 ? 'ga-done' : ''}`} />
+              <div className={`ga-segment ${step >= 2 ? 'ga-active' : ''} ${step > 2 ? 'ga-done' : ''}`} />
+              <div className={`ga-segment ${step >= 3 ? 'ga-active' : ''}`} />
+            </div>
+
             <div className="ga-brand">
-              <div className="ga-logo-circle">
+              <div className="ga-logo-circle" aria-label="Gloobal logo">
                 <img
                   src="/pwa-512x512.jpeg"
                   alt="Gloobal logo"
@@ -186,204 +264,258 @@ export default function GloobalAccess({ onComplete }) {
                 />
               </div>
 
-              <h2 className="ga-title">Gloobal Access</h2>
+              <div className="ga-brand-text">Gloobal Access</div>
             </div>
 
-            <input
-              type="text"
-              className="ga-input"
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                setStatus('');
-              }}
-              placeholder="Documented Name"
-              disabled={busy}
-            />
+            {step === 1 && (
+              <div className="ga-step-view ga-step-enter">
+                <div className="ga-eyebrow">
+                  <span className="ga-eyebrow-dot" />
+                  Step 1 of 3
+                </div>
 
-            <div>
-              <div className="ga-id-header">
-                <span>12-Symbol Secure ID</span>
-                <span>{secureSymbols.length} / 12</span>
-              </div>
+                <h1 className="ga-heading">
+                  Enter your
+                  <br />
+                  <strong>mobile number</strong>
+                </h1>
 
-              <div
-                className={`ga-display-box ${activeField === 'secure' ? 'ga-display-active' : ''}`}
-                onClick={() => {
-                  setActiveField('secure');
-                  setShowKeyboard(true);
-                }}
-                onKeyDown={() => {
-                  setActiveField('secure');
-                  setShowKeyboard(true);
-                }}
-                role="button"
-                tabIndex={0}
-              >
-                <div className="ga-symbols">
-                  {renderDisplay(secureSymbols, isHidden)}
+                <div className="ga-field-block">
+                  <label className="ga-label" htmlFor="mobileInput">
+                    Mobile Number
+                  </label>
+
+                  <input
+                    id="mobileInput"
+                    type="tel"
+                    inputMode="tel"
+                    className="ga-input"
+                    value={mobile}
+                    onChange={(event) => {
+                      setMobile(event.target.value);
+                      setStatus('');
+                    }}
+                    placeholder="e.g. 9876543210"
+                    autoComplete="tel"
+                    disabled={busy}
+                  />
                 </div>
 
                 <button
                   type="button"
-                  className="ga-hide-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsHidden(!isHidden);
-                  }}
-                  disabled={busy}
+                  className="ga-main-cta"
+                  disabled={!isMobileValid || busy}
+                  onClick={goToOtp}
                 >
-                  {isHidden ? 'Show' : 'Hide'}
+                  Continue
                 </button>
               </div>
+            )}
 
-              {!showKeyboard && (
-                <p className="ga-keyboard-hint">
-                  Tap Secure ID box to open symbolic keyboard
-                </p>
-              )}
-            </div>
+            {step === 2 && (
+              <div className="ga-step-view ga-step-enter">
+                <div className="ga-eyebrow">
+                  <span className="ga-eyebrow-dot" />
+                  Step 2 of 3
+                </div>
 
-            <div>
-              <div className="ga-id-header">
-                <span>Referrer Secure ID</span>
-                <span>{referrerSymbols.length} / 12 Optional</span>
-              </div>
+                <h1 className="ga-heading">
+                  Verify
+                  <br />
+                  <strong>mobile OTP</strong>
+                </h1>
 
-              <div
-                className={`ga-display-box ${activeField === 'referrer' ? 'ga-display-active' : ''}`}
-                onClick={() => {
-                  setActiveField('referrer');
-                  setShowKeyboard(true);
-                }}
-                onKeyDown={() => {
-                  setActiveField('referrer');
-                  setShowKeyboard(true);
-                }}
-                role="button"
-                tabIndex={0}
-              >
-                <div className="ga-symbols">
-                  {renderDisplay(referrerSymbols, false)}
+                <div className="ga-field-block">
+                  <label className="ga-label" htmlFor="otpInput">
+                    OTP Code
+                  </label>
+
+                  <input
+                    id="otpInput"
+                    type="tel"
+                    inputMode="numeric"
+                    className="ga-input"
+                    value={otp}
+                    onChange={(event) => {
+                      const nextOtp = event.target.value.replace(/\D/g, '').slice(0, 4);
+                      setOtp(nextOtp);
+                      setStatus('');
+                    }}
+                    placeholder="0000"
+                    autoComplete="one-time-code"
+                    disabled={busy}
+                  />
                 </div>
 
                 <button
                   type="button"
-                  className="ga-hide-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActiveField('referrer');
-                    setShowKeyboard(true);
+                  className="ga-main-cta"
+                  disabled={otp.length !== 4 || busy}
+                  onClick={verifyOtp}
+                >
+                  Verify OTP
+                </button>
+
+                <button
+                  type="button"
+                  className="ga-back-btn"
+                  onClick={() => {
+                    setStep(1);
+                    setStatus('');
                   }}
                   disabled={busy}
                 >
-                  Add
+                  {'\u2190'} Back
                 </button>
               </div>
+            )}
 
-              <p className="ga-keyboard-hint">
-                Referrer ID uses the same symbolic Secure ID keyboard.
-              </p>
-            </div>
+            {step === 3 && (
+              <div className="ga-step-view ga-step-enter">
+                <div className="ga-eyebrow">
+                  <span className="ga-eyebrow-dot" />
+                  Step 3 of 3
+                </div>
 
-            {showKeyboard && (
-              <div className="ga-keypad-container">
-                <div className="ga-id-header">
+                <h1 className="ga-heading">
+                  Create your
+                  <br />
+                  <strong>Symbol ID</strong>
+                </h1>
+
+                <div className="ga-id-grid">
+                  <div
+                    className={`ga-id-box ${activeField === 'secure' ? 'ga-id-box-active' : ''}`}
+                    onClick={() => setActiveField('secure')}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        setActiveField('secure');
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <div className="ga-id-top">
+                      <span>12-Symbol Secure ID</span>
+                      <small>{secureSymbols.length} / 12</small>
+                    </div>
+
+                    <div className="ga-slots">
+                      {renderSymbolSlots(secureSymbols, hideSecure)}
+                    </div>
+
+                    <button
+                      type="button"
+                      className="ga-mini-action"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setHideSecure(!hideSecure);
+                      }}
+                      disabled={busy}
+                    >
+                      {hideSecure ? 'Show' : 'Hide'}
+                    </button>
+                  </div>
+
+                  <div
+                    className={`ga-id-box ${activeField === 'referrer' ? 'ga-id-box-active' : ''}`}
+                    onClick={() => setActiveField('referrer')}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        setActiveField('referrer');
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <div className="ga-id-top">
+                      <span>Referral ID</span>
+                      <small>{referrerSymbols.length} / 12 optional</small>
+                    </div>
+
+                    <div className="ga-slots">
+                      {renderSymbolSlots(referrerSymbols, false)}
+                    </div>
+
+                    <button
+                      type="button"
+                      className="ga-mini-action"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setActiveField('referrer');
+                      }}
+                      disabled={busy}
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                <div className="ga-editing-row">
                   <span>
-                    {activeField === 'secure'
-                      ? 'Editing Secure ID'
-                      : 'Editing Referrer Secure ID'}
+                    Editing: {activeField === 'secure' ? 'Secure ID' : 'Referral ID'}
                   </span>
 
-                  <span>{activeSymbols.length} / 12</span>
+                  <button type="button" onClick={handleClear} disabled={busy}>
+                    Clear
+                  </button>
                 </div>
 
-                <div className="ga-grid">
-                  {keys.map((char) => (
+                <div className="ga-dial" aria-label="Symbol dialpad">
+                  {SYMBOL_KEYS.map((symbol, index) => (
                     <button
-                      key={char}
+                      key={symbol}
                       type="button"
-                      onClick={() => handleKeyPress(char)}
-                      className="ga-btn"
+                      className={`ga-dial-key ga-dial-key-${index}`}
+                      onClick={() => handleSymbolPress(symbol)}
                       disabled={busy || activeSymbols.length >= 12}
                     >
-                      {char}
+                      {symbol}
                     </button>
                   ))}
 
                   <button
                     type="button"
-                    onClick={handleClearActive}
-                    className="ga-btn ga-btn-del"
-                    disabled={busy}
-                  >
-                    Clear
-                  </button>
-
-                  <button
-                    type="button"
+                    className="ga-dial-center"
                     onClick={handleDelete}
-                    className="ga-btn ga-btn-del"
                     disabled={busy}
+                    aria-label="Delete last symbol"
                   >
-                    ⌫
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleSubmit}
-                    className="ga-btn ga-btn-submit"
-                    disabled={busy}
-                  >
-                    ⇆
+                    {'\u232B'}
                   </button>
                 </div>
+
+                <button
+                  type="button"
+                  className="ga-main-cta"
+                  disabled={!canSubmit}
+                  onClick={handleSubmit}
+                >
+                  {busy ? 'Please wait...' : 'Register & Continue'}
+                </button>
+
+                <button
+                  type="button"
+                  className="ga-back-btn"
+                  onClick={() => {
+                    setStep(2);
+                    setStatus('');
+                  }}
+                  disabled={busy}
+                >
+                  {'\u2190'} Back
+                </button>
               </div>
             )}
 
             {status && (
-              <p style={{
-                marginTop: '14px',
-                color: status.toLowerCase().includes('complete') ||
-                  status.toLowerCase().includes('continuing') ||
-                  status.toLowerCase().includes('registered')
-                  ? '#16a34a'
-                  : '#dc2626',
-                fontWeight: 700,
-                fontSize: '14px',
-                lineHeight: 1.5,
-                textAlign: 'center'
-              }}>
+              <p className="ga-status">
                 {status}
               </p>
             )}
 
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={busy || secureSymbols.length !== 12 || !name.trim()}
-              style={{
-                width: '100%',
-                border: 'none',
-                borderRadius: '16px',
-                padding: '14px',
-                marginTop: '16px',
-                background: busy || secureSymbols.length !== 12 || !name.trim()
-                  ? '#94a3b8'
-                  : '#0f172a',
-                color: '#ffffff',
-                fontSize: '15px',
-                fontWeight: 800,
-                cursor: busy || secureSymbols.length !== 12 || !name.trim()
-                  ? 'not-allowed'
-                  : 'pointer'
-              }}
-            >
-              {busy ? 'Please wait...' : 'Continue'}
-            </button>
-
             <div className="ga-footer">
-              <span>❤️</span> from भारत
+              {'\u2764\uFE0F'} from {'\u092D\u093E\u0930\u0924'}
             </div>
           </>
         )}
