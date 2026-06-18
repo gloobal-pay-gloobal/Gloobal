@@ -25,6 +25,49 @@ function formatMobileIdentity(digits) {
   return `+${digits}`;
 }
 
+function OpenEyeIcon() {
+  return (
+    <svg
+      className="ga-eye-svg ga-eye-svg-open"
+      width="30"
+      height="30"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M1.8 12s3.8-7 10.2-7 10.2 7 10.2 7-3.8 7-10.2 7-10.2-7-10.2-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function ClosedEyeIcon() {
+  return (
+    <svg
+      className="ga-eye-svg ga-eye-svg-closed"
+      width="34"
+      height="34"
+      viewBox="0 0 64 64"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M8 30C19 44 45 44 56 30" />
+      <path d="M16 38L10 46" />
+      <path d="M28 43L27 52" />
+      <path d="M40 43L41 52" />
+      <path d="M50 38L56 46" />
+    </svg>
+  );
+}
+
 export default function GloobalAccess({ onComplete }) {
   const [step, setStep] = useState(1);
   const [mobile, setMobile] = useState('');
@@ -33,6 +76,7 @@ export default function GloobalAccess({ onComplete }) {
   const [referrerSymbols, setReferrerSymbols] = useState([]);
   const [activeField, setActiveField] = useState('secure');
   const [hideSecure, setHideSecure] = useState(false);
+  const [hideReferrer, setHideReferrer] = useState(false);
   const [registeredUser, setRegisteredUser] = useState(null);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
@@ -48,10 +92,18 @@ export default function GloobalAccess({ onComplete }) {
 
   const isMobileValid = mobileDigits.length >= 10 && mobileDigits.length <= 15;
   const isOtpValid = otp === PROTOTYPE_OTP;
-  const activeSymbols = activeField === 'secure' ? secureSymbols : referrerSymbols;
+
+  const currentFieldIsSecure = activeField === 'secure';
+  const activeSymbols = currentFieldIsSecure ? secureSymbols : referrerSymbols;
+  const currentFieldIsHidden = currentFieldIsSecure ? hideSecure : hideReferrer;
+  const currentFieldLabel = currentFieldIsSecure ? 'Secure ID' : 'Referral ID';
+
+  const eyeButtonLabel = currentFieldIsHidden
+    ? `Show ${currentFieldLabel}`
+    : `Hide ${currentFieldLabel}`;
 
   const updateActiveSymbols = (nextSymbols) => {
-    if (activeField === 'secure') {
+    if (currentFieldIsSecure) {
       setSecureSymbols(nextSymbols);
       return;
     }
@@ -64,7 +116,7 @@ export default function GloobalAccess({ onComplete }) {
 
     if (activeSymbols.length >= 12) {
       setStatus(
-        activeField === 'secure'
+        currentFieldIsSecure
           ? 'Secure ID already has 12 symbols.'
           : 'Referral ID already has 12 symbols.'
       );
@@ -75,51 +127,81 @@ export default function GloobalAccess({ onComplete }) {
     setStatus('');
   };
 
-  const handleDelete = () => {
-    if (busy) return;
-    updateActiveSymbols(activeSymbols.slice(0, -1));
-    setStatus('');
-  };
-
   const handleClear = () => {
     if (busy) return;
+
     updateActiveSymbols([]);
     setStatus('');
   };
 
-  const goToOtp = () => {
+  const handleToggleVisibility = () => {
+    if (busy) return;
+
+    if (activeField === 'secure') {
+      setHideSecure((currentValue) => !currentValue);
+    }
+
+    if (activeField === 'referrer') {
+      setHideReferrer((currentValue) => !currentValue);
+    }
+
+    setStatus('');
+  };
+
+  const handleMobileChange = (event) => {
+    const nextMobile = event.target.value;
+    const nextDigits = nextMobile.replace(/\D/g, '');
+    const nextMobileValid = nextDigits.length >= 10 && nextDigits.length <= 15;
+
+    setMobile(nextMobile);
+    setStatus('');
+
+    if (!nextMobileValid && otp) {
+      setOtp('');
+    }
+  };
+
+  const handleOtpChange = (event) => {
+    const nextOtp = event.target.value.replace(/\D/g, '').slice(0, 4);
+
+    setOtp(nextOtp);
+    setStatus('');
+  };
+
+  const proceedToSecureId = () => {
     if (!isMobileValid) {
       setStatus('Please enter a valid mobile number.');
       return;
     }
 
-    setOtp('');
-    setStatus('');
-    setStep(2);
-  };
-
-  const verifyOtp = () => {
     if (!isOtpValid) {
       setStatus('Enter OTP 0000 to verify mobile.');
       return;
     }
 
     setStatus('');
-    setStep(3);
+    setStep(2);
+  };
+
+  const deleteLastSecureSymbol = (event) => {
+    event.stopPropagation();
+
+    if (busy || secureSymbols.length === 0) return;
+
+    setSecureSymbols((currentSymbols) => currentSymbols.slice(0, -1));
+    setStatus('');
+  };
+
+  const deleteLastReferralSymbol = (event) => {
+    event.stopPropagation();
+
+    if (busy || referrerSymbols.length === 0) return;
+
+    setReferrerSymbols((currentSymbols) => currentSymbols.slice(0, -1));
+    setStatus('');
   };
 
   const handleSubmit = async () => {
-    if (!isMobileValid) {
-      alert('Please enter a valid mobile number.');
-      return;
-    }
-
-    if (!isOtpValid) {
-      alert('Please verify mobile OTP first.');
-      setStep(2);
-      return;
-    }
-
     if (secureSymbols.length !== 12) {
       alert('Please complete all 12 symbols for Secure ID.');
       return;
@@ -210,15 +292,9 @@ export default function GloobalAccess({ onComplete }) {
             <div className="ga-step-bar">
               <div className="ga-segment ga-done" />
               <div className="ga-segment ga-done" />
-              <div className="ga-segment ga-done" />
             </div>
 
             <div className="ga-success-orb">{'\u2713'}</div>
-
-            <div className="ga-eyebrow">
-              <span className="ga-eyebrow-dot" />
-              Ready
-            </div>
 
             <h1 className="ga-heading">
               Mobile identity
@@ -251,8 +327,7 @@ export default function GloobalAccess({ onComplete }) {
           <>
             <div className="ga-step-bar">
               <div className={`ga-segment ${step >= 1 ? 'ga-active' : ''} ${step > 1 ? 'ga-done' : ''}`} />
-              <div className={`ga-segment ${step >= 2 ? 'ga-active' : ''} ${step > 2 ? 'ga-done' : ''}`} />
-              <div className={`ga-segment ${step >= 3 ? 'ga-active' : ''}`} />
+              <div className={`ga-segment ${step >= 2 ? 'ga-active' : ''}`} />
             </div>
 
             <div className="ga-brand">
@@ -269,11 +344,6 @@ export default function GloobalAccess({ onComplete }) {
 
             {step === 1 && (
               <div className="ga-step-view ga-step-enter">
-                <div className="ga-eyebrow">
-                  <span className="ga-eyebrow-dot" />
-                  Step 1 of 3
-                </div>
-
                 <h1 className="ga-heading">
                   Enter your
                   <br />
@@ -291,39 +361,12 @@ export default function GloobalAccess({ onComplete }) {
                     inputMode="tel"
                     className="ga-input"
                     value={mobile}
-                    onChange={(event) => {
-                      setMobile(event.target.value);
-                      setStatus('');
-                    }}
+                    onChange={handleMobileChange}
                     placeholder="e.g. 9876543210"
                     autoComplete="tel"
                     disabled={busy}
                   />
                 </div>
-
-                <button
-                  type="button"
-                  className="ga-main-cta"
-                  disabled={!isMobileValid || busy}
-                  onClick={goToOtp}
-                >
-                  Continue
-                </button>
-              </div>
-            )}
-
-            {step === 2 && (
-              <div className="ga-step-view ga-step-enter">
-                <div className="ga-eyebrow">
-                  <span className="ga-eyebrow-dot" />
-                  Step 2 of 3
-                </div>
-
-                <h1 className="ga-heading">
-                  Verify
-                  <br />
-                  <strong>mobile OTP</strong>
-                </h1>
 
                 <div className="ga-field-block">
                   <label className="ga-label" htmlFor="otpInput">
@@ -336,47 +379,26 @@ export default function GloobalAccess({ onComplete }) {
                     inputMode="numeric"
                     className="ga-input"
                     value={otp}
-                    onChange={(event) => {
-                      const nextOtp = event.target.value.replace(/\D/g, '').slice(0, 4);
-                      setOtp(nextOtp);
-                      setStatus('');
-                    }}
+                    onChange={handleOtpChange}
                     placeholder="0000"
                     autoComplete="one-time-code"
-                    disabled={busy}
+                    disabled={!isMobileValid || busy}
                   />
                 </div>
 
                 <button
                   type="button"
                   className="ga-main-cta"
-                  disabled={otp.length !== 4 || busy}
-                  onClick={verifyOtp}
+                  disabled={!isMobileValid || !isOtpValid || busy}
+                  onClick={proceedToSecureId}
                 >
-                  Verify OTP
-                </button>
-
-                <button
-                  type="button"
-                  className="ga-back-btn"
-                  onClick={() => {
-                    setStep(1);
-                    setStatus('');
-                  }}
-                  disabled={busy}
-                >
-                  {'\u2190'} Back
+                  Continue
                 </button>
               </div>
             )}
 
-            {step === 3 && (
+            {step === 2 && (
               <div className="ga-step-view ga-step-enter">
-                <div className="ga-eyebrow">
-                  <span className="ga-eyebrow-dot" />
-                  Step 3 of 3
-                </div>
-
                 <h1 className="ga-heading">
                   Create your
                   <br />
@@ -406,14 +428,13 @@ export default function GloobalAccess({ onComplete }) {
 
                     <button
                       type="button"
-                      className="ga-mini-action"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setHideSecure(!hideSecure);
-                      }}
-                      disabled={busy}
+                      className="ga-mini-action ga-mini-delete"
+                      onClick={deleteLastSecureSymbol}
+                      disabled={busy || secureSymbols.length === 0}
+                      aria-label="Delete last Secure ID symbol"
+                      title="Delete last Secure ID symbol"
                     >
-                      {hideSecure ? 'Show' : 'Hide'}
+                      {'\u232B'}
                     </button>
                   </div>
 
@@ -434,26 +455,25 @@ export default function GloobalAccess({ onComplete }) {
                     </div>
 
                     <div className="ga-slots">
-                      {renderSymbolSlots(referrerSymbols, false)}
+                      {renderSymbolSlots(referrerSymbols, hideReferrer)}
                     </div>
 
                     <button
                       type="button"
-                      className="ga-mini-action"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setActiveField('referrer');
-                      }}
-                      disabled={busy}
+                      className="ga-mini-action ga-mini-delete"
+                      onClick={deleteLastReferralSymbol}
+                      disabled={busy || referrerSymbols.length === 0}
+                      aria-label="Delete last Referral ID symbol"
+                      title="Delete last Referral ID symbol"
                     >
-                      Add
+                      {'\u232B'}
                     </button>
                   </div>
                 </div>
 
                 <div className="ga-editing-row">
                   <span>
-                    Editing: {activeField === 'secure' ? 'Secure ID' : 'Referral ID'}
+                    Editing: {currentFieldLabel}
                   </span>
 
                   <button type="button" onClick={handleClear} disabled={busy}>
@@ -476,12 +496,13 @@ export default function GloobalAccess({ onComplete }) {
 
                   <button
                     type="button"
-                    className="ga-dial-center"
-                    onClick={handleDelete}
+                    className={`ga-dial-center ga-dial-eye ${currentFieldIsHidden ? 'ga-eye-closed' : 'ga-eye-open'}`}
+                    onClick={handleToggleVisibility}
                     disabled={busy}
-                    aria-label="Delete last symbol"
+                    aria-label={eyeButtonLabel}
+                    title={eyeButtonLabel}
                   >
-                    {'\u232B'}
+                    {currentFieldIsHidden ? <ClosedEyeIcon /> : <OpenEyeIcon />}
                   </button>
                 </div>
 
@@ -498,7 +519,7 @@ export default function GloobalAccess({ onComplete }) {
                   type="button"
                   className="ga-back-btn"
                   onClick={() => {
-                    setStep(2);
+                    setStep(1);
                     setStatus('');
                   }}
                   disabled={busy}

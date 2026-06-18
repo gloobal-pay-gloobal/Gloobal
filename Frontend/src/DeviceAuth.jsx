@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
 import './DeviceAuth.css';
@@ -33,7 +33,7 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
     return 'Checking device...';
   }, [busy, hasPasskey]);
 
-  const checkPasskeyStatus = async () => {
+  const checkPasskeyStatus = useCallback(async () => {
     if (!cleanSymbolId) {
       setStatus('Secure ID is missing.');
       setHasPasskey(false);
@@ -74,12 +74,11 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
     } finally {
       setBusy(false);
     }
-  };
+  }, [cleanSymbolId]);
 
   useEffect(() => {
     checkPasskeyStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cleanSymbolId]);
+  }, [checkPasskeyStatus]);
 
   const setupDeviceAuth = async () => {
     setBusy(true);
@@ -242,11 +241,6 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
         </div>
 
         <div className="da-step-view">
-          <div className="da-eyebrow">
-            <span className="da-eyebrow-dot" />
-            Device Authentication
-          </div>
-
           <h1 className="da-heading">
             {titleText}
             <br />

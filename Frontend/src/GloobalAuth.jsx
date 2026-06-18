@@ -168,11 +168,6 @@ export default function GloobalAuth({ symbolId, onSuccess }) {
         </div>
 
         <div className="auth-step-view">
-          <div className="auth-eyebrow">
-            <span className="auth-eyebrow-dot" />
-            {step === 'id' ? 'Secure ID' : 'Secure Login'}
-          </div>
-
           <h1 className="auth-heading">
             {step === 'id' ? (
               <>
