@@ -5,6 +5,13 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  mobileNumber: {
+    type: String,
+    unique: true,
+    sparse: true,
+    trim: true,
+    default: null
+  },
   symbolId: {
     type: String,
     required: true,

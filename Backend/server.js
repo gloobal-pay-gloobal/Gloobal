@@ -21,8 +21,20 @@ mongoose.connect(mongoURI)
 const normalizeText = (value) =>
   String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
+const normalizeMobileNumber = (value) => {
+  const raw = String(value || '').trim();
+  const digits = raw.replace(/\D/g, '');
+
+  if (digits.length === 10) return `+91${digits}`;
+  if (digits.length === 11 && digits.startsWith('0')) return `+91${digits.slice(1)}`;
+  if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
+
+  return raw;
+};
+
 const publicUserPayload = (user) => ({
   fullName: user.fullName,
+  mobileNumber: user.mobileNumber || user.fullName,
   symbolId: user.symbolId,
   referralCount: user.referralCount,
   referredBy: user.referredBy,
@@ -32,83 +44,115 @@ const publicUserPayload = (user) => ({
 // Registration and Multi-Level Referral Engine
 app.post('/api/register-symbol', async (req, res) => {
   try {
-    const { fullName, symbolId, referredBy } = req.body;
+    const { fullName, mobileNumber, symbolId, referredBy } = req.body;
 
-    const cleanFullName = String(fullName || '').trim().replace(/\s+/g, ' ');
+    const cleanMobileNumber = normalizeMobileNumber(mobileNumber || fullName);
+    const cleanFullName = cleanMobileNumber;
     const cleanSymbolId = String(symbolId || '').trim();
     const cleanReferrer = String(referredBy || '').trim();
 
-    if (!cleanFullName || !cleanSymbolId) {
+    if (!cleanMobileNumber || !cleanSymbolId) {
       return res.status(400).json({
-        message: 'Documented Name and Symbol ID are required.'
+        message: 'Mobile number and Secure ID are required.'
       });
     }
 
     if (Array.from(cleanSymbolId).length !== 12) {
       return res.status(400).json({
-        message: 'Secure ID must be exactly 12 symbols.'
+        message: 'Secure ID must contain exactly 12 symbols.'
       });
     }
 
-    const existingUser = await User.findOne({ symbolId: cleanSymbolId });
+    const existingUserBySymbol = await User.findOne({ symbolId: cleanSymbolId });
 
-    if (existingUser) {
-      if (normalizeText(existingUser.fullName) !== normalizeText(cleanFullName)) {
+    if (existingUserBySymbol) {
+      const existingMobile = normalizeMobileNumber(
+        existingUserBySymbol.mobileNumber || existingUserBySymbol.fullName
+      );
+
+      if (normalizeText(existingMobile) !== normalizeText(cleanMobileNumber)) {
         return res.status(409).json({
-          message: 'This Secure ID already belongs to another documented name. Please use the original name or create a new Secure ID.',
+          message: 'This Secure ID is already registered with a different mobile number.',
           alreadyRegistered: true,
           ownerMismatch: true
         });
       }
 
+      if (!existingUserBySymbol.mobileNumber) {
+        existingUserBySymbol.mobileNumber = cleanMobileNumber;
+        existingUserBySymbol.fullName = existingUserBySymbol.fullName || cleanFullName;
+        await existingUserBySymbol.save();
+      }
+
       return res.status(200).json({
         message: 'This Secure ID is already registered. Continue to login.',
         alreadyRegistered: true,
-        user: publicUserPayload(existingUser)
+        user: publicUserPayload(existingUserBySymbol)
+      });
+    }
+
+    const existingUserByMobile = await User.findOne({
+      $or: [
+        { mobileNumber: cleanMobileNumber },
+        { fullName: cleanMobileNumber }
+      ]
+    });
+
+    if (existingUserByMobile && existingUserByMobile.symbolId !== cleanSymbolId) {
+      return res.status(409).json({
+        message: 'This mobile number is already linked with another Secure ID. Please login with that Secure ID.'
       });
     }
 
     let validReferrerId = null;
-    let newReferralChain = [];
+    let referralChain = [];
 
     if (cleanReferrer) {
       const referrerUser = await User.findOne({ symbolId: cleanReferrer });
 
       if (referrerUser) {
         validReferrerId = referrerUser.symbolId;
-
-        referrerUser.referralCount += 1;
-        await referrerUser.save();
-
-        newReferralChain = [
+        referralChain = [
           referrerUser.symbolId,
-          ...referrerUser.referralChain
-        ];
+          ...(Array.isArray(referrerUser.referralChain) ? referrerUser.referralChain : [])
+        ].slice(0, 3);
       }
     }
 
     const newUser = new User({
       fullName: cleanFullName,
+      mobileNumber: cleanMobileNumber,
       symbolId: cleanSymbolId,
       referredBy: validReferrerId,
-      referralChain: newReferralChain
+      referralChain
     });
 
     await newUser.save();
 
+    if (validReferrerId) {
+      await User.updateOne(
+        { symbolId: validReferrerId },
+        { $inc: { referralCount: 1 } }
+      );
+    }
+
     return res.status(201).json({
-      message: 'Registration complete!',
+      message: 'Secure ID registered successfully.',
       user: publicUserPayload(newUser)
     });
   } catch (error) {
-    console.error('Registration Error:', error);
+    if (error.code === 11000) {
+      const duplicateField = Object.keys(error.keyPattern || {})[0] || 'identity';
 
-    if (error && error.code === 11000) {
       return res.status(409).json({
-        message: 'This Secure ID is already registered.',
-        alreadyRegistered: true
+        message:
+          duplicateField === 'mobileNumber'
+            ? 'This mobile number is already linked with another Secure ID. Please login.'
+            : 'This Secure ID is already registered.'
       });
     }
+
+    console.error('Registration Error:', error);
 
     return res.status(500).json({
       message: 'Server error during registration.'
@@ -157,6 +201,38 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+
+// Profile Details
+app.get('/api/profile/:symbolId', async (req, res) => {
+  try {
+    const cleanSymbolId = String(req.params.symbolId || '').trim();
+
+    if (!cleanSymbolId) {
+      return res.status(400).json({
+        message: 'Secure ID is required.'
+      });
+    }
+
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+
+    if (!user) {
+      return res.status(404).json({
+        message: 'Profile not found.'
+      });
+    }
+
+    return res.status(200).json({
+      message: 'Profile loaded successfully.',
+      user: publicUserPayload(user)
+    });
+  } catch (error) {
+    console.error('Profile Error:', error);
+
+    return res.status(500).json({
+      message: 'Server error while loading profile.'
+    });
+  }
+});
 async function getWebAuthnServer() {
   return await import('@simplewebauthn/server');
 }
@@ -241,7 +317,7 @@ app.post('/api/passkey/register/options', async (req, res) => {
       rpID,
       userID: new Uint8Array(Buffer.from(user.symbolId, 'utf8')),
       userName: user.symbolId,
-      userDisplayName: user.fullName,
+      userDisplayName: user.mobileNumber || user.fullName,
       attestationType: 'none',
       excludeCredentials: existingPasskeys.map((passkey) => ({
         id: passkey.id,
