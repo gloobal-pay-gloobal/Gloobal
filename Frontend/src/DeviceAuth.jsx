@@ -14,16 +14,11 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
 
   const cleanSymbolId = String(symbolId || '').trim();
 
-  const titleText = useMemo(() => {
-    if (hasPasskey === true) return 'Verify existing';
-    if (hasPasskey === false) return 'Set up device';
-    return 'Checking device';
-  }, [hasPasskey]);
-
+  // ── Heading: sirf ek line, short ──
   const strongText = useMemo(() => {
-    if (hasPasskey === true) return 'authentication';
-    if (hasPasskey === false) return 'passkey';
-    return 'security';
+    if (hasPasskey === true) return 'Authentication';
+    if (hasPasskey === false) return 'Passkey';
+    return 'Security';
   }, [hasPasskey]);
 
   const actionText = useMemo(() => {
@@ -63,12 +58,7 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
       }
     } catch (error) {
       console.error('Could not check passkey status:', error);
-
-      setStatus(
-        error.response?.data?.message ||
-        'Could not check device authentication.'
-      );
-
+      setStatus(error.response?.data?.message || 'Could not check device authentication.');
       setHasPasskey(false);
       setScanMode('error');
     } finally {
@@ -90,9 +80,7 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
         symbolId: cleanSymbolId
       });
 
-      const registrationResponse = await startRegistration({
-        optionsJSON: optionsResponse.data
-      });
+      const registrationResponse = await startRegistration({ optionsJSON: optionsResponse.data });
 
       setStatus('Finalizing device authentication...');
 
@@ -105,41 +93,23 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
         setHasPasskey(true);
         setScanMode('success');
         setStatus('Device authentication enabled.');
-
-        setTimeout(() => {
-          if (typeof onSuccess === 'function') {
-            onSuccess();
-          }
-        }, 900);
+        setTimeout(() => { if (typeof onSuccess === 'function') onSuccess(); }, 900);
       } else {
         setScanMode('ready');
-        setStatus(
-          verifyResponse.data?.message ||
-          'Device authentication setup failed.'
-        );
+        setStatus(verifyResponse.data?.message || 'Device authentication setup failed.');
       }
     } catch (error) {
       console.error('Device authentication setup failed:', error);
-
-      const rawMessage =
-        error.response?.data?.message ||
-        error.message ||
-        'Device authentication setup failed.';
-
+      const rawMessage = error.response?.data?.message || error.message || 'Device authentication setup failed.';
       const friendlyMessage =
         rawMessage.toLowerCase().includes('not allowed') ||
         rawMessage.toLowerCase().includes('timed out') ||
         rawMessage.toLowerCase().includes('device')
           ? 'This browser or device cannot create a passkey here. Try live HTTPS or another device.'
           : rawMessage;
-
       setStatus(friendlyMessage);
       setScanMode('error');
-
-      if (
-        error.response?.status === 409 ||
-        rawMessage.toLowerCase().includes('already')
-      ) {
+      if (error.response?.status === 409 || rawMessage.toLowerCase().includes('already')) {
         setHasPasskey(true);
         setScanMode('ready');
       }
@@ -158,9 +128,7 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
         symbolId: cleanSymbolId
       });
 
-      const authenticationResponse = await startAuthentication({
-        optionsJSON: optionsResponse.data
-      });
+      const authenticationResponse = await startAuthentication({ optionsJSON: optionsResponse.data });
 
       setStatus('Verifying device response...');
 
@@ -172,34 +140,20 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
       if (verifyResponse.data?.verified) {
         setScanMode('success');
         setStatus('Device authentication successful.');
-
-        setTimeout(() => {
-          if (typeof onSuccess === 'function') {
-            onSuccess();
-          }
-        }, 750);
+        setTimeout(() => { if (typeof onSuccess === 'function') onSuccess(); }, 750);
       } else {
         setScanMode('ready');
-        setStatus(
-          verifyResponse.data?.message ||
-          'Device authentication failed.'
-        );
+        setStatus(verifyResponse.data?.message || 'Device authentication failed.');
       }
     } catch (error) {
       console.error('Device authentication failed:', error);
-
-      const rawMessage =
-        error.response?.data?.message ||
-        error.message ||
-        'Device authentication failed.';
-
+      const rawMessage = error.response?.data?.message || error.message || 'Device authentication failed.';
       const friendlyMessage =
         rawMessage.toLowerCase().includes('not allowed') ||
         rawMessage.toLowerCase().includes('timed out') ||
         rawMessage.toLowerCase().includes('device')
           ? 'This browser or device cannot verify passkey here. Try live HTTPS or another device.'
           : rawMessage;
-
       setStatus(friendlyMessage);
       setScanMode('error');
     } finally {
@@ -209,12 +163,7 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
 
   const handlePrimaryAction = () => {
     if (busy || hasPasskey === null) return;
-
-    if (hasPasskey) {
-      verifyDeviceAuth();
-      return;
-    }
-
+    if (hasPasskey) { verifyDeviceAuth(); return; }
     setupDeviceAuth();
   };
 
@@ -228,22 +177,34 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
           <div className="da-segment da-active" />
         </div>
 
-        <div className="da-brand">
-          <div className="da-logo-circle" aria-label="Gloobal logo">
-            <img
-              src="/pwa-512x512.jpeg"
-              alt="Gloobal logo"
-              className="da-logo-img"
-            />
-          </div>
-
-          <div className="da-brand-text">Gloobal Access</div>
-        </div>
+        {/* Brand/logo REMOVED as requested */}
 
         <div className="da-step-view">
           <h1 className="da-heading">
-            {titleText}
-            <br />
+            <span style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 54, height: 54,
+              borderRadius: 18,
+              background: 'linear-gradient(145deg, #f0f4ff 0%, #dce5ff 60%, #c5d0fa 100%)',
+              boxShadow: '4px 4px 10px rgba(67,97,238,0.18), -2px -2px 6px rgba(255,255,255,0.9), inset 0 1px 2px rgba(255,255,255,0.8)',
+              margin: '0 auto 10px auto',
+            }}>
+              {hasPasskey ? (
+                /* Shield with tick — for verify/authentication */
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#4361ee" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2L3 6v6c0 5.25 3.75 10.15 9 11.25C18.25 22.15 22 17.25 22 12V6L12 2z" />
+                  <polyline points="9 12 11 14 15 10" />
+                </svg>
+              ) : (
+                /* Shield plain — for passkey setup */
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#4361ee" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2L3 6v6c0 5.25 3.75 10.15 9 11.25C18.25 22.15 22 17.25 22 12V6L12 2z" />
+                  <circle cx="12" cy="12" r="2" fill="#4361ee" />
+                </svg>
+              )}
+            </span>
             <strong>{strongText}</strong>
           </h1>
 
@@ -255,7 +216,6 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
                 <div className="da-bio-orbit" />
                 <div className="da-bio-spin" />
                 <div className="da-scan-beam" />
-
                 <div className="da-bio-icon" aria-hidden="true">
                   <svg width="86" height="86" viewBox="0 0 96 96" fill="none">
                     <path d="M20 34V18H36" stroke="#3d5af1" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
@@ -310,11 +270,7 @@ export default function DeviceAuth({ symbolId, onSuccess }) {
             Refresh status
           </button>
 
-          {status && (
-            <p className="da-status">
-              {status}
-            </p>
-          )}
+          {status && <p className="da-status">{status}</p>}
         </div>
 
         <div className="da-footer">
