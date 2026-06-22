@@ -3,7 +3,10 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const bcrypt = require('bcrypt');
 const User = require('./models/User');
+const Otp = require('./models/Otp');
+const Pin = require('./models/Pin');
 
 const app = express();
 
@@ -39,6 +42,272 @@ const publicUserPayload = (user) => ({
   referralCount: user.referralCount,
   referredBy: user.referredBy,
   hasPasskey: Array.isArray(user.passkeys) && user.passkeys.length > 0
+});
+
+
+// OTP Prototype APIs
+const validOtpPurposes = ['registration', 'login', 'pin_reset', 'mobile_change'];
+
+const resolveOtpPurpose = (purpose) => {
+  const cleanPurpose = String(purpose || 'registration').trim();
+
+  return validOtpPurposes.includes(cleanPurpose) ? cleanPurpose : 'registration';
+};
+
+app.post('/api/otp/send', async (req, res) => {
+  try {
+    const { mobileNumber, purpose } = req.body;
+    const cleanMobileNumber = normalizeMobileNumber(mobileNumber);
+    const cleanPurpose = resolveOtpPurpose(purpose);
+
+    if (!cleanMobileNumber) {
+      return res.status(400).json({
+        message: 'Mobile number is required.'
+      });
+    }
+
+    const prototypeOtp = process.env.PROTOTYPE_OTP || '0000';
+    const otpHash = await bcrypt.hash(prototypeOtp, 10);
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    await Otp.create({
+      mobileNumber: cleanMobileNumber,
+      otpHash,
+      purpose: cleanPurpose,
+      expiresAt
+    });
+
+    return res.status(200).json({
+      message: 'Prototype OTP sent successfully.',
+      mobileNumber: cleanMobileNumber,
+      purpose: cleanPurpose,
+      prototypeOtp
+    });
+  } catch (error) {
+    console.error('OTP send error:', error);
+
+    return res.status(500).json({
+      message: 'Server error while sending OTP.'
+    });
+  }
+});
+
+app.post('/api/otp/verify', async (req, res) => {
+  try {
+    const { mobileNumber, otp, purpose } = req.body;
+    const cleanMobileNumber = normalizeMobileNumber(mobileNumber);
+    const cleanPurpose = resolveOtpPurpose(purpose);
+    const cleanOtp = String(otp || '').trim();
+
+    if (!cleanMobileNumber || !cleanOtp) {
+      return res.status(400).json({
+        verified: false,
+        message: 'Mobile number and OTP are required.'
+      });
+    }
+
+    const latestOtp = await Otp.findOne({
+      mobileNumber: cleanMobileNumber,
+      purpose: cleanPurpose,
+      verifiedAt: null
+    }).sort({ createdAt: -1 });
+
+    if (!latestOtp) {
+      return res.status(404).json({
+        verified: false,
+        message: 'OTP was not requested or already used.'
+      });
+    }
+
+    if (latestOtp.expiresAt < new Date()) {
+      return res.status(400).json({
+        verified: false,
+        message: 'OTP has expired. Please request a new OTP.'
+      });
+    }
+
+    if (latestOtp.attempts >= latestOtp.maxAttempts) {
+      return res.status(429).json({
+        verified: false,
+        message: 'Too many OTP attempts. Please request a new OTP.'
+      });
+    }
+
+    const isMatch = await bcrypt.compare(cleanOtp, latestOtp.otpHash);
+
+    if (!isMatch) {
+      latestOtp.attempts += 1;
+      await latestOtp.save();
+
+      return res.status(401).json({
+        verified: false,
+        message: 'Invalid OTP.'
+      });
+    }
+
+    latestOtp.verifiedAt = new Date();
+    await latestOtp.save();
+
+    return res.status(200).json({
+      verified: true,
+      message: 'OTP verified successfully.',
+      mobileNumber: cleanMobileNumber,
+      purpose: cleanPurpose
+    });
+  } catch (error) {
+    console.error('OTP verify error:', error);
+
+    return res.status(500).json({
+      verified: false,
+      message: 'Server error while verifying OTP.'
+    });
+  }
+});
+
+// PIN Prototype APIs
+const isValidPinFormat = (pin) => /^\d{4,6}$/.test(String(pin || '').trim());
+
+app.post('/api/pin/set', async (req, res) => {
+  try {
+    const { symbolId, pin } = req.body;
+    const cleanSymbolId = String(symbolId || '').trim();
+    const cleanPin = String(pin || '').trim();
+
+    if (!cleanSymbolId || !cleanPin) {
+      return res.status(400).json({
+        message: 'Secure ID and PIN are required.'
+      });
+    }
+
+    if (!isValidPinFormat(cleanPin)) {
+      return res.status(400).json({
+        message: 'PIN must be 4 to 6 digits.'
+      });
+    }
+
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+
+    if (!user) {
+      return res.status(404).json({
+        message: 'Secure ID not found.'
+      });
+    }
+
+    const pinHash = await bcrypt.hash(cleanPin, 10);
+
+    await Pin.findOneAndUpdate(
+      { userId: user._id },
+      {
+        userId: user._id,
+        pinHash,
+        failedAttempts: 0,
+        lockedUntil: null,
+        changedAt: new Date()
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true
+      }
+    );
+
+    return res.status(200).json({
+      message: 'PIN set successfully.',
+      user: publicUserPayload(user)
+    });
+  } catch (error) {
+    console.error('PIN set error:', error);
+
+    return res.status(500).json({
+      message: 'Server error while setting PIN.'
+    });
+  }
+});
+
+app.post('/api/pin/verify', async (req, res) => {
+  try {
+    const { symbolId, pin } = req.body;
+    const cleanSymbolId = String(symbolId || '').trim();
+    const cleanPin = String(pin || '').trim();
+
+    if (!cleanSymbolId || !cleanPin) {
+      return res.status(400).json({
+        verified: false,
+        message: 'Secure ID and PIN are required.'
+      });
+    }
+
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+
+    if (!user) {
+      return res.status(404).json({
+        verified: false,
+        message: 'Secure ID not found.'
+      });
+    }
+
+    const pinRecord = await Pin.findOne({ userId: user._id });
+
+    if (!pinRecord) {
+      const prototypePin = process.env.DEFAULT_LOGIN_PIN || '1234';
+
+      if (cleanPin === prototypePin) {
+        return res.status(200).json({
+          verified: true,
+          prototypeFallback: true,
+          message: 'Prototype PIN verified successfully.',
+          user: publicUserPayload(user)
+        });
+      }
+
+      return res.status(404).json({
+        verified: false,
+        message: 'PIN is not set for this Secure ID.'
+      });
+    }
+
+    if (pinRecord.lockedUntil && pinRecord.lockedUntil > new Date()) {
+      return res.status(423).json({
+        verified: false,
+        message: 'PIN is temporarily locked. Please try again later.'
+      });
+    }
+
+    const isMatch = await bcrypt.compare(cleanPin, pinRecord.pinHash);
+
+    if (!isMatch) {
+      pinRecord.failedAttempts += 1;
+
+      if (pinRecord.failedAttempts >= 5) {
+        pinRecord.lockedUntil = new Date(Date.now() + 10 * 60 * 1000);
+      }
+
+      await pinRecord.save();
+
+      return res.status(401).json({
+        verified: false,
+        message: 'Invalid PIN.'
+      });
+    }
+
+    pinRecord.failedAttempts = 0;
+    pinRecord.lockedUntil = null;
+    pinRecord.lastVerifiedAt = new Date();
+    await pinRecord.save();
+
+    return res.status(200).json({
+      verified: true,
+      message: 'PIN verified successfully.',
+      user: publicUserPayload(user)
+    });
+  } catch (error) {
+    console.error('PIN verify error:', error);
+
+    return res.status(500).json({
+      verified: false,
+      message: 'Server error while verifying PIN.'
+    });
+  }
 });
 
 // Registration and Multi-Level Referral Engine
