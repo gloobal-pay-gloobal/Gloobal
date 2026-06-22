@@ -206,7 +206,7 @@ app.post('/api/pin/set', async (req, res) => {
       },
       {
         upsert: true,
-        new: true,
+        returnDocument: 'after',
         setDefaultsOnInsert: true
       }
     );
