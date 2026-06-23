@@ -76,6 +76,20 @@ const consumeOtp = async (otpRecord) => {
   otpRecord.consumedAt = new Date();
   await otpRecord.save();
 };
+
+const PIN_RESET_OTP_WINDOW_MS = 10 * 60 * 1000;
+
+const findVerifiedPinResetOtp = async (mobileNumber) => {
+  const verifiedAfter = new Date(Date.now() - PIN_RESET_OTP_WINDOW_MS);
+
+  return Otp.findOne({
+    mobileNumber,
+    purpose: 'pin_reset',
+    verifiedAt: { $ne: null, $gte: verifiedAfter },
+    consumedAt: null
+  }).sort({ verifiedAt: -1 });
+};
+
 app.post('/api/otp/send', async (req, res) => {
   try {
     const { mobileNumber, purpose } = req.body;
@@ -333,6 +347,84 @@ app.post('/api/pin/verify', async (req, res) => {
   }
 });
 
+
+// Reset PIN using verified OTP
+app.post('/api/pin/reset', async (req, res) => {
+  try {
+    const { symbolId, mobileNumber, pin, newPin } = req.body;
+    const cleanSymbolId = String(symbolId || '').trim();
+    const cleanMobileNumber = normalizeMobileNumber(mobileNumber);
+    const cleanPin = String(newPin || pin || '').trim();
+
+    if (!cleanSymbolId || !cleanMobileNumber || !cleanPin) {
+      return res.status(400).json({
+        message: 'Secure ID, mobile number, and new PIN are required.'
+      });
+    }
+
+    if (!isValidPinFormat(cleanPin)) {
+      return res.status(400).json({
+        message: 'PIN must be 4 to 6 digits.'
+      });
+    }
+
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+
+    if (!user) {
+      return res.status(404).json({
+        message: 'Secure ID not found.'
+      });
+    }
+
+    const userMobile = normalizeMobileNumber(user.mobileNumber || user.fullName);
+
+    if (normalizeText(userMobile) !== normalizeText(cleanMobileNumber)) {
+      return res.status(409).json({
+        message: 'Mobile number does not match this Secure ID.'
+      });
+    }
+
+    const verifiedPinResetOtp = await findVerifiedPinResetOtp(cleanMobileNumber);
+
+    if (!verifiedPinResetOtp) {
+      return res.status(403).json({
+        message: 'Please verify OTP before resetting PIN.'
+      });
+    }
+
+    const pinHash = await bcrypt.hash(cleanPin, 10);
+
+    await Pin.findOneAndUpdate(
+      { userId: user._id },
+      {
+        userId: user._id,
+        pinHash,
+        failedAttempts: 0,
+        lockedUntil: null,
+        lastVerifiedAt: null,
+        changedAt: new Date()
+      },
+      {
+        upsert: true,
+        returnDocument: 'after',
+        setDefaultsOnInsert: true
+      }
+    );
+
+    await consumeOtp(verifiedPinResetOtp);
+
+    return res.status(200).json({
+      message: 'PIN reset successfully.',
+      user: await publicUserPayload(user)
+    });
+  } catch (error) {
+    console.error('PIN reset error:', error);
+
+    return res.status(500).json({
+      message: 'Server error while resetting PIN.'
+    });
+  }
+});
 // Registration and Multi-Level Referral Engine
 app.post('/api/register-symbol', async (req, res) => {
   try {
