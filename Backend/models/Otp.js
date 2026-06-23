@@ -43,6 +43,11 @@ const otpSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    consumedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
   },
   {
     timestamps: true,

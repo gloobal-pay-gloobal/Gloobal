@@ -59,6 +59,23 @@ const resolveOtpPurpose = (purpose) => {
   return validOtpPurposes.includes(cleanPurpose) ? cleanPurpose : 'registration';
 };
 
+const REGISTRATION_OTP_WINDOW_MS = 10 * 60 * 1000;
+
+const findVerifiedRegistrationOtp = async (mobileNumber) => {
+  const verifiedAfter = new Date(Date.now() - REGISTRATION_OTP_WINDOW_MS);
+
+  return Otp.findOne({
+    mobileNumber,
+    purpose: 'registration',
+    verifiedAt: { $ne: null, $gte: verifiedAfter },
+    consumedAt: null
+  }).sort({ verifiedAt: -1 });
+};
+
+const consumeOtp = async (otpRecord) => {
+  otpRecord.consumedAt = new Date();
+  await otpRecord.save();
+};
 app.post('/api/otp/send', async (req, res) => {
   try {
     const { mobileNumber, purpose } = req.body;
@@ -151,6 +168,7 @@ app.post('/api/otp/verify', async (req, res) => {
     }
 
     latestOtp.verifiedAt = new Date();
+    latestOtp.expiresAt = new Date(Date.now() + REGISTRATION_OTP_WINDOW_MS);
     await latestOtp.save();
 
     return res.status(200).json({
@@ -337,6 +355,14 @@ app.post('/api/register-symbol', async (req, res) => {
       });
     }
 
+    const verifiedRegistrationOtp = await findVerifiedRegistrationOtp(cleanMobileNumber);
+
+    if (!verifiedRegistrationOtp) {
+      return res.status(403).json({
+        message: 'Please verify OTP before registration.'
+      });
+    }
+
     const existingUserBySymbol = await User.findOne({ symbolId: cleanSymbolId });
 
     if (existingUserBySymbol) {
@@ -357,6 +383,8 @@ app.post('/api/register-symbol', async (req, res) => {
         existingUserBySymbol.fullName = existingUserBySymbol.fullName || cleanFullName;
         await existingUserBySymbol.save();
       }
+
+      await consumeOtp(verifiedRegistrationOtp);
 
       return res.status(200).json({
         message: 'This Secure ID is already registered. Continue to login.',
@@ -410,6 +438,8 @@ app.post('/api/register-symbol', async (req, res) => {
       );
     }
 
+    await consumeOtp(verifiedRegistrationOtp);
+
     return res.status(201).json({
       message: 'Secure ID registered successfully.',
       user: await publicUserPayload(newUser)
@@ -433,7 +463,6 @@ app.post('/api/register-symbol', async (req, res) => {
     });
   }
 });
-
 // Secure Login
 app.post('/api/login', async (req, res) => {
   try {
