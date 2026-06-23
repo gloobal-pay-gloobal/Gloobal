@@ -35,14 +35,19 @@ const normalizeMobileNumber = (value) => {
   return raw;
 };
 
-const publicUserPayload = (user) => ({
-  fullName: user.fullName,
-  mobileNumber: user.mobileNumber || user.fullName,
-  symbolId: user.symbolId,
-  referralCount: user.referralCount,
-  referredBy: user.referredBy,
-  hasPasskey: Array.isArray(user.passkeys) && user.passkeys.length > 0
-});
+const publicUserPayload = async (user) => {
+  const hasPin = Boolean(await Pin.exists({ userId: user._id }));
+
+  return {
+    fullName: user.fullName,
+    mobileNumber: user.mobileNumber || user.fullName,
+    symbolId: user.symbolId,
+    referralCount: user.referralCount,
+    referredBy: user.referredBy,
+    hasPin,
+    hasPasskey: Array.isArray(user.passkeys) && user.passkeys.length > 0
+  };
+};
 
 
 // OTP Prototype APIs
@@ -213,7 +218,7 @@ app.post('/api/pin/set', async (req, res) => {
 
     return res.status(200).json({
       message: 'PIN set successfully.',
-      user: publicUserPayload(user)
+      user: await publicUserPayload(user)
     });
   } catch (error) {
     console.error('PIN set error:', error);
@@ -256,7 +261,7 @@ app.post('/api/pin/verify', async (req, res) => {
           verified: true,
           prototypeFallback: true,
           message: 'Prototype PIN verified successfully.',
-          user: publicUserPayload(user)
+          user: await publicUserPayload(user)
         });
       }
 
@@ -298,7 +303,7 @@ app.post('/api/pin/verify', async (req, res) => {
     return res.status(200).json({
       verified: true,
       message: 'PIN verified successfully.',
-      user: publicUserPayload(user)
+      user: await publicUserPayload(user)
     });
   } catch (error) {
     console.error('PIN verify error:', error);
@@ -356,7 +361,7 @@ app.post('/api/register-symbol', async (req, res) => {
       return res.status(200).json({
         message: 'This Secure ID is already registered. Continue to login.',
         alreadyRegistered: true,
-        user: publicUserPayload(existingUserBySymbol)
+        user: await publicUserPayload(existingUserBySymbol)
       });
     }
 
@@ -407,7 +412,7 @@ app.post('/api/register-symbol', async (req, res) => {
 
     return res.status(201).json({
       message: 'Secure ID registered successfully.',
-      user: publicUserPayload(newUser)
+      user: await publicUserPayload(newUser)
     });
   } catch (error) {
     if (error.code === 11000) {
@@ -429,15 +434,22 @@ app.post('/api/register-symbol', async (req, res) => {
   }
 });
 
-// Secure Login Prototype
+// Secure Login
 app.post('/api/login', async (req, res) => {
   try {
     const { secureId, symbolId, pin } = req.body;
     const loginSymbolId = String(secureId || symbolId || '').trim();
+    const cleanPin = String(pin || '').trim();
 
-    if (!loginSymbolId || !pin) {
+    if (!loginSymbolId || !cleanPin) {
       return res.status(400).json({
         message: 'Secure ID and PIN are required.'
+      });
+    }
+
+    if (!isValidPinFormat(cleanPin)) {
+      return res.status(400).json({
+        message: 'PIN must be 4 to 6 digits.'
       });
     }
 
@@ -449,17 +461,44 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
-    const prototypePin = process.env.DEFAULT_LOGIN_PIN || '1234';
+    const pinRecord = await Pin.findOne({ userId: user._id });
 
-    if (String(pin) !== prototypePin) {
+    if (!pinRecord) {
+      return res.status(404).json({
+        message: 'PIN is not set for this Secure ID. Please set your PIN first.'
+      });
+    }
+
+    if (pinRecord.lockedUntil && pinRecord.lockedUntil > new Date()) {
+      return res.status(423).json({
+        message: 'PIN is temporarily locked. Please try again later.'
+      });
+    }
+
+    const isMatch = await bcrypt.compare(cleanPin, pinRecord.pinHash);
+
+    if (!isMatch) {
+      pinRecord.failedAttempts += 1;
+
+      if (pinRecord.failedAttempts >= 5) {
+        pinRecord.lockedUntil = new Date(Date.now() + 10 * 60 * 1000);
+      }
+
+      await pinRecord.save();
+
       return res.status(401).json({
         message: 'Invalid PIN.'
       });
     }
 
+    pinRecord.failedAttempts = 0;
+    pinRecord.lockedUntil = null;
+    pinRecord.lastVerifiedAt = new Date();
+    await pinRecord.save();
+
     return res.status(200).json({
       message: 'Login successful.',
-      user: publicUserPayload(user)
+      user: await publicUserPayload(user)
     });
   } catch (error) {
     console.error('Login Error:', error);
@@ -469,7 +508,6 @@ app.post('/api/login', async (req, res) => {
     });
   }
 });
-
 
 // Profile Details
 app.get('/api/profile/:symbolId', async (req, res) => {
@@ -492,7 +530,7 @@ app.get('/api/profile/:symbolId', async (req, res) => {
 
     return res.status(200).json({
       message: 'Profile loaded successfully.',
-      user: publicUserPayload(user)
+      user: await publicUserPayload(user)
     });
   } catch (error) {
     console.error('Profile Error:', error);
@@ -539,7 +577,7 @@ app.post('/api/passkey/status', async (req, res) => {
 
     return res.status(200).json({
       hasPasskey: Array.isArray(user.passkeys) && user.passkeys.length > 0,
-      user: publicUserPayload(user)
+      user: await publicUserPayload(user)
     });
   } catch (error) {
     console.error('Passkey status error:', error);
@@ -680,7 +718,7 @@ app.post('/api/passkey/register/verify', async (req, res) => {
     return res.status(200).json({
       verified: true,
       message: 'Device authentication enabled.',
-      user: publicUserPayload(user)
+      user: await publicUserPayload(user)
     });
   } catch (error) {
     console.error('Passkey registration verify error:', error);
@@ -805,7 +843,7 @@ app.post('/api/passkey/auth/verify', async (req, res) => {
     return res.status(200).json({
       verified: true,
       message: 'Device authentication successful.',
-      user: publicUserPayload(user)
+      user: await publicUserPayload(user)
     });
   } catch (error) {
     console.error('Passkey authentication verify error:', error);
