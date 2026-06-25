@@ -64,7 +64,12 @@ export default function GloobalAuth({ symbolId, onSuccess }) {
   const verifyCredentials = async (completedPin) => {
     setStatus('Verifying...');
     try {
-      const response = await axios.post(`${API_BASE}/api/login`, { secureId, pin: completedPin });
+      const response = await axios.post(`${API_BASE}/api/login`, {
+        symbolId: secureId,
+        secureId,
+        pin: completedPin
+      });
+
       if (response.status === 200) {
         const user = response.data?.user || { fullName: 'User', symbolId: secureId };
         setStatus('Access granted.');
@@ -72,8 +77,38 @@ export default function GloobalAuth({ symbolId, onSuccess }) {
       }
     } catch (error) {
       console.error('Login failed:', error);
-      setStatus(error.response?.data?.message || 'Login failed. Please check Secure ID and PIN.');
-      setPin('');
+
+      const message = error.response?.data?.message || '';
+      const lowerMessage = message.toLowerCase();
+
+      const shouldSetPin =
+        lowerMessage.includes('pin is not set') ||
+        lowerMessage.includes('set your pin') ||
+        error.response?.status === 404;
+
+      if (!shouldSetPin) {
+        setStatus(message || 'Login failed. Please check Secure ID and PIN.');
+        setPin('');
+        return;
+      }
+
+      setStatus('Setting PIN for this Secure ID...');
+
+      try {
+        await axios.post(`${API_BASE}/api/pin/set`, {
+          symbolId: secureId,
+          secureId,
+          pin: completedPin
+        });
+
+        const user = { fullName: 'User', symbolId: secureId, hasPasskey: false };
+        setStatus('PIN set successfully. Continuing...');
+        setTimeout(() => { if (typeof onSuccess === 'function') onSuccess(user); }, 800);
+      } catch (pinError) {
+        console.error('PIN setup failed:', pinError);
+        setStatus(pinError.response?.data?.message || 'Could not set PIN. Please try again.');
+        setPin('');
+      }
     }
   };
 

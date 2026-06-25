@@ -329,6 +329,8 @@ export default function GloobalAccess({ onComplete }) {
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpMobile, setOtpMobile] = useState('');
   const mobileInputRef = React.useRef(null);
   const [hearts, setHearts] = useState([]);
   const [isBeating, setIsBeating] = useState(false);
@@ -351,7 +353,7 @@ export default function GloobalAccess({ onComplete }) {
   const secureId = secureSymbols.join('');
   const referredBy = referrerSymbols.join('');
   const isMobileValid = mobileDigits.length===10;
-  const isOtpValid = otp===PROTOTYPE_OTP;
+  const isOtpValid = otp.length===4;
   const currentFieldIsSecure = activeField==='secure';
   const activeSymbols = currentFieldIsSecure?secureSymbols:referrerSymbols;
   const currentFieldIsHidden = currentFieldIsSecure?hideSecure:hideReferrer;
@@ -369,23 +371,72 @@ export default function GloobalAccess({ onComplete }) {
     if(activeField==='referrer')setHideReferrer(v=>!v);
     setStatus('');
   };
-  const handleMobileChange = e => {
-    setMobile(e.target.value); setStatus('');
-    if(e.target.value.replace(/\D/g,'').length<10&&otp)setOtp('');
-  };
-  const handleOtpChange = e => {
-    const val = e.target.value.replace(/\D/g,'').slice(0,4);
-    setOtp(val); setStatus('');
-    if(val===PROTOTYPE_OTP&&isMobileValid) setOtpVerified(true);
-    else setOtpVerified(false);
+  const handleMobileChange = async e => {
+    const nextMobile = e.target.value;
+    const nextDigits = nextMobile.replace(/\D/g,'').slice(0,10);
+    const nextMobileIdentity = formatMobileIdentity(nextDigits, selectedCountry.code);
+
+    setMobile(nextMobile);
+    setStatus('');
+    setOtp('');
+    setOtpVerified(false);
+    setOtpSent(false);
+    setOtpMobile('');
+
+    if(nextDigits.length!==10)return;
+
+    setBusy(true);
+    setStatus('Sending OTP...');
+
+    try {
+      await axios.post(`${API_BASE}/api/otp/send`, {
+        mobileNumber: nextMobileIdentity,
+        purpose: 'registration'
+      });
+
+      setOtpSent(true);
+      setOtpMobile(nextMobileIdentity);
+      setStatus('OTP sent. Enter 0000 to verify.');
+    } catch(err) {
+      const message = err.response?.data?.message || 'Could not send OTP. Please try again.';
+      setStatus(message);
+      alert(message);
+    } finally {
+      setBusy(false);
+    }
   };
 
-  useEffect(()=>{
-    if(step===1&&isMobileValid&&isOtpValid&&otpVerified){
-      const t=setTimeout(()=>{ setStatus(''); setOtpVerified(false); setStep(2); },1200);
-      return ()=>clearTimeout(t);
+  const handleOtpChange = async e => {
+    const val = e.target.value.replace(/\D/g,'').slice(0,4);
+
+    setOtp(val);
+    setStatus('');
+    setOtpVerified(false);
+
+    if(val.length!==4||!isMobileValid)return;
+
+    setBusy(true);
+    setStatus('Verifying OTP...');
+
+    try {
+      await axios.post(`${API_BASE}/api/otp/verify`, {
+        mobileNumber: mobileIdentity,
+        otp: val,
+        purpose: 'registration'
+      });
+
+      setOtpVerified(true);
+      setStatus('OTP verified. Continue to Secure ID.');
+      setTimeout(()=>{ setStatus(''); setStep(2); },900);
+    } catch(err) {
+      const message = err.response?.data?.message || 'Invalid OTP. Please try again.';
+      setOtpVerified(false);
+      setStatus(message);
+      alert(message);
+    } finally {
+      setBusy(false);
     }
-  },[step,isMobileValid,isOtpValid,otpVerified]);
+  };
 
   const deleteLastSecureSymbol = e=>{ e&&e.stopPropagation(); if(busy||!secureSymbols.length)return; setSecureSymbols(s=>s.slice(0,-1)); setStatus(''); };
   const deleteLastReferralSymbol = e=>{ e&&e.stopPropagation(); if(busy||!referrerSymbols.length)return; setReferrerSymbols(s=>s.slice(0,-1)); setStatus(''); };
@@ -393,7 +444,7 @@ export default function GloobalAccess({ onComplete }) {
   const handleSubmit = async () => {
     if(secureSymbols.length!==12){alert('Please complete all 12 symbols for Secure ID.');return;}
     if(referrerSymbols.length>0&&referrerSymbols.length!==12){alert('Referral ID must be 12 symbols if entered.');return;}
-    const userData={fullName:mobileIdentity,symbolId:secureId,referredBy:referredBy||''};
+    const userData={fullName:mobileIdentity,mobileNumber:mobileIdentity,symbolId:secureId,referredBy:referredBy||''};
     setBusy(true); setStatus('Checking Secure ID...');
     try {
       const response = await axios.post(`${API_BASE}/api/register-symbol`,userData);
