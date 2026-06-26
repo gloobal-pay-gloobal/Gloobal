@@ -37,15 +37,19 @@ const normalizeMobileNumber = (value) => {
 
 const publicUserPayload = async (user) => {
   const hasPin = Boolean(await Pin.exists({ userId: user._id }));
+  const hasPasskey = Array.isArray(user.passkeys) && user.passkeys.length > 0;
+  const joinedDate = user.createdAt || null;
 
   return {
     fullName: user.fullName,
     mobileNumber: user.mobileNumber || user.fullName,
     symbolId: user.symbolId,
-    referralCount: user.referralCount,
-    referredBy: user.referredBy,
+    referredBy: user.referredBy || null,
+    referralCount: user.referralCount || 0,
     hasPin,
-    hasPasskey: Array.isArray(user.passkeys) && user.passkeys.length > 0
+    hasPasskey,
+    createdAt: joinedDate,
+    joinedDate
   };
 };
 
