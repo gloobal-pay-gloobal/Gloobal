@@ -331,6 +331,7 @@ export default function GloobalAccess({ onComplete }) {
   const [otpVerified, setOtpVerified] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [otpMobile, setOtpMobile] = useState('');
+  const [showMobileEntry, setShowMobileEntry] = useState(false);
   const mobileInputRef = React.useRef(null);
   const [hearts, setHearts] = useState([]);
   const [isBeating, setIsBeating] = useState(false);
@@ -348,11 +349,11 @@ export default function GloobalAccess({ onComplete }) {
     return ()=>clearInterval(interval);
   },[]);
 
-  const mobileDigits = mobile.replace(/\D/g,'').slice(0,10);
+  const mobileDigits = mobile.replace(/\D/g,'').slice(0,12);
   const mobileIdentity = useMemo(()=>formatMobileIdentity(mobileDigits,selectedCountry.code),[mobileDigits,selectedCountry]);
   const secureId = secureSymbols.join('');
   const referredBy = referrerSymbols.join('');
-  const isMobileValid = mobileDigits.length===10;
+  const isMobileValid = mobileDigits.length>=7&&mobileDigits.length<=12;
   const isOtpValid = otp.length===4;
   const currentFieldIsSecure = activeField==='secure';
   const activeSymbols = currentFieldIsSecure?secureSymbols:referrerSymbols;
@@ -371,10 +372,8 @@ export default function GloobalAccess({ onComplete }) {
     if(activeField==='referrer')setHideReferrer(v=>!v);
     setStatus('');
   };
-  const handleMobileChange = async e => {
-    const nextMobile = e.target.value;
-    const nextDigits = nextMobile.replace(/\D/g,'').slice(0,10);
-    const nextMobileIdentity = formatMobileIdentity(nextDigits, selectedCountry.code);
+  const handleMobileChange = e => {
+    const nextMobile = e.target.value.replace(/\D/g,'').slice(0,12);
 
     setMobile(nextMobile);
     setStatus('');
@@ -382,20 +381,34 @@ export default function GloobalAccess({ onComplete }) {
     setOtpVerified(false);
     setOtpSent(false);
     setOtpMobile('');
+    setShowMobileEntry(true);
+  };
 
-    if(nextDigits.length!==10)return;
+  const handleSendOtp = async () => {
+    if(!showMobileEntry && !isMobileValid){
+      setShowMobileEntry(true);
+      setStatus('');
+      setTimeout(()=>mobileInputRef.current&&mobileInputRef.current.focus(),100);
+      return;
+    }
+
+    if(!isMobileValid){
+      setStatus('Please enter a valid 7 to 12 digit mobile number.');
+      setTimeout(()=>mobileInputRef.current&&mobileInputRef.current.focus(),100);
+      return;
+    }
 
     setBusy(true);
     setStatus('Sending OTP...');
 
     try {
       await axios.post(`${API_BASE}/api/otp/send`, {
-        mobileNumber: nextMobileIdentity,
+        mobileNumber: mobileIdentity,
         purpose: 'registration'
       });
 
       setOtpSent(true);
-      setOtpMobile(nextMobileIdentity);
+      setOtpMobile(mobileIdentity);
       setStatus('OTP sent. Enter 0000 to verify.');
     } catch(err) {
       const message = err.response?.data?.message || 'Could not send OTP. Please try again.';
@@ -413,7 +426,7 @@ export default function GloobalAccess({ onComplete }) {
     setStatus('');
     setOtpVerified(false);
 
-    if(val.length!==4||!isMobileValid)return;
+    if(val.length!==4||!isMobileValid||!otpSent||otpMobile!==mobileIdentity)return;
 
     setBusy(true);
     setStatus('Verifying OTP...');
@@ -463,12 +476,13 @@ export default function GloobalAccess({ onComplete }) {
     } finally { setBusy(false); }
   };
 
-  const canSubmit = isMobileValid&&isOtpValid&&secureSymbols.length===12&&!busy;
+  const canSubmit = isMobileValid&&isOtpValid&&otpVerified&&secureSymbols.length===12&&!busy;
 
   return (
     <div className="ga-wrapper">
       <style>{`
         .ga-wrapper { background:#f0f3ff !important; min-height:100vh; }
+        .ga-mobile-number-input::placeholder { color:#111827; opacity:1; font-weight:800; }
         .ga-shell { background:transparent !important; }
 
         .ga-country-dropdown { position:absolute;top:calc(100% + 6px);left:0;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(67,97,238,0.18);border:1px solid rgba(67,97,238,0.12);overflow-y:auto;max-height:220px;min-width:200px; }
@@ -532,80 +546,187 @@ export default function GloobalAccess({ onComplete }) {
 
                 {/* ── GLOBE centered ── */}
                 <div style={{display:'flex',justifyContent:'center',marginBottom:20}}>
-                  <GlobeSVG size={140}/>
+                  <GlobeSVG size={190}/>
                 </div>
 
-                {/* ── MOBILE NUMBER BOX — main card ── */}
+                {/* Founder requested phone detection card */}
                 <div
-                  onClick={()=>mobileInputRef.current&&mobileInputRef.current.focus()}
                   style={{
                     width:'100%',
-                    background:'linear-gradient(145deg,#ffffff,#eef1ff)',
-                    borderRadius:20,
-                    boxShadow:'0 8px 28px rgba(67,97,238,0.16), 0 2px 8px rgba(67,97,238,0.08)',
-                    border:'1.5px solid rgba(255,255,255,0.95)',
-                    padding:'14px 16px 12px',
+                    background:'#ffffff',
+                    borderRadius:28,
+                    boxShadow:'0 12px 32px rgba(67,97,238,0.15), 0 2px 10px rgba(67,97,238,0.08)',
+                    border:'1px solid rgba(255,255,255,0.95)',
+                    padding:'16px 14px',
                     boxSizing:'border-box',
-                    cursor:'text',
-                    marginBottom:10,
-                  }}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                    <small style={{color:'#8892b0',fontSize:11,fontWeight:600,letterSpacing:'0.04em'}}>
-                      {mobileDigits.length} / 10
-                    </small>
-                    {isMobileValid && <VerifyCircle3D done={true} size={22}/>}
-                  </div>
-                  <ColorMobileBoxes
-                    digits={mobileDigits}
-                    selectedCountry={selectedCountry}
-                    onSelectCountry={setSelectedCountry}
-                    onRef={el=>{
-                      mobileInputRef.current=el;
-                      if(el){el.value=mobile;el.oninput=ev=>handleMobileChange({target:{value:ev.target.value}});}
-                    }}
-                  />
-                </div>
+                    marginBottom:12,
+                  }}
+                >
+                  <div style={{display:'grid',gridTemplateColumns:'48px minmax(0,1fr) 86px',alignItems:'center',gap:10}}>
+                    <div
+                      style={{
+                        width:48,
+                        height:48,
+                        borderRadius:16,
+                        background:'#f2f4ff',
+                        display:'flex',
+                        alignItems:'center',
+                        justifyContent:'center',
+                        color:'#4361ee',
+                        flexShrink:0,
+                      }}
+                      aria-hidden="true"
+                    >
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4361ee" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M22 16.92v3a2 2 0 0 1-2.18 2A19.8 19.8 0 0 1 3.08 5.18 2 2 0 0 1 5.06 3h3a2 2 0 0 1 2 1.72c.12.9.33 1.77.63 2.61a2 2 0 0 1-.45 2.11L9 10.68a16 16 0 0 0 4.32 4.32l1.24-1.24a2 2 0 0 1 2.11-.45c.84.3 1.71.51 2.61.63A2 2 0 0 1 22 16.92z"/>
+                      </svg>
+                    </div>
 
-                {/* ── OTP — small, simple, below mobile card ── */}
-                <div style={{
-                  width:'100%',
-                  background:'rgba(255,255,255,0.7)',
-                  borderRadius:16,
-                  boxShadow:'0 4px 16px rgba(67,97,238,0.10)',
-                  border:'1px solid rgba(67,97,238,0.08)',
-                  padding:'12px 16px',
-                  boxSizing:'border-box',
-                  display:'flex',
-                  alignItems:'center',
-                  gap:12,
-                }}>
-                  <label style={{fontSize:12,fontWeight:700,color:'#4361ee',letterSpacing:'0.06em',flexShrink:0}}>OTP</label>
-                  <input
-                    id="otpInput" type="tel" inputMode="numeric"
-                    value={otp} onChange={handleOtpChange} placeholder="0 0 0 0"
-                    autoComplete="one-time-code" disabled={!isMobileValid||busy}
-                    style={{
-                      flex:1,
-                      padding:'8px 12px',
-                      fontSize:18, fontWeight:800, letterSpacing:'0.4em',
-                      textAlign:'center', color:'#3142a0',
-                      border:'none', outline:'none', borderRadius:12,
-                      background: otpVerified
-                        ? 'radial-gradient(circle at 35% 28%,#eafff5 0%,#d6fbe8 100%)'
-                        : 'radial-gradient(circle at 35% 30%,#ffffff 0%,#f0f2ff 55%,#dce2ff 100%)',
-                      boxShadow: otpVerified
-                        ? 'inset 2px 2px 6px rgba(46,213,115,0.18),inset -1px -1px 4px rgba(255,255,255,0.9)'
-                        : 'inset 2px 2px 6px rgba(67,97,238,0.12),inset -1px -1px 4px rgba(255,255,255,0.9)',
-                      transition:'all 0.3s ease',
-                      opacity:(!isMobileValid||busy)?0.45:1,
-                    }}
-                  />
-                  {otpVerified && (
-                    <div style={{animation:'ga-verify-pop 0.4s cubic-bezier(0.34,1.56,0.64,1)',flexShrink:0}}>
-                      <VerifyCircle3D done={true} size={28}/>
+                    <div style={{flex:1,minWidth:0,textAlign:'left'}}>
+                      <div style={{fontSize:17,lineHeight:1.12,fontWeight:850,color:'#111827',whiteSpace:'normal'}}>
+                        We'll detect your number
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleSendOtp}
+                      disabled={busy}
+                      style={{
+                        border:'none',
+                        borderRadius:20,
+                        padding:'11px 8px',
+                        minWidth:86,
+                        background:'linear-gradient(145deg,#5d72ff,#4361ee)',
+                        color:'#ffffff',
+                        fontSize:13,
+                        fontWeight:900,
+                        whiteSpace:'nowrap',
+                        boxShadow:'0 10px 24px rgba(67,97,238,0.34)',
+                        cursor:busy?'not-allowed':'pointer',
+                        opacity:busy?0.65:1,
+                        flexShrink:0,
+                      }}
+                    >
+                      {otpSent ? 'Resend' : 'Send OTP'}
+                    </button>
+                  </div>
+
+                  {(showMobileEntry || mobileDigits.length > 0 || otpSent) && (
+                    <div
+                      style={{
+                        marginTop:14,
+                        display:'flex',
+                        alignItems:'center',
+                        gap:10,
+                        background:'#f7f8ff',
+                        borderRadius:16,
+                        padding:'10px 12px',
+                      }}
+                    >
+                      <select
+                        value={selectedCountry.name}
+                        onChange={(e)=>{
+                          const nextCountry = COUNTRIES.find(country=>country.name===e.target.value) || COUNTRIES[0];
+                          setSelectedCountry(nextCountry);
+                          setStatus('');
+                          setOtp('');
+                          setOtpVerified(false);
+                          setOtpSent(false);
+                          setOtpMobile('');
+                          setShowMobileEntry(true);
+                        }}
+                        disabled={busy}
+                        style={{
+                          width:92,
+                          border:'none',
+                          outline:'none',
+                          background:'transparent',
+                          color:'#111827',
+                          fontSize:16,
+                          fontWeight:850,
+                          cursor:'pointer',
+                        }}
+                        aria-label="Country code"
+                      >
+                        {COUNTRIES.map(country=>(
+                          <option key={country.name + country.code} value={country.name}>
+                            {country.flag} {country.code}
+                          </option>
+                        ))}
+                      </select>
+
+                      <input
+                        className="ga-mobile-number-input"
+                        ref={mobileInputRef}
+                        type="tel"
+                        inputMode="numeric"
+                        value={mobileDigits}
+                        onChange={handleMobileChange}
+                        maxLength={12}
+                        placeholder="7–12 digit mobile number"
+                        disabled={busy}
+                        style={{
+                          flex:1,
+                          minWidth:0,
+                          border:'none',
+                          outline:'none',
+                          background:'transparent',
+                          color:'#111827',
+                          fontSize:17,
+                          fontWeight:800,
+                          letterSpacing:'0.03em',
+                        }}
+                      />
+
+                      <small style={{color:'#4361ee',fontSize:11,fontWeight:850,whiteSpace:'nowrap'}}>
+                        {mobileDigits.length}/12
+                      </small>
                     </div>
                   )}
                 </div>
+
+                {otpSent && (
+                  <div style={{
+                    width:'100%',
+                    background:'#ffffff',
+                    borderRadius:26,
+                    boxShadow:'0 12px 32px rgba(67,97,238,0.13), 0 2px 10px rgba(67,97,238,0.07)',
+                    border:'1px solid rgba(255,255,255,0.95)',
+                    padding:'14px 16px',
+                    boxSizing:'border-box',
+                    display:'flex',
+                    alignItems:'center',
+                    gap:12,
+                  }}>
+                    <label style={{fontSize:12,fontWeight:850,color:'#4361ee',letterSpacing:'0.04em',flexShrink:0}}>OTP</label>
+                    <input
+                      id="otpInput" type="tel" inputMode="numeric"
+                      value={otp} onChange={handleOtpChange} placeholder="0 0 0 0"
+                      autoComplete="one-time-code" disabled={!otpSent||!isMobileValid||busy}
+                      style={{
+                        flex:1,
+                        padding:'8px 12px',
+                        fontSize:18, fontWeight:800, letterSpacing:'0.4em',
+                        textAlign:'center', color:'#111827',
+                        border:'none', outline:'none', borderRadius:12,
+                        background: otpVerified
+                          ? '#f7f8ff'
+                          : '#f7f8ff',
+                        boxShadow: otpVerified
+                          ? 'inset 2px 2px 6px rgba(46,213,115,0.18),inset -1px -1px 4px rgba(255,255,255,0.9)'
+                          : 'inset 2px 2px 6px rgba(67,97,238,0.12),inset -1px -1px 4px rgba(255,255,255,0.9)',
+                        transition:'all 0.3s ease',
+                        opacity:(!otpSent||!isMobileValid||busy)?0.45:1,
+                      }}
+                    />
+                    {otpVerified && (
+                      <div style={{animation:'ga-verify-pop 0.4s cubic-bezier(0.34,1.56,0.64,1)',flexShrink:0}}>
+                        <VerifyCircle3D done={true} size={28}/>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {status&&<p className="ga-status" style={{marginTop:10}}>{status}</p>}
               </div>
@@ -615,7 +736,7 @@ export default function GloobalAccess({ onComplete }) {
               <div className="ga-step-view ga-step-enter">
                 <h1 className="ga-heading">
                   <Icon3D>
-                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#4361ee" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4361ee" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="3" y="11" width="18" height="11" rx="2"/>
                       <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                       <circle cx="12" cy="16" r="1.5" fill="#4361ee"/>
