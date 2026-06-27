@@ -7,6 +7,9 @@ const bcrypt = require('bcrypt');
 const User = require('./models/User');
 const Otp = require('./models/Otp');
 const Pin = require('./models/Pin');
+const Transaction = require('./models/Transaction');
+const LedgerEntry = require('./models/LedgerEntry');
+
 
 const app = express();
 
@@ -982,6 +985,221 @@ app.post('/api/passkey/auth/verify', async (req, res) => {
 
 // Start Server
 const PORT = process.env.PORT || 5000;
+
+
+
+// -------------------------
+// Transaction Prototype APIs
+// -------------------------
+
+function createPrototypeTransactionReference() {
+  return `GLOOBAL-TXN-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+}
+
+function cleanTransactionUser(user) {
+  if (!user) return null;
+
+  return {
+    fullName: user.fullName || '',
+    symbolId: user.symbolId || '',
+  };
+}
+
+function cleanTransactionPayload(transaction, sender, receiver) {
+  return {
+    id: transaction._id,
+    referenceId: transaction.referenceId,
+    amount: transaction.amount,
+    currency: transaction.currency,
+    type: transaction.type,
+    status: transaction.status,
+    note: transaction.note || '',
+    sender: cleanTransactionUser(sender),
+    receiver: cleanTransactionUser(receiver),
+    createdAt: transaction.createdAt,
+    updatedAt: transaction.updatedAt,
+  };
+}
+
+app.post('/api/transactions/send', async (req, res) => {
+  try {
+    const senderSymbolId = String(
+      req.body.senderSymbolId || req.body.fromSymbolId || req.body.symbolId || ''
+    ).trim();
+
+    const receiverSymbolId = String(
+      req.body.receiverSymbolId || req.body.toSymbolId || req.body.to || ''
+    ).trim();
+
+    const amount = Number(req.body.amount);
+    const currency = String(req.body.currency || 'INR').trim().toUpperCase();
+    const note = String(req.body.note || '').trim().slice(0, 200);
+
+    if (!senderSymbolId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Sender Secure ID is required.',
+      });
+    }
+
+    if (!receiverSymbolId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Receiver Secure ID is required.',
+      });
+    }
+
+    if (senderSymbolId === receiverSymbolId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Self-transfer is not allowed.',
+      });
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid amount greater than 0 is required.',
+      });
+    }
+
+    const [sender, receiver] = await Promise.all([
+      User.findOne({ symbolId: senderSymbolId }),
+      User.findOne({ symbolId: receiverSymbolId }),
+    ]);
+
+    if (!sender) {
+      return res.status(404).json({
+        success: false,
+        message: 'Sender Secure ID not found.',
+      });
+    }
+
+    if (!receiver) {
+      return res.status(404).json({
+        success: false,
+        message: 'Receiver Secure ID not found.',
+      });
+    }
+
+    const transaction = await Transaction.create({
+      fromUserId: sender._id,
+      toUserId: receiver._id,
+      amount,
+      currency,
+      type: 'send',
+      status: 'success',
+      note,
+      referenceId: createPrototypeTransactionReference(),
+      metadata: {
+        prototype: true,
+        channel: 'symbol_id',
+        authMode: 'prototype_no_real_money_movement',
+      },
+    });
+
+    await LedgerEntry.create([
+      {
+        transactionId: transaction._id,
+        userId: sender._id,
+        entryType: 'debit',
+        amount,
+        currency,
+        note: note || `Sent to ${receiver.symbolId}`,
+        metadata: {
+          prototype: true,
+          counterpartySymbolId: receiver.symbolId,
+        },
+      },
+      {
+        transactionId: transaction._id,
+        userId: receiver._id,
+        entryType: 'credit',
+        amount,
+        currency,
+        note: note || `Received from ${sender.symbolId}`,
+        metadata: {
+          prototype: true,
+          counterpartySymbolId: sender.symbolId,
+        },
+      },
+    ]);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Prototype transaction created successfully.',
+      transaction: cleanTransactionPayload(transaction, sender, receiver),
+    });
+  } catch (error) {
+    console.error('Transaction send error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Could not create transaction.',
+    });
+  }
+});
+
+app.get('/api/transactions/history/:symbolId', async (req, res) => {
+  try {
+    const symbolId = String(req.params.symbolId || '').trim();
+
+    if (!symbolId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Secure ID is required.',
+      });
+    }
+
+    const user = await User.findOne({ symbolId });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Secure ID not found.',
+      });
+    }
+
+    const transactions = await Transaction.find({
+      $or: [{ fromUserId: user._id }, { toUserId: user._id }],
+    })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .populate('fromUserId', 'fullName symbolId')
+      .populate('toUserId', 'fullName symbolId')
+      .lean();
+
+    const history = transactions.map((transaction) => {
+      const senderId = String(transaction.fromUserId?._id || transaction.fromUserId || '');
+      const isSender = senderId === String(user._id);
+      const counterparty = isSender ? transaction.toUserId : transaction.fromUserId;
+
+      return {
+        id: transaction._id,
+        referenceId: transaction.referenceId,
+        direction: isSender ? 'sent' : 'received',
+        amount: transaction.amount,
+        currency: transaction.currency,
+        status: transaction.status,
+        note: transaction.note || '',
+        counterparty: cleanTransactionUser(counterparty),
+        createdAt: transaction.createdAt,
+      };
+    });
+
+    return res.json({
+      success: true,
+      symbolId: user.symbolId,
+      count: history.length,
+      transactions: history,
+    });
+  } catch (error) {
+    console.error('Transaction history error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Could not load transaction history.',
+    });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
