@@ -45,6 +45,7 @@ const publicUserPayload = async (user) => {
 
   return {
     fullName: user.fullName,
+    email: user.email || '',
     mobileNumber: user.mobileNumber || user.fullName,
     symbolId: user.symbolId,
     referredBy: user.referredBy || null,
@@ -665,6 +666,84 @@ app.get('/api/profile/:symbolId', async (req, res) => {
 
     return res.status(500).json({
       message: 'Server error while loading profile.'
+    });
+  }
+});
+
+app.put('/api/profile/:symbolId', async (req, res) => {
+  try {
+    const cleanSymbolId = String(req.params.symbolId || '').trim();
+
+    if (!cleanSymbolId) {
+      return res.status(400).json({
+        message: 'Secure ID is required.'
+      });
+    }
+
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+
+    if (!user) {
+      return res.status(404).json({
+        message: 'Profile not found.'
+      });
+    }
+
+    const updates = {};
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'fullName')) {
+      const cleanFullName = String(req.body.fullName || '').trim();
+
+      if (!cleanFullName) {
+        return res.status(400).json({
+          message: 'Name cannot be empty.'
+        });
+      }
+
+      if (cleanFullName.length > 80) {
+        return res.status(400).json({
+          message: 'Name cannot be more than 80 characters.'
+        });
+      }
+
+      updates.fullName = cleanFullName;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'email')) {
+      const cleanEmail = String(req.body.email || '').trim().toLowerCase();
+
+      if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        return res.status(400).json({
+          message: 'Please enter a valid email address.'
+        });
+      }
+
+      if (cleanEmail.length > 120) {
+        return res.status(400).json({
+          message: 'Email cannot be more than 120 characters.'
+        });
+      }
+
+      updates.email = cleanEmail;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        message: 'No profile changes provided.'
+      });
+    }
+
+    Object.assign(user, updates);
+    await user.save();
+
+    return res.status(200).json({
+      message: 'Profile updated successfully.',
+      user: await publicUserPayload(user)
+    });
+  } catch (error) {
+    console.error('Profile update error:', error);
+
+    return res.status(500).json({
+      message: 'Server error while updating profile.'
     });
   }
 });
