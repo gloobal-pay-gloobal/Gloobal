@@ -89,6 +89,60 @@ export default function Dashboard({ symbolId }) {
     loadDashboard();
   }, [loadDashboard]);
 
+  useEffect(() => {
+    const cleanReceiver = receiverSymbolId.trim();
+
+    setRecipientPreview(null);
+    setRecipientLookupMessage('');
+
+    if (!cleanReceiver || cleanReceiver.length < 4) {
+      setRecipientLookupLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setRecipientLookupLoading(true);
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await axios.get(`${API_BASE}/api/users/resolve`, {
+          params: {
+            identifier: cleanReceiver,
+          },
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        setRecipientPreview(response.data.user || null);
+        setRecipientLookupMessage('');
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        const status = error.response?.status;
+
+        setRecipientPreview(null);
+
+        if (status === 404) {
+          setRecipientLookupMessage('No registered user found for this ID or mobile number.');
+        } else {
+          setRecipientLookupMessage('Could not check receiver right now.');
+        }
+      } finally {
+        if (!cancelled) {
+          setRecipientLookupLoading(false);
+        }
+      }
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [receiverSymbolId]);
   const handleSaveProfile = async (event) => {
     event.preventDefault();
 

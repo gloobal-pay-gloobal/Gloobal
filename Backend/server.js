@@ -1071,6 +1071,92 @@ const PORT = process.env.PORT || 5000;
 // Transaction Prototype APIs
 // -------------------------
 
+function normalizeTransactionPhoneLookup(value) {
+  const raw = String(value || '').trim();
+
+  if (!raw) {
+    return null;
+  }
+
+  const compact = raw.replace(/[\s\-()]/g, '');
+
+  if (/^\+\d{7,15}$/.test(compact)) {
+    return compact;
+  }
+
+  const digits = compact.replace(/\D/g, '');
+
+  if (/^\d{10}$/.test(digits)) {
+    return `+91${digits}`;
+  }
+
+  if (/^91\d{10}$/.test(digits)) {
+    return `+${digits}`;
+  }
+
+  return null;
+}
+
+async function resolveTransactionUserByIdentifier(identifier) {
+  const cleanIdentifier = String(identifier || '').trim();
+
+  if (!cleanIdentifier) {
+    return null;
+  }
+
+  const bySymbolId = await User.findOne({ symbolId: cleanIdentifier });
+
+  if (bySymbolId) {
+    return {
+      user: bySymbolId,
+      matchedBy: 'symbolId',
+      normalizedIdentifier: cleanIdentifier,
+    };
+  }
+
+  const normalizedPhone = normalizeTransactionPhoneLookup(cleanIdentifier);
+
+  if (!normalizedPhone) {
+    return null;
+  }
+
+  const byMobileNumber = await User.findOne({ mobileNumber: normalizedPhone });
+
+  if (byMobileNumber) {
+    return {
+      user: byMobileNumber,
+      matchedBy: 'mobileNumber',
+      normalizedIdentifier: normalizedPhone,
+    };
+  }
+
+  const byLegacyFullNamePhone = await User.findOne({ fullName: normalizedPhone });
+
+  if (byLegacyFullNamePhone) {
+    return {
+      user: byLegacyFullNamePhone,
+      matchedBy: 'mobileNumber',
+      normalizedIdentifier: normalizedPhone,
+    };
+  }
+
+  return null;
+}
+
+function cleanResolvedTransactionUserPayload(resolved) {
+  if (!resolved || !resolved.user) {
+    return null;
+  }
+
+  return {
+    fullName: resolved.user.fullName,
+    email: resolved.user.email || '',
+    mobileNumber: resolved.user.mobileNumber || '',
+    symbolId: resolved.user.symbolId,
+    matchedBy: resolved.matchedBy,
+    normalizedIdentifier: resolved.normalizedIdentifier,
+  };
+}
 function createPrototypeTransactionReference() {
   return `GLOOBAL-TXN-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 }
@@ -1100,80 +1186,120 @@ function cleanTransactionPayload(transaction, sender, receiver) {
   };
 }
 
+app.get('/api/users/resolve', async (req, res) => {
+  try {
+    const identifier = String(req.query.identifier || '').trim();
+
+    if (!identifier) {
+      return res.status(400).json({
+        success: false,
+        message: 'Secure ID or mobile number is required.',
+      });
+    }
+
+    const resolved = await resolveTransactionUserByIdentifier(identifier);
+
+    if (!resolved) {
+      return res.status(404).json({
+        success: false,
+        message: 'No registered user found for this Secure ID or mobile number.',
+      });
+    }
+
+    return res.json({
+      success: true,
+      user: cleanResolvedTransactionUserPayload(resolved),
+    });
+  } catch (error) {
+    console.error('Resolve user error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Could not resolve user right now.',
+    });
+  }
+});
 app.post('/api/transactions/send', async (req, res) => {
   try {
-    const senderSymbolId = String(
-      req.body.senderSymbolId || req.body.fromSymbolId || req.body.symbolId || ''
-    ).trim();
+    const {
+      senderSymbolId,
+      fromSymbolId,
+      symbolId,
+      receiverSymbolId,
+      toSymbolId,
+      to,
+      amount,
+      currency = 'INR',
+      note = '',
+    } = req.body || {};
 
-    const receiverSymbolId = String(
-      req.body.receiverSymbolId || req.body.toSymbolId || req.body.to || ''
-    ).trim();
+    const senderIdentifier = String(senderSymbolId || fromSymbolId || symbolId || '').trim();
+    const receiverIdentifier = String(receiverSymbolId || toSymbolId || to || '').trim();
 
-    const amount = Number(req.body.amount);
-    const currency = String(req.body.currency || 'INR').trim().toUpperCase();
-    const note = String(req.body.note || '').trim().slice(0, 200);
-
-    if (!senderSymbolId) {
+    if (!senderIdentifier) {
       return res.status(400).json({
         success: false,
-        message: 'Sender Secure ID is required.',
+        message: 'Sender Secure ID or mobile number is required.',
       });
     }
 
-    if (!receiverSymbolId) {
+    if (!receiverIdentifier) {
       return res.status(400).json({
         success: false,
-        message: 'Receiver Secure ID is required.',
+        message: 'Receiver Secure ID or mobile number is required.',
       });
     }
 
-    if (senderSymbolId === receiverSymbolId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Self-transfer is not allowed.',
-      });
-    }
+    const numericAmount = Number(amount);
 
-    if (!Number.isFinite(amount) || amount <= 0) {
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
       return res.status(400).json({
         success: false,
         message: 'Valid amount greater than 0 is required.',
       });
     }
 
-    const [sender, receiver] = await Promise.all([
-      User.findOne({ symbolId: senderSymbolId }),
-      User.findOne({ symbolId: receiverSymbolId }),
-    ]);
+    const senderResolved = await resolveTransactionUserByIdentifier(senderIdentifier);
+    const receiverResolved = await resolveTransactionUserByIdentifier(receiverIdentifier);
+
+    const sender = senderResolved?.user;
+    const receiver = receiverResolved?.user;
 
     if (!sender) {
       return res.status(404).json({
         success: false,
-        message: 'Sender Secure ID not found.',
+        message: 'Sender Secure ID or mobile number not found.',
       });
     }
 
     if (!receiver) {
       return res.status(404).json({
         success: false,
-        message: 'Receiver Secure ID not found.',
+        message: 'Receiver Secure ID or mobile number not found.',
+      });
+    }
+
+    if (sender.symbolId === receiver.symbolId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Self-transfer is not allowed.',
       });
     }
 
     const transaction = await Transaction.create({
       fromUserId: sender._id,
       toUserId: receiver._id,
-      amount,
+      amount: numericAmount,
       currency,
       type: 'send',
       status: 'success',
-      note,
+      note: String(note || '').trim(),
       referenceId: createPrototypeTransactionReference(),
       metadata: {
         prototype: true,
-        channel: 'symbol_id',
-        authMode: 'prototype_no_real_money_movement',
+        senderMatchedBy: senderResolved.matchedBy,
+        receiverMatchedBy: receiverResolved.matchedBy,
+        senderInput: senderIdentifier,
+        receiverInput: receiverIdentifier,
       },
     });
 
@@ -1182,38 +1308,42 @@ app.post('/api/transactions/send', async (req, res) => {
         transactionId: transaction._id,
         userId: sender._id,
         entryType: 'debit',
-        amount,
+        amount: numericAmount,
+        balanceBefore: 0,
+        balanceAfter: 0,
         currency,
-        note: note || `Sent to ${receiver.symbolId}`,
+        note: 'Prototype debit entry',
         metadata: {
           prototype: true,
-          counterpartySymbolId: receiver.symbolId,
+          transactionReferenceId: transaction.referenceId,
         },
       },
       {
         transactionId: transaction._id,
         userId: receiver._id,
         entryType: 'credit',
-        amount,
+        amount: numericAmount,
+        balanceBefore: 0,
+        balanceAfter: 0,
         currency,
-        note: note || `Received from ${sender.symbolId}`,
+        note: 'Prototype credit entry',
         metadata: {
           prototype: true,
-          counterpartySymbolId: sender.symbolId,
+          transactionReferenceId: transaction.referenceId,
         },
       },
     ]);
 
     return res.status(201).json({
       success: true,
-      message: 'Prototype transaction created successfully.',
+      message: 'Prototype transaction completed successfully.',
       transaction: cleanTransactionPayload(transaction, sender, receiver),
     });
   } catch (error) {
-    console.error('Transaction send error:', error);
+    console.error('Send transaction error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Could not create transaction.',
+      message: 'Could not send prototype transaction right now.',
     });
   }
 });
