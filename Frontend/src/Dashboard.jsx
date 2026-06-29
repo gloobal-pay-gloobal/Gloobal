@@ -45,6 +45,9 @@ export default function Dashboard({ symbolId }) {
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
   const [sendMessage, setSendMessage] = useState('');
+  const [recipientPreview, setRecipientPreview] = useState(null);
+  const [recipientLookupLoading, setRecipientLookupLoading] = useState(false);
+  const [recipientLookupMessage, setRecipientLookupMessage] = useState('');
 
   const cleanSymbolId = String(symbolId || '').trim();
 
