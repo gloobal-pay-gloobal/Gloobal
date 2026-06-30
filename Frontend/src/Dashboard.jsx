@@ -36,7 +36,6 @@ export default function Dashboard({ symbolId }) {
   const [dashboardMessage, setDashboardMessage] = useState('');
 
   const [editName, setEditName] = useState('');
-  const [editEmail, setEditEmail] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState('');
 
@@ -79,7 +78,6 @@ export default function Dashboard({ symbolId }) {
       setProfile(nextProfile);
       setTransactions(nextTransactions);
       setEditName(nextProfile?.fullName || '');
-      setEditEmail(nextProfile?.email || '');
     } catch (error) {
       console.error('Dashboard load error:', error);
       setDashboardMessage(error.response?.data?.message || 'Could not load dashboard data.');
@@ -156,14 +154,12 @@ export default function Dashboard({ symbolId }) {
 
     try {
       const response = await axios.put(`${API_BASE}/api/profile/${encodeURIComponent(cleanSymbolId)}`, {
-        fullName: editName,
-        email: editEmail
+        fullName: editName
       });
 
       const updatedUser = response.data?.user;
       setProfile(updatedUser);
       setEditName(updatedUser?.fullName || '');
-      setEditEmail(updatedUser?.email || '');
       setProfileMessage('Profile updated. Transaction names will now use the updated profile name.');
       await loadDashboard();
     } catch (error) {
@@ -237,10 +233,6 @@ export default function Dashboard({ symbolId }) {
               <span>Mobile</span>
               <strong>{profile?.mobileNumber || 'Not loaded'}</strong>
             </div>
-            <div>
-              <span>Email</span>
-              <strong>{profile?.email || 'Add email'}</strong>
-            </div>
           </div>
 
           <div className="dash-balance-card">
@@ -287,7 +279,7 @@ export default function Dashboard({ symbolId }) {
           <div className="dash-panel">
             <div className="dash-panel-head">
               <h3>Update Profile</h3>
-              <p>Name and email can be updated. Mobile and Secure ID stay locked.</p>
+              <p>Name can be updated. Mobile and Secure ID stay locked.</p>
             </div>
 
             <form onSubmit={handleSaveProfile} className="dash-form">
@@ -298,17 +290,6 @@ export default function Dashboard({ symbolId }) {
                   onChange={(event) => setEditName(event.target.value)}
                   placeholder="Enter display name"
                   maxLength={80}
-                />
-              </label>
-
-              <label className="dash-field">
-                <span>Email</span>
-                <input
-                  value={editEmail}
-                  onChange={(event) => setEditEmail(event.target.value)}
-                  placeholder="name@example.com"
-                  type="email"
-                  maxLength={120}
                 />
               </label>
 
@@ -365,34 +346,63 @@ export default function Dashboard({ symbolId }) {
           </div>
 
           <div className="dash-section-row">
-            <h3 className="dash-section-title">Recent Transactions</h3>
+            <h3 className="dash-section-title">Sending History</h3>
             <button type="button" className="dash-refresh-btn" onClick={loadDashboard} disabled={loading}>
               {loading ? 'Loading...' : 'Refresh'}
             </button>
           </div>
 
           <div className="dash-tx-list">
-            {transactions.length === 0 ? (
+            {transactions.filter((transaction) => transaction.direction === 'sent').length === 0 ? (
               <div className="dash-empty-state">
-                No prototype transactions yet.
+                No sent prototype transactions yet.
               </div>
             ) : (
-              transactions.map((transaction) => {
-                const isSent = transaction.direction === 'sent';
+              transactions.filter((transaction) => transaction.direction === 'sent').map((transaction) => {
                 const counterparty = displayName(transaction.counterparty);
-                const amountPrefix = isSent ? '-' : '+';
 
                 return (
                   <div className="dash-tx-item" key={String(transaction.id || transaction.referenceId)}>
                     <div className="dash-tx-info">
                       <h4>{counterparty}</h4>
                       <p>
-                        {isSent ? 'Sent' : 'Received'} - {transaction.status} - {formatDateTime(transaction.createdAt)}
+                        Sent - {transaction.status} - {formatDateTime(transaction.createdAt)}
                       </p>
                       <p className="dash-tx-ref">{transaction.referenceId}</p>
                     </div>
-                    <div className={`dash-tx-amount ${isSent ? 'dash-tx-minus' : 'dash-tx-plus'}`}>
-                      {amountPrefix} INR {Number(transaction.amount || 0).toFixed(2)}
+                    <div className="dash-tx-amount dash-tx-minus">
+                      - INR {Number(transaction.amount || 0).toFixed(2)}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <div className="dash-section-row" style={{ marginTop: '24px' }}>
+            <h3 className="dash-section-title">Receiving History</h3>
+          </div>
+
+          <div className="dash-tx-list">
+            {transactions.filter((transaction) => transaction.direction === 'received').length === 0 ? (
+              <div className="dash-empty-state">
+                No received prototype transactions yet.
+              </div>
+            ) : (
+              transactions.filter((transaction) => transaction.direction === 'received').map((transaction) => {
+                const counterparty = displayName(transaction.counterparty);
+
+                return (
+                  <div className="dash-tx-item" key={String(transaction.id || transaction.referenceId)}>
+                    <div className="dash-tx-info">
+                      <h4>{counterparty}</h4>
+                      <p>
+                        Received - {transaction.status} - {formatDateTime(transaction.createdAt)}
+                      </p>
+                      <p className="dash-tx-ref">{transaction.referenceId}</p>
+                    </div>
+                    <div className="dash-tx-amount dash-tx-plus">
+                      + INR {Number(transaction.amount || 0).toFixed(2)}
                     </div>
                   </div>
                 );
@@ -424,3 +434,4 @@ export default function Dashboard({ symbolId }) {
     </div>
   );
 }
+
