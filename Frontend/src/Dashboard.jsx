@@ -28,7 +28,7 @@ function displayName(user) {
   return 'Gloobal user';
 }
 
-export default function Dashboard({ symbolId }) {
+export default function Dashboard({ symbolId, onLogout }) {
   const [showBalance, setShowBalance] = useState(false);
   const [profile, setProfile] = useState(null);
   const [transactions, setTransactions] = useState([]);
@@ -199,6 +199,21 @@ export default function Dashboard({ symbolId }) {
     }
   };
 
+  const handleLogout = () => {
+    if (typeof onLogout === 'function') {
+      onLogout();
+      return;
+    }
+
+    try {
+      window.localStorage.removeItem('gloobal.session.v1');
+    } catch (error) {
+      console.warn('Could not clear saved session:', error);
+    }
+
+    window.location.reload();
+  };
+
   const greetingName = profile?.fullName && profile.fullName !== profile.mobileNumber
     ? profile.fullName
     : 'Gloobal user';
@@ -232,6 +247,12 @@ export default function Dashboard({ symbolId }) {
             <div>
               <span>Mobile</span>
               <strong>{profile?.mobileNumber || 'Not loaded'}</strong>
+            </div>
+            <div>
+              <span>Session</span>
+              <button type="button" className="dash-refresh-btn" onClick={handleLogout}>
+                Logout
+              </button>
             </div>
           </div>
 
@@ -434,4 +455,5 @@ export default function Dashboard({ symbolId }) {
     </div>
   );
 }
+
 
