@@ -1219,6 +1219,8 @@ app.get('/api/users/resolve', async (req, res) => {
   }
 });
 app.post('/api/transactions/send', async (req, res) => {
+  let pendingTransaction = null;
+
   try {
     const {
       senderSymbolId,
@@ -1230,10 +1232,18 @@ app.post('/api/transactions/send', async (req, res) => {
       amount,
       currency = 'INR',
       note = '',
+      pin,
+      idempotencyKey,
     } = req.body || {};
 
     const senderIdentifier = String(senderSymbolId || fromSymbolId || symbolId || '').trim();
     const receiverIdentifier = String(receiverSymbolId || toSymbolId || to || '').trim();
+    const cleanPin = String(pin || '').trim();
+    const numericAmount = Number(amount);
+    const cleanCurrency = String(currency || 'INR').trim().toUpperCase() || 'INR';
+    const cleanNote = String(note || '').trim().slice(0, 140);
+    const cleanIdempotencyKey = String(idempotencyKey || '').trim().slice(0, 120);
+    const maxPrototypeAmount = Number(process.env.PROTOTYPE_TRANSACTION_MAX_AMOUNT || 5000);
 
     if (!senderIdentifier) {
       return res.status(400).json({
@@ -1249,12 +1259,38 @@ app.post('/api/transactions/send', async (req, res) => {
       });
     }
 
-    const numericAmount = Number(amount);
+    if (normalizeText(senderIdentifier) === normalizeText(receiverIdentifier)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Self-transfer is not allowed.',
+      });
+    }
 
     if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
       return res.status(400).json({
         success: false,
         message: 'Valid amount greater than 0 is required.',
+      });
+    }
+
+    if (Number.isFinite(maxPrototypeAmount) && maxPrototypeAmount > 0 && numericAmount > maxPrototypeAmount) {
+      return res.status(400).json({
+        success: false,
+        message: `Prototype transaction limit is Rs. ${maxPrototypeAmount}.`,
+      });
+    }
+
+    if (!cleanPin) {
+      return res.status(400).json({
+        success: false,
+        message: 'PIN is required before sending transaction.',
+      });
+    }
+
+    if (!isValidPinFormat(cleanPin)) {
+      return res.status(400).json({
+        success: false,
+        message: 'PIN must be 4 to 6 digits.',
       });
     }
 
@@ -1278,68 +1314,161 @@ app.post('/api/transactions/send', async (req, res) => {
       });
     }
 
-    if (sender.symbolId === receiver.symbolId) {
+    if (String(sender._id) === String(receiver._id) || sender.symbolId === receiver.symbolId) {
       return res.status(400).json({
         success: false,
         message: 'Self-transfer is not allowed.',
       });
     }
 
-    const transaction = await Transaction.create({
+    const pinRecord = await Pin.findOne({ userId: sender._id });
+
+    if (!pinRecord) {
+      return res.status(404).json({
+        success: false,
+        message: 'PIN is not set for this Secure ID.',
+      });
+    }
+
+    if (pinRecord.lockedUntil && pinRecord.lockedUntil > new Date()) {
+      return res.status(423).json({
+        success: false,
+        message: 'PIN is temporarily locked. Please try again later.',
+      });
+    }
+
+    const isPinMatch = await bcrypt.compare(cleanPin, pinRecord.pinHash);
+
+    if (!isPinMatch) {
+      pinRecord.failedAttempts = (pinRecord.failedAttempts || 0) + 1;
+
+      if (pinRecord.failedAttempts >= 5) {
+        pinRecord.lockedUntil = new Date(Date.now() + 10 * 60 * 1000);
+      }
+
+      await pinRecord.save();
+
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid PIN.',
+      });
+    }
+
+    pinRecord.failedAttempts = 0;
+    pinRecord.lockedUntil = null;
+    pinRecord.lastVerifiedAt = new Date();
+    await pinRecord.save();
+
+    if (cleanIdempotencyKey) {
+      const existingIdempotentTransaction = await Transaction.findOne({
+        fromUserId: sender._id,
+        'metadata.idempotencyKey': cleanIdempotencyKey,
+      }).sort({ createdAt: -1 });
+
+      if (existingIdempotentTransaction) {
+        return res.status(200).json({
+          success: true,
+          duplicate: true,
+          message: 'Duplicate request ignored. Existing transaction returned.',
+          transaction: cleanTransactionPayload(existingIdempotentTransaction, sender, receiver),
+        });
+      }
+    }
+
+    const duplicateWindowStartedAt = new Date(Date.now() - 15 * 1000);
+
+    const recentDuplicate = await Transaction.findOne({
       fromUserId: sender._id,
       toUserId: receiver._id,
       amount: numericAmount,
-      currency,
+      currency: cleanCurrency,
+      note: cleanNote,
+      status: { $in: ['pending', 'success'] },
+      createdAt: { $gte: duplicateWindowStartedAt },
+    }).sort({ createdAt: -1 });
+
+    if (recentDuplicate) {
+      return res.status(409).json({
+        success: false,
+        duplicate: true,
+        message: 'Duplicate transaction blocked. Please wait before sending the same amount again.',
+        transaction: cleanTransactionPayload(recentDuplicate, sender, receiver),
+      });
+    }
+
+    pendingTransaction = await Transaction.create({
+      fromUserId: sender._id,
+      toUserId: receiver._id,
+      amount: numericAmount,
+      currency: cleanCurrency,
       type: 'send',
-      status: 'success',
-      note: String(note || '').trim(),
+      status: 'pending',
+      note: cleanNote,
       referenceId: createPrototypeTransactionReference(),
       metadata: {
         prototype: true,
+        idempotencyKey: cleanIdempotencyKey || null,
         senderMatchedBy: senderResolved.matchedBy,
         receiverMatchedBy: receiverResolved.matchedBy,
         senderInput: senderIdentifier,
         receiverInput: receiverIdentifier,
+        maxPrototypeAmount,
       },
     });
 
     await LedgerEntry.create([
       {
-        transactionId: transaction._id,
+        transactionId: pendingTransaction._id,
         userId: sender._id,
         entryType: 'debit',
         amount: numericAmount,
         balanceBefore: 0,
         balanceAfter: 0,
-        currency,
+        currency: cleanCurrency,
         note: 'Prototype debit entry',
         metadata: {
           prototype: true,
-          transactionReferenceId: transaction.referenceId,
+          transactionReferenceId: pendingTransaction.referenceId,
         },
       },
       {
-        transactionId: transaction._id,
+        transactionId: pendingTransaction._id,
         userId: receiver._id,
         entryType: 'credit',
         amount: numericAmount,
         balanceBefore: 0,
         balanceAfter: 0,
-        currency,
+        currency: cleanCurrency,
         note: 'Prototype credit entry',
         metadata: {
           prototype: true,
-          transactionReferenceId: transaction.referenceId,
+          transactionReferenceId: pendingTransaction.referenceId,
         },
       },
     ]);
 
+    pendingTransaction.status = 'success';
+    await pendingTransaction.save();
+
     return res.status(201).json({
       success: true,
       message: 'Prototype transaction completed successfully.',
-      transaction: cleanTransactionPayload(transaction, sender, receiver),
+      transaction: cleanTransactionPayload(pendingTransaction, sender, receiver),
     });
   } catch (error) {
+    if (pendingTransaction && pendingTransaction.status === 'pending') {
+      try {
+        pendingTransaction.status = 'failed';
+        pendingTransaction.metadata = {
+          ...(pendingTransaction.metadata || {}),
+          failureMessage: error.message,
+        };
+        await pendingTransaction.save();
+      } catch (statusError) {
+        console.error('Transaction failure status update error:', statusError);
+      }
+    }
+
     console.error('Send transaction error:', error);
     return res.status(500).json({
       success: false,
