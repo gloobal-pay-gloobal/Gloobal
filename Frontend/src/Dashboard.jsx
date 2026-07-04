@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import './Dashboard.css';
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'https://gloobal-pay.onrender.com').replace(/\/$/, '');
+const RAW_API_BASE = import.meta.env.VITE_API_URL || 'https://gloobal-pay.onrender.com';
+const API_BASE = RAW_API_BASE.replace(/\/+$/, '').replace(/\/api$/i, '');
 
 function apiUrl(path) {
   return `${API_BASE}${path}`;
