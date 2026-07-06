@@ -102,8 +102,8 @@
 }
 
 .ga-logo-circle {
-  width: 78px;
-  height: 78px;
+  width: 86px;
+  height: 86px;
   border-radius: 999px;
   background: #ffffff;
   box-shadow: 5px 5px 13px #b3bacb, -5px -5px 13px #ffffff;
@@ -111,7 +111,7 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  animation: gaLogoFloat 3.4s ease-in-out infinite;
+  
 }
 
 .ga-logo-img {
@@ -123,7 +123,7 @@
 
 .ga-brand-text {
   color: var(--ink2);
-  font-size: 13px;
+  font-size: px;
   letter-spacing: 2.6px;
   font-weight: 800;
   text-transform: uppercase;

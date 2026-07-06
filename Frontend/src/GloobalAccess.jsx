@@ -1,6 +1,7 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import axios from 'axios';
 import './GloobalAccess.css';
+
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'https://gloobal-pay.onrender.com';
 const SYMBOL_KEYS = ['+', '-', '×', '=', '□', '■', '○', '●'];
@@ -17,82 +18,9 @@ const MOBILE_COLORS = [
   '#1E90FF','#5352ED','#A55EEA','#FF6B81',
   '#00D2D3','#54A0FF',
 ];
+const OTP_COLORS = ['#4361ee','#3a0ca3','#7209b7','#f72585'];
 
-const COUNTRIES = [
-  { name: 'India', code: '+91', flag: '🇮🇳' },
-  { name: 'Afghanistan', code: '+93', flag: '🇦🇫' },
-  { name: 'Albania', code: '+355', flag: '🇦🇱' },
-  { name: 'Algeria', code: '+213', flag: '🇩🇿' },
-  { name: 'Argentina', code: '+54', flag: '🇦🇷' },
-  { name: 'Australia', code: '+61', flag: '🇦🇺' },
-  { name: 'Austria', code: '+43', flag: '🇦🇹' },
-  { name: 'Bangladesh', code: '+880', flag: '🇧🇩' },
-  { name: 'Belgium', code: '+32', flag: '🇧🇪' },
-  { name: 'Brazil', code: '+55', flag: '🇧🇷' },
-  { name: 'Canada', code: '+1', flag: '🇨🇦' },
-  { name: 'Chile', code: '+56', flag: '🇨🇱' },
-  { name: 'China', code: '+86', flag: '🇨🇳' },
-  { name: 'Colombia', code: '+57', flag: '🇨🇴' },
-  { name: 'Czech Republic', code: '+420', flag: '🇨🇿' },
-  { name: 'Denmark', code: '+45', flag: '🇩🇰' },
-  { name: 'Egypt', code: '+20', flag: '🇪🇬' },
-  { name: 'Ethiopia', code: '+251', flag: '🇪🇹' },
-  { name: 'Finland', code: '+358', flag: '🇫🇮' },
-  { name: 'France', code: '+33', flag: '🇫🇷' },
-  { name: 'Germany', code: '+49', flag: '🇩🇪' },
-  { name: 'Ghana', code: '+233', flag: '🇬🇭' },
-  { name: 'Greece', code: '+30', flag: '🇬🇷' },
-  { name: 'Hong Kong', code: '+852', flag: '🇭🇰' },
-  { name: 'Hungary', code: '+36', flag: '🇭🇺' },
-  { name: 'Indonesia', code: '+62', flag: '🇮🇩' },
-  { name: 'Iran', code: '+98', flag: '🇮🇷' },
-  { name: 'Iraq', code: '+964', flag: '🇮🇶' },
-  { name: 'Ireland', code: '+353', flag: '🇮🇪' },
-  { name: 'Israel', code: '+972', flag: '🇮🇱' },
-  { name: 'Italy', code: '+39', flag: '🇮🇹' },
-  { name: 'Japan', code: '+81', flag: '🇯🇵' },
-  { name: 'Jordan', code: '+962', flag: '🇯🇴' },
-  { name: 'Kenya', code: '+254', flag: '🇰🇪' },
-  { name: 'Kuwait', code: '+965', flag: '🇰🇼' },
-  { name: 'Malaysia', code: '+60', flag: '🇲🇾' },
-  { name: 'Mexico', code: '+52', flag: '🇲🇽' },
-  { name: 'Morocco', code: '+212', flag: '🇲🇦' },
-  { name: 'Myanmar', code: '+95', flag: '🇲🇲' },
-  { name: 'Nepal', code: '+977', flag: '🇳🇵' },
-  { name: 'Netherlands', code: '+31', flag: '🇳🇱' },
-  { name: 'New Zealand', code: '+64', flag: '🇳🇿' },
-  { name: 'Nigeria', code: '+234', flag: '🇳🇬' },
-  { name: 'Norway', code: '+47', flag: '🇳🇴' },
-  { name: 'Oman', code: '+968', flag: '🇴🇲' },
-  { name: 'Pakistan', code: '+92', flag: '🇵🇰' },
-  { name: 'Philippines', code: '+63', flag: '🇵🇭' },
-  { name: 'Poland', code: '+48', flag: '🇵🇱' },
-  { name: 'Portugal', code: '+351', flag: '🇵🇹' },
-  { name: 'Qatar', code: '+974', flag: '🇶🇦' },
-  { name: 'Romania', code: '+40', flag: '🇷🇴' },
-  { name: 'Russia', code: '+7', flag: '🇷🇺' },
-  { name: 'Saudi Arabia', code: '+966', flag: '🇸🇦' },
-  { name: 'Singapore', code: '+65', flag: '🇸🇬' },
-  { name: 'South Africa', code: '+27', flag: '🇿🇦' },
-  { name: 'South Korea', code: '+82', flag: '🇰🇷' },
-  { name: 'Spain', code: '+34', flag: '🇪🇸' },
-  { name: 'Sri Lanka', code: '+94', flag: '🇱🇰' },
-  { name: 'Sweden', code: '+46', flag: '🇸🇪' },
-  { name: 'Switzerland', code: '+41', flag: '🇨🇭' },
-  { name: 'Taiwan', code: '+886', flag: '🇹🇼' },
-  { name: 'Thailand', code: '+66', flag: '🇹🇭' },
-  { name: 'Turkey', code: '+90', flag: '🇹🇷' },
-  { name: 'UAE', code: '+971', flag: '🇦🇪' },
-  { name: 'UK', code: '+44', flag: '🇬🇧' },
-  { name: 'Ukraine', code: '+380', flag: '🇺🇦' },
-  { name: 'USA', code: '+1', flag: '🇺🇸' },
-  { name: 'Uzbekistan', code: '+998', flag: '🇺🇿' },
-  { name: 'Venezuela', code: '+58', flag: '🇻🇪' },
-  { name: 'Vietnam', code: '+84', flag: '🇻🇳' },
-  { name: 'Yemen', code: '+967', flag: '🇾🇪' },
-  { name: 'Zambia', code: '+260', flag: '🇿🇲' },
-  { name: 'Zimbabwe', code: '+263', flag: '🇿🇼' },
-];
+const INDIA = { name: 'India', code: '+91', flag: '🇮🇳' };
 
 function flagToTwemojiUrl(f) {
   return `https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/${Array.from(f).map(c=>c.codePointAt(0).toString(16)).join('-')}.svg`;
@@ -119,7 +47,6 @@ function ClosedEyeIcon() {
     </svg>
   );
 }
-
 
 function GlobeSVG({ size = 150 }) {
   return (
@@ -148,6 +75,28 @@ function GlobeSVG({ size = 150 }) {
   );
 }
 
+// Network/world-connectivity illustration used at the top of the Gloobal ID screen
+function NetworkGlobeImage({ size = 230 }) {
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+      }}
+    >
+      <iframe
+        src="/network.html"
+        title="Network"
+        style={{
+          width: "100%",
+          height: "100%",
+          border: "none",
+          background: "transparent",
+        }}
+      />
+    </div>
+  );
+}
 
 function Circle3D({ char, color, filled, size = 26 }) {
   return (
@@ -199,15 +148,78 @@ function VerifyCircle3D({ done, size = 38 }) {
   );
 }
 
-function Icon3D({ children }) {
+function Step2HeaderIcon() {
+  const [showLock, setShowLock] = useState(false);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    const schedule = (isLock) => {
+      const delay = isLock ? 3000 : 6000;
+      timerRef.current = setTimeout(() => {
+        setShowLock(v => !v);
+        schedule(!isLock);
+      }, delay);
+    };
+    schedule(false);
+    return () => clearTimeout(timerRef.current);
+  }, []);
+
+  const W = 70; const H = 42;
+
   return (
-    <span style={{
-      display:'inline-flex', alignItems:'center', justifyContent:'center',
-      width:54, height:54, borderRadius:18,
-      background:'linear-gradient(145deg,#f0f4ff 0%,#dce5ff 60%,#c5d0fa 100%)',
-      boxShadow:'4px 4px 10px rgba(67,97,238,0.18),-2px -2px 6px rgba(255,255,255,0.9),inset 0 1px 2px rgba(255,255,255,0.8)',
-      margin:'0 auto 10px auto',
-    }}>{children}</span>
+    <div style={{
+      width: W, height: H,
+      perspective: '600px',
+      flexShrink: 0,
+      borderRadius: 6,
+      overflow: 'hidden',
+      boxShadow: '3px 3px 10px rgba(67,97,238,0.2), -2px -2px 7px rgba(255,255,255,0.9)',
+      margin: '0',
+      display: 'block',
+    }}>
+      <div style={{
+        position: 'relative', width: '100%', height: '100%',
+        transformStyle: 'preserve-3d',
+        transition: 'transform 0.7s cubic-bezier(0.4,0.2,0.2,1)',
+        transform: showLock ? 'rotateY(180deg)' : 'rotateY(0deg)',
+      }}>
+        <svg
+          viewBox="0 0 30 20" preserveAspectRatio="none"
+          xmlns="http://www.w3.org/2000/svg"
+          style={{
+            display: 'block', position: 'absolute', top: 0, left: 0,
+            width: '100%', height: '100%',
+            backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
+          }}
+        >
+          <rect x="0" y="0" width="30" height="6.67" fill="#FF9933"/>
+          <rect x="0" y="6.67" width="30" height="6.67" fill="#FFFFFF"/>
+          <rect x="0" y="13.33" width="30" height="6.67" fill="#138808"/>
+          <circle cx="15" cy="10" r="2.6" fill="none" stroke="#000080" strokeWidth="0.35"/>
+          <circle cx="15" cy="10" r="0.45" fill="#000080"/>
+          {[...Array(24)].map((_,i) => {
+            const angle = (i * 15) * Math.PI / 180;
+            return <line key={i}
+              x1={15 + 0.45 * Math.cos(angle)} y1={10 + 0.45 * Math.sin(angle)}
+              x2={15 + 2.25 * Math.cos(angle)} y2={10 + 2.25 * Math.sin(angle)}
+              stroke="#000080" strokeWidth="0.22"/>;
+          })}
+        </svg>
+        <div style={{
+          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+          backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
+          transform: 'rotateY(180deg)',
+          background: 'radial-gradient(circle at 35% 28%, #eef1ff 0%, #dce5ff 60%, #c8d4ff 100%)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" fill="rgba(67,97,238,0.12)" stroke="#4361ee" strokeWidth="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="#4361ee" strokeWidth="2"/>
+            <circle cx="12" cy="16" r="1.2" fill="#4361ee"/>
+          </svg>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -223,8 +235,44 @@ function ColorSymbolSlots({ symbols, shouldHide }) {
   );
 }
 
-function ColorMobileBoxes({ digits, onRef, selectedCountry, onSelectCountry }) {
-  const [dropdownOpen, setDropdownOpen] = React.useState(false);
+function OtpDigitBoxes({ otpValue, isVerified }) {
+  const digits = otpValue.replace(/\D/g,'').slice(0,4).split('');
+  return (
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:10, width:'100%', padding:'4px 0 2px' }}>
+      {Array.from({length:4}).map((_,i) => (
+        <div key={i} style={{
+          width:52, height:60, borderRadius:14,
+          background: digits[i]
+            ? 'radial-gradient(circle at 35% 28%, #e8edff 0%, #c8d4ff 50%, #a8b8f8 100%)'
+            : 'radial-gradient(circle at 35% 30%, #ffffff 0%, #f0f2f8 60%, #e4e8f5 100%)',
+          boxShadow: digits[i]
+            ? '4px 4px 12px rgba(67,97,238,0.28), -3px -3px 8px rgba(255,255,255,0.95), inset 0 2px 4px rgba(255,255,255,0.7)'
+            : '3px 3px 8px rgba(0,0,0,0.10), -2px -2px 6px rgba(255,255,255,0.95)',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          transition:'all 0.25s cubic-bezier(0.34,1.56,0.64,1)',
+          transform: digits[i] ? 'translateY(-2px)' : 'translateY(0)',
+        }}>
+          <span style={{
+            fontSize:28, fontWeight:900, lineHeight:1,
+            color: digits[i] ? OTP_COLORS[i] : '#c8d0e4',
+            userSelect:'none',
+            fontFamily:"'Inter', -apple-system, sans-serif",
+          }}>
+            {digits[i] || '·'}
+          </span>
+        </div>
+      ))}
+      <div style={{
+        flexShrink:0, marginLeft:6,
+        animation: isVerified ? 'ga-verify-pop 0.4s cubic-bezier(0.34,1.56,0.64,1)' : 'none',
+      }}>
+        <VerifyCircle3D done={isVerified} size={36}/>
+      </div>
+    </div>
+  );
+}
+
+function ColorMobileBoxes({ digits, onRef }) {
   const [showIcon, setShowIcon] = React.useState(false);
 
   React.useEffect(() => {
@@ -243,30 +291,26 @@ function ColorMobileBoxes({ digits, onRef, selectedCountry, onSelectCountry }) {
   }, []);
 
   return (
-    <div style={{ display:'flex', alignItems:'center', gap:3, width:'100%', flexWrap:'nowrap', overflow:'visible', position:'relative' }}>
-      {/* Flag + chevron */}
-      <div style={{ display:'flex', alignItems:'center', gap:3, flexShrink:0, position:'relative', zIndex:50 }}>
-        {/* 3D flip card */}
-        <div style={{ width:38, height:30, perspective:'400px', flexShrink:0, cursor:'pointer' }} onClick={()=>setDropdownOpen(v=>!v)}>
+    <div style={{ display:'flex', flexDirection:'column', gap:6, width:'100%' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:3, width:'100%', flexWrap:'nowrap', overflow:'visible', position:'relative' }}>
+        <div style={{ width:38, height:30, perspective:'400px', flexShrink:0 }}>
           <div style={{
             position:'relative', width:'100%', height:'100%',
             transformStyle:'preserve-3d',
             transition:'transform 0.55s ease-in-out',
             transform: showIcon ? 'rotateY(180deg)' : 'rotateY(0deg)',
           }}>
-            {/* Front — Flag */}
             <div style={{
               position:'absolute', inset:0, backfaceVisibility:'hidden',
-              borderRadius:8, overflow:'hidden',
+              borderRadius:6, overflow:'hidden',
               boxShadow:'0 2px 6px rgba(0,0,0,0.13)',
             }}>
-              <img src={flagToTwemojiUrl(selectedCountry.flag)} alt={selectedCountry.name} style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
+              <img src={flagToTwemojiUrl(INDIA.flag)} alt="India" style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
             </div>
-            {/* Back — 3D Mobile icon */}
             <div style={{
               position:'absolute', inset:0, backfaceVisibility:'hidden',
               transform:'rotateY(180deg)',
-              borderRadius:8,
+              borderRadius:6,
               background:'linear-gradient(145deg,#f0f4ff,#dce5ff)',
               boxShadow:'3px 3px 8px rgba(67,97,238,0.2),-2px -2px 5px rgba(255,255,255,0.9)',
               display:'flex', alignItems:'center', justifyContent:'center',
@@ -279,140 +323,294 @@ function ColorMobileBoxes({ digits, onRef, selectedCountry, onSelectCountry }) {
           </div>
         </div>
 
-        <svg onClick={()=>setDropdownOpen(v=>!v)} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#4361ee" strokeWidth="2.5" strokeLinecap="round" style={{cursor:'pointer',flexShrink:0}}>
-          <polyline points="6 9 12 15 18 9"/>
-        </svg>
-        {dropdownOpen && (
-          <>
-            <div style={{position:'fixed',inset:0,zIndex:98}} onClick={()=>setDropdownOpen(false)}/>
-            <div className="ga-country-dropdown" style={{zIndex:99}}>
-              {COUNTRIES.map(c=>(
-                <div key={c.name} className="ga-country-option" onClick={()=>{onSelectCountry(c);setDropdownOpen(false);}}>
-                  <img src={flagToTwemojiUrl(c.flag)} alt={c.name} style={{width:22,height:16,objectFit:'cover',borderRadius:3,flexShrink:0}}/>
-                  <span style={{flex:1}}>{c.name}</span>
-                  <span style={{color:'#4361ee',fontWeight:700}}>{c.code}</span>
-                </div>
-              ))}
+        <div style={{position:'relative',display:'flex',alignItems:'center',gap:3,flex:1,minWidth:0,overflow:'hidden'}}>
+          {Array.from({length:10}).map((_,i)=>(
+            <div key={i} style={{flex:'1 1 0',minWidth:0,display:'flex',justifyContent:'center'}}>
+              <Circle3D char={i<digits.length?digits[i]:''} color={MOBILE_COLORS[i]} filled={i<digits.length} size={24}/>
             </div>
-          </>
-        )}
-      </div>
-
-      {/* Digit circles + verify */}
-      <div style={{position:'relative',display:'flex',alignItems:'center',gap:3,flex:1,minWidth:0,overflow:'hidden'}}>
-        {Array.from({length:10}).map((_,i)=>(
-          <div key={i} style={{flex:'1 1 0',minWidth:0,display:'flex',justifyContent:'center'}}>
-            <Circle3D char={i<digits.length?digits[i]:''} color={MOBILE_COLORS[i]} filled={i<digits.length} size={24}/>
+          ))}
+          <div style={{flexShrink:0,marginLeft:3}}>
+            <VerifyCircle3D done={digits.length===10} size={32}/>
           </div>
-        ))}
-        <div style={{flexShrink:0,marginLeft:3}}>
-          <VerifyCircle3D done={digits.length===10} size={32}/>
+          <input ref={onRef} type="tel" inputMode="numeric" maxLength={10}
+            style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',opacity:0,cursor:'text',zIndex:10,fontSize:'16px'}}/>
         </div>
-        <input ref={onRef} type="tel" inputMode="numeric" maxLength={10}
-          style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',opacity:0,cursor:'text',zIndex:10,fontSize:'16px'}}/>
       </div>
     </div>
   );
 }
 
+function DialPadFlip({ onSymbolPress, onToggleVisibility, busy, currentFieldIsHidden }) {
+  const [showLogo, setShowLogo] = useState(false);
+  const flipRef = useRef(null);
+  const idleRef = useRef(null);
+  const touchedRef = useRef(false);
+
+  const scheduleNext = (currentlyLogo) => {
+    clearTimeout(flipRef.current);
+    const delay = currentlyLogo ? 4000 : 6000;
+    flipRef.current = setTimeout(() => {
+      if (!touchedRef.current) {
+        const next = !currentlyLogo;
+        setShowLogo(next);
+        scheduleNext(next);
+      }
+    }, delay);
+  };
+
+  useEffect(() => {
+    scheduleNext(false);
+    return () => {
+      clearTimeout(flipRef.current);
+      clearTimeout(idleRef.current);
+    };
+    // eslint-disable-next-line
+  }, []);
+
+  const handleInteraction = () => {
+    touchedRef.current = true;
+    clearTimeout(flipRef.current);
+    clearTimeout(idleRef.current);
+    setShowLogo(false);
+    idleRef.current = setTimeout(() => {
+      touchedRef.current = false;
+      scheduleNext(false);
+    }, 3000);
+  };
+
+  return (
+    <div style={{ width: '100%', position: 'relative' }}>
+      <div style={{ position: 'relative', width: '100%' }}>
+        <div
+          style={{
+            opacity: showLogo ? 0 : 1,
+            pointerEvents: showLogo ? 'none' : 'auto',
+            transition: 'opacity 0.4s ease',
+          }}
+          onPointerDown={handleInteraction}
+          onTouchStart={handleInteraction}
+        >
+          <div className="ga-dial" aria-label="Symbol dialpad">
+            {SYMBOL_KEYS.map((symbol, index) => (
+              <button key={symbol} type="button"
+                className={`ga-dial-key ga-dial-key-${index}`}
+                onClick={() => { handleInteraction(); onSymbolPress(symbol); }}
+                disabled={busy}>
+                {symbol}
+              </button>
+            ))}
+            <button type="button"
+              className={`ga-dial-center ga-dial-eye ${currentFieldIsHidden ? 'ga-eye-closed' : 'ga-eye-open'}`}
+              onClick={() => { handleInteraction(); onToggleVisibility(); }}
+              disabled={busy}>
+              {currentFieldIsHidden ? <ClosedEyeIcon /> : <OpenEyeIcon />}
+            </button>
+          </div>
+        </div>
+
+        {showLogo && (
+          <div style={{
+            position: 'absolute',
+            top: 0, left: 0, right: 0, bottom: 0,
+            pointerEvents: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <div
+  className="ga-dial"
+  style={{
+    position: "relative",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+  }}
+>
+             <img
+  src="/pwa-512x512.jpeg"
+  alt="Gloobal"
+  style={{
+    
+    width: "220px",
+    height: "220px",
+    objectFit: "contain",
+    borderRadius: "50%",
+    background: "#fff",
+    padding: "8px",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+    
+  }}
+/>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 export default function GloobalAccess({ onComplete }) {
   const [step, setStep] = useState(1);
   const [mobile, setMobile] = useState('');
   const [otp, setOtp] = useState('');
-  const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]);
+
+  const [idPhase, setIdPhase] = useState('secure');
   const [secureSymbols, setSecureSymbols] = useState([]);
   const [referrerSymbols, setReferrerSymbols] = useState([]);
   const [activeField, setActiveField] = useState('secure');
   const [hideSecure, setHideSecure] = useState(false);
   const [hideReferrer, setHideReferrer] = useState(false);
+
+  const [idPanelFlipped, setIdPanelFlipped] = useState(false);
+
   const [registeredUser, setRegisteredUser] = useState(null);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
-  const mobileInputRef = React.useRef(null);
+  const [cardFlipped, setCardFlipped] = useState(false);
+
+  const mobileInputRef = useRef(null);
+  const otpInputRef = useRef(null);
+
   const [hearts, setHearts] = useState([]);
   const [isBeating, setIsBeating] = useState(false);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const id = Date.now()+Math.random();
-      const randomColor = HEART_COLORS[Math.floor(Math.random()*HEART_COLORS.length)];
-      const randomX = (Math.random()*80-40)+'px';
+      const id = Date.now() + Math.random();
+      const randomColor = HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
+      const randomX = (Math.random() * 80 - 40) + 'px';
       setIsBeating(true);
-      setTimeout(()=>setIsBeating(false),250);
-      setHearts(p=>[...p,{id,color:randomColor,randomX}]);
-      setTimeout(()=>setHearts(p=>p.filter(h=>h.id!==id)),3500);
-    },2000);
-    return ()=>clearInterval(interval);
-  },[]);
+      setTimeout(() => setIsBeating(false), 250);
+      setHearts(p => [...p, { id, color: randomColor, randomX }]);
+      setTimeout(() => setHearts(p => p.filter(h => h.id !== id)), 3500);
+    }, 2000);
+    return () => clearInterval(interval);
+  }, []);
 
-  const mobileDigits = mobile.replace(/\D/g,'').slice(0,10);
-  const mobileIdentity = useMemo(()=>formatMobileIdentity(mobileDigits,selectedCountry.code),[mobileDigits,selectedCountry]);
+  const mobileDigits = mobile.replace(/\D/g, '').slice(0, 10);
+  const mobileIdentity = useMemo(() => formatMobileIdentity(mobileDigits, INDIA.code), [mobileDigits]);
   const secureId = secureSymbols.join('');
   const referredBy = referrerSymbols.join('');
-  const isMobileValid = mobileDigits.length===10;
-  const isOtpValid = otp===PROTOTYPE_OTP;
-  const currentFieldIsSecure = activeField==='secure';
-  const activeSymbols = currentFieldIsSecure?secureSymbols:referrerSymbols;
-  const currentFieldIsHidden = currentFieldIsSecure?hideSecure:hideReferrer;
-  const eyeButtonLabel = currentFieldIsHidden?`Show`:`Hide`;
+  const isMobileValid = mobileDigits.length === 10;
+  const isOtpValid = otp === PROTOTYPE_OTP;
+  const currentFieldIsSecure = activeField === 'secure';
+  const activeSymbols = currentFieldIsSecure ? secureSymbols : referrerSymbols;
+  const currentFieldIsHidden = currentFieldIsSecure ? hideSecure : hideReferrer;
 
-  const updateActiveSymbols = s => { if(currentFieldIsSecure)setSecureSymbols(s); else setReferrerSymbols(s); };
+  const updateActiveSymbols = s => { if (currentFieldIsSecure) setSecureSymbols(s); else setReferrerSymbols(s); };
+
   const handleSymbolPress = symbol => {
-    if(busy)return;
-    if(activeSymbols.length>=12){setStatus(currentFieldIsSecure?'Secure ID already has 12 symbols.':'Referral ID already has 12 symbols.');return;}
-    updateActiveSymbols([...activeSymbols,symbol]); setStatus('');
-  };
-  const handleToggleVisibility = ()=>{
-    if(busy)return;
-    if(activeField==='secure')setHideSecure(v=>!v);
-    if(activeField==='referrer')setHideReferrer(v=>!v);
+    if (busy) return;
+    if (activeSymbols.length >= 12) {
+      setStatus(currentFieldIsSecure ? 'Secure ID already has 12 symbols.' : 'Referral ID already has 12 symbols.');
+      return;
+    }
+    updateActiveSymbols([...activeSymbols, symbol]);
     setStatus('');
   };
-  const handleMobileChange = e => {
-    setMobile(e.target.value); setStatus('');
-    if(e.target.value.replace(/\D/g,'').length<10&&otp)setOtp('');
+
+  const handleToggleVisibility = () => {
+    if (busy) return;
+    if (activeField === 'secure') setHideSecure(v => !v);
+    else setHideReferrer(v => !v);
+    setStatus('');
   };
+
+  const deleteLastSymbol = e => {
+    e && e.stopPropagation();
+    if (busy || !activeSymbols.length) return;
+    updateActiveSymbols(activeSymbols.slice(0, -1));
+    setStatus('');
+  };
+
+  useEffect(() => {
+    if (idPhase === 'secure' && secureSymbols.length === 12 && !idPanelFlipped) {
+      const t = setTimeout(() => {
+        setIdPanelFlipped(true);
+        setIdPhase('referral');
+        setActiveField('referral');
+      }, 700);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line
+  }, [secureSymbols.length]);
+
+  useEffect(() => {
+    if (idPhase === 'referral' && secureSymbols.length < 12 && idPanelFlipped) {
+      setIdPanelFlipped(false);
+      setIdPhase('secure');
+      setActiveField('secure');
+      setReferrerSymbols([]);
+    }
+    // eslint-disable-next-line
+  }, [secureSymbols.length]);
+
+  const prevDigitLen = useRef(0);
+  useEffect(() => {
+    const cur = mobileDigits.length;
+    const prev = prevDigitLen.current;
+    prevDigitLen.current = cur;
+    if (cur === 10 && prev < 10 && !cardFlipped) {
+      const t = setTimeout(() => {
+        setCardFlipped(true);
+        setTimeout(() => { otpInputRef.current && otpInputRef.current.focus(); }, 700);
+      }, 700);
+      return () => clearTimeout(t);
+    }
+    if (cur < 10 && cardFlipped) {
+      setCardFlipped(false);
+      setOtp('');
+      setOtpVerified(false);
+    }
+    // eslint-disable-next-line
+  }, [mobileDigits.length]);
+
+  const handleMobileChange = e => { setMobile(e.target.value); setStatus(''); };
+
   const handleOtpChange = e => {
-    const val = e.target.value.replace(/\D/g,'').slice(0,4);
-    setOtp(val); setStatus('');
-    if(val===PROTOTYPE_OTP&&isMobileValid) setOtpVerified(true);
+    const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+    setOtp(val);
+    setStatus('');
+    if (val === PROTOTYPE_OTP && isMobileValid) setOtpVerified(true);
     else setOtpVerified(false);
   };
 
-  useEffect(()=>{
-    if(step===1&&isMobileValid&&isOtpValid&&otpVerified){
-      const t=setTimeout(()=>{ setStatus(''); setOtpVerified(false); setStep(2); },1200);
-      return ()=>clearTimeout(t);
+  useEffect(() => {
+    if (step === 1 && isMobileValid && isOtpValid && otpVerified) {
+      const t = setTimeout(() => {
+        setStatus('');
+        setOtpVerified(false);
+        setStep(2);
+      }, 1200);
+      return () => clearTimeout(t);
     }
-  },[step,isMobileValid,isOtpValid,otpVerified]);
+  }, [step, isMobileValid, isOtpValid, otpVerified]);
 
-  const deleteLastSecureSymbol = e=>{ e&&e.stopPropagation(); if(busy||!secureSymbols.length)return; setSecureSymbols(s=>s.slice(0,-1)); setStatus(''); };
-  const deleteLastReferralSymbol = e=>{ e&&e.stopPropagation(); if(busy||!referrerSymbols.length)return; setReferrerSymbols(s=>s.slice(0,-1)); setStatus(''); };
+  const canSubmit = isMobileValid && isOtpValid && secureSymbols.length === 12 && !busy;
 
   const handleSubmit = async () => {
-    if(secureSymbols.length!==12){alert('Please complete all 12 symbols for Secure ID.');return;}
-    if(referrerSymbols.length>0&&referrerSymbols.length!==12){alert('Referral ID must be 12 symbols if entered.');return;}
-    const userData={fullName:mobileIdentity,symbolId:secureId,referredBy:referredBy||''};
+    if (secureSymbols.length !== 12) { alert('Please complete all 12 symbols for Secure ID.'); return; }
+    if (referrerSymbols.length > 0 && referrerSymbols.length !== 12) { alert('Referral ID must be 12 symbols if entered.'); return; }
+    const userData = { fullName: mobileIdentity, symbolId: secureId, referredBy: referredBy || '' };
     setBusy(true); setStatus('Checking Secure ID...');
     try {
-      const response = await axios.post(`${API_BASE}/api/register-symbol`,userData);
-      const savedUser = response.data?.user||userData;
+      const response = await axios.post(`${API_BASE}/api/register-symbol`, userData);
+      const savedUser = response.data?.user || userData;
       const nextUser = {
-        fullName:savedUser.fullName||mobileIdentity, mobileNumber:mobileIdentity,
-        symbolId:savedUser.symbolId||secureId, referralCount:savedUser.referralCount||0,
-        referredBy:savedUser.referredBy||referredBy||null, hasPasskey:Boolean(savedUser.hasPasskey)
+        fullName: savedUser.fullName || mobileIdentity, mobileNumber: mobileIdentity,
+        symbolId: savedUser.symbolId || secureId, referralCount: savedUser.referralCount || 0,
+        referredBy: savedUser.referredBy || referredBy || null, hasPasskey: Boolean(savedUser.hasPasskey)
       };
       setRegisteredUser(nextUser);
-      setStatus(response.data?.alreadyRegistered?'Secure ID already registered. Continuing...':'Registration complete. Continuing...');
-      setTimeout(()=>{ if(typeof onComplete==='function')onComplete(nextUser); },1200);
-    } catch(err) {
-      const message=err.response?.data?.message||'Could not connect to server. Please try again.';
+      setStatus(response.data?.alreadyRegistered ? 'Secure ID already registered. Continuing...' : 'Registration complete. Continuing...');
+      setTimeout(() => { if (typeof onComplete === 'function') onComplete(nextUser); }, 1200);
+    } catch (err) {
+      const message = err.response?.data?.message || 'Could not connect to server. Please try again.';
       setStatus(message); alert(message);
     } finally { setBusy(false); }
   };
-
-  const canSubmit = isMobileValid&&isOtpValid&&secureSymbols.length===12&&!busy;
 
   return (
     <div className="ga-wrapper">
@@ -420,43 +618,124 @@ export default function GloobalAccess({ onComplete }) {
         .ga-wrapper { background:#f0f3ff !important; min-height:100vh; }
         .ga-shell { background:transparent !important; }
 
-        .ga-country-dropdown { position:absolute;top:calc(100% + 6px);left:0;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(67,97,238,0.18);border:1px solid rgba(67,97,238,0.12);overflow-y:auto;max-height:220px;min-width:200px; }
-        .ga-country-option { display:flex;align-items:center;gap:8px;padding:9px 14px;cursor:pointer;font-size:13px;color:#2d3142;font-weight:500;transition:background 0.15s; }
-        .ga-country-option:hover { background:rgba(67,97,238,0.07); }
-        .ga-country-option:not(:last-child) { border-bottom:1px solid rgba(67,97,238,0.06); }
+        .ga-id-box {
+          width:100%; padding:14px 16px 12px; box-sizing:border-box;
+          background:#fff !important; overflow:visible !important;
+        }
+        .ga-id-box-active {
+          border-color:rgba(67,97,238,0.35) !important;
+          box-shadow:0 0 0 3px rgba(67,97,238,0.08) !important;
+        }
 
-        .ga-id-box { width:100%;padding:14px 16px 12px;box-sizing:border-box;background:#fff !important;overflow:visible !important; }
-        .ga-id-box-active { border-color:rgba(67,97,238,0.35) !important;box-shadow:0 0 0 3px rgba(67,97,238,0.08) !important; }
+        .ga-outer-label-row {
+          display:flex; align-items:center; justify-content:space-between;
+          padding:0 4px; margin-bottom:5px;
+        }
+        .ga-outer-label-text {
+          font-size:12px; font-weight:700; color:#4361ee;
+          letter-spacing:0.06em; text-transform:uppercase;
+        }
+        .ga-outer-count { font-size:12px; font-weight:600; color:#8892b0; }
+        .ga-optional-badge {
+          font-size:10px; font-weight:700; color:#fff;
+          background:red;
+          padding:2px 8px; border-radius:20px;
+          letter-spacing:0.04em; text-transform:uppercase;
+        }
 
-        .ga-heading { font-size:28px;font-weight:400;line-height:1.3;color:#2d3142;margin:0 0 20px;text-align:center;font-family:'Inter',-apple-system,sans-serif; }
-        .ga-heading strong { font-weight:700;color:#4361ee;display:block;font-size:32px;letter-spacing:-0.02em; }
+        .ga-heading {
+          font-size:28px; font-weight:400; line-height:1.3;
+          color:#2d3142; margin:0 0 20px;
+          font-family:'Inter',-apple-system,sans-serif;
+          display:flex; flex-direction:row; align-items:center; gap:12px; width:100%;
+        }
+        .ga-heading strong {
+          font-weight:700; color:#4361ee; display:block;
+          font-size:32px; letter-spacing:-0.02em;
+        }
+        .ga-heading-text { display:flex; flex-direction:column; }
 
-        .ga-brand { display:flex;align-items:center;gap:14px;margin-bottom:20px;padding:0 4px; }
-        .ga-brand-text { font-size:20px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#1a1f36;font-family:'Inter',-apple-system,sans-serif; }
+        .ga-brand { display:flex; align-items:center; gap:14px; margin-bottom:20px; padding:0 4px; }
+        .ga-brand-text {
+          font-size:20px; font-weight:700; letter-spacing:0.08em;
+          text-transform:uppercase; color:#1a1f36;
+          font-family:'Inter',-apple-system,sans-serif;
+        }
+        .ga-step-view { display:flex; flex-direction:column; align-items:center; width:100%; }
 
-        .ga-step-view { display:flex;flex-direction:column;align-items:center;width:100%; }
+        .ga-flip-wrap { width:100%; perspective:1200px; margin-bottom:10px; }
+        .ga-flip-inner {
+          position:relative; width:100%; min-height:76px;
+          transform-style:preserve-3d;
+          transition:transform 0.65s cubic-bezier(0.4,0.2,0.2,1);
+        }
+        .ga-flip-inner.is-flipped { transform:rotateY(180deg); }
+        .ga-card-face {
+          position:absolute; top:0; left:0; width:100%;
+          backface-visibility:hidden; -webkit-backface-visibility:hidden;
+          border-radius:20px;
+          background:linear-gradient(145deg,#ffffff,#eef1ff);
+          box-shadow:0 8px 28px rgba(67,97,238,0.16),0 2px 8px rgba(67,97,238,0.08);
+          border:1.5px solid rgba(255,255,255,0.95);
+          padding:14px 16px 12px; box-sizing:border-box;
+        }
+        .ga-card-back { transform:rotateY(180deg); position:relative; }
+        .ga-otp-label-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
+        .ga-otp-label { font-size:12px; font-weight:700; color:#4361ee; letter-spacing:0.06em; text-transform:uppercase; }
+        .ga-otp-hint { font-size:11px; color:#8892b0; font-weight:500; }
 
-        @keyframes ga-verify-pop { 0%{transform:scale(0.5);opacity:0} 100%{transform:scale(1);opacity:1} }
+        @keyframes ga-verify-pop {
+          0%{transform:scale(0.5);opacity:0}
+          100%{transform:scale(1);opacity:1}
+        }
 
-        .static-footer-master-heart { position:relative;display:inline-block;font-size:26px;z-index:40;transition:transform 0.2s ease; }
-        .static-footer-master-heart.beating { transform:scale(1.3); }
-        .ga-automatic-colored-heart { position:absolute;left:50%;top:50%;font-size:13px;pointer-events:none;z-index:10;animation:ga-heart-shoot-up 3.5s cubic-bezier(0.1,0.65,0.25,1) forwards; }
+        .static-footer-master-heart {
+          position:relative; display:inline-block; font-size:20px;
+          z-index:40; transition:transform 0.2s ease;
+        }
+        -master.static-footer-heart.beating { transform:scale(1.3); }
+        .ga-automatic-colored-heart {
+          position:absolute; left:50%; top:50%; font-size:13px;
+          pointer-events:none; z-index:10;
+          animation:ga-heart-shoot-up 3.5s cubic-bezier(0.1,0.65,0.25,1) forwards;
+        }
         @keyframes ga-heart-shoot-up {
           0%{transform:translate(-50%,-50%) scale(0.3);opacity:0}
           12%{opacity:1;transform:translate(-50%,-35px) scale(1.1)}
           100%{transform:translate(calc(-50% + var(--drift-x,0px)),-120vh) scale(0.75) rotate(20deg);opacity:0}
         }
+          @keyframes spinNetwork {
+  from {   
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes spinEarth {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(-360deg);
+  }
+}
+  
       `}</style>
 
       <div className="ga-shell">
         {registeredUser ? (
           <div className="ga-success">
-            <div className="ga-step-bar"><div className="ga-segment ga-done"/><div className="ga-segment ga-done"/></div>
+            <div className="ga-step-bar">
+              <div className="ga-segment ga-done"/>
+              <div className="ga-segment ga-done"/>
+            </div>
             <div className="ga-success-orb">✓</div>
             <h1 className="ga-heading">Mobile identity<br/><strong>connected</strong></h1>
             <div className="ga-summary-card"><span>Mobile</span><strong>{registeredUser.mobileNumber}</strong></div>
             <div className="ga-summary-card"><span>Secure ID</span><strong>{registeredUser.symbolId}</strong></div>
-            {registeredUser.referredBy&&<div className="ga-summary-card"><span>Referral ID</span><strong>{registeredUser.referredBy}</strong></div>}
+            {registeredUser.referredBy && <div className="ga-summary-card"><span>Referral ID</span><strong>{registeredUser.referredBy}</strong></div>}
             <p className="ga-status">Preparing device authentication...</p>
           </div>
         ) : (
@@ -466,178 +745,289 @@ export default function GloobalAccess({ onComplete }) {
               <div className={`ga-segment ${step>=2?'ga-active':''}`}/>
             </div>
 
-            {/* Brand — only step 1 */}
             {step === 1 && (
-              <div className="ga-brand">
-                <div className="ga-logo-circle" aria-label="Gloobal logo">
-                  <img src="/pwa-512x512.jpeg" alt="Gloobal logo" className="ga-logo-img"/>
-                </div>
-                <div className="ga-brand-text">Gloobal Access</div>
-              </div>
+              <div
+  className="ga-brand"
+  style={{
+    position: "relative",
+    width: "100%",
+    display: "flex",
+    alignItems: "center"
+  }}
+>
+  {/* Logo left */}
+  <div className="ga-logo-circle" aria-label="Gloobal logo">
+    <img
+      src="/pwa-513x513.jpeg"
+      alt="Gloobal logo"
+      className="ga-logo-img"
+    />
+  </div>
+
+  {/* Text exact center */}
+  <div
+    className="ga-brand-text"
+    style={{
+      position: "absolute",
+      left: "50%",
+      transform: "translateX(-50%)"
+    }}
+  >
+    Gloobal
+  </div>
+</div>
             )}
 
-            {step===1 && (
+            {/* ════ STEP 1 ════ */}
+            {step === 1 && (
               <div className="ga-step-view ga-step-enter" style={{width:'100%'}}>
-
-                {/* ── GLOBE centered ── */}
                 <div style={{display:'flex',justifyContent:'center',marginBottom:20}}>
                   <GlobeSVG size={140}/>
                 </div>
 
-                {/* ── MOBILE NUMBER BOX — main card ── */}
-                <div
-                  onClick={()=>mobileInputRef.current&&mobileInputRef.current.focus()}
-                  style={{
-                    width:'100%',
-                    background:'linear-gradient(145deg,#ffffff,#eef1ff)',
-                    borderRadius:20,
-                    boxShadow:'0 8px 28px rgba(67,97,238,0.16), 0 2px 8px rgba(67,97,238,0.08)',
-                    border:'1.5px solid rgba(255,255,255,0.95)',
-                    padding:'14px 16px 12px',
-                    boxSizing:'border-box',
-                    cursor:'text',
-                    marginBottom:10,
-                  }}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                    <small style={{color:'#8892b0',fontSize:11,fontWeight:600,letterSpacing:'0.04em'}}>
-                      {mobileDigits.length} / 10
-                    </small>
-                    {isMobileValid && <VerifyCircle3D done={true} size={22}/>}
-                  </div>
-                  <ColorMobileBoxes
-                    digits={mobileDigits}
-                    selectedCountry={selectedCountry}
-                    onSelectCountry={setSelectedCountry}
-                    onRef={el=>{
-                      mobileInputRef.current=el;
-                      if(el){el.value=mobile;el.oninput=ev=>handleMobileChange({target:{value:ev.target.value}});}
-                    }}
-                  />
-                </div>
-
-                {/* ── OTP — small, simple, below mobile card ── */}
-                <div style={{
-                  width:'100%',
-                  background:'rgba(255,255,255,0.7)',
-                  borderRadius:16,
-                  boxShadow:'0 4px 16px rgba(67,97,238,0.10)',
-                  border:'1px solid rgba(67,97,238,0.08)',
-                  padding:'12px 16px',
-                  boxSizing:'border-box',
-                  display:'flex',
-                  alignItems:'center',
-                  gap:12,
-                }}>
-                  <label style={{fontSize:12,fontWeight:700,color:'#4361ee',letterSpacing:'0.06em',flexShrink:0}}>OTP</label>
-                  <input
-                    id="otpInput" type="tel" inputMode="numeric"
-                    value={otp} onChange={handleOtpChange} placeholder="0 0 0 0"
-                    autoComplete="one-time-code" disabled={!isMobileValid||busy}
-                    style={{
-                      flex:1,
-                      padding:'8px 12px',
-                      fontSize:18, fontWeight:800, letterSpacing:'0.4em',
-                      textAlign:'center', color:'#3142a0',
-                      border:'none', outline:'none', borderRadius:12,
-                      background: otpVerified
-                        ? 'radial-gradient(circle at 35% 28%,#eafff5 0%,#d6fbe8 100%)'
-                        : 'radial-gradient(circle at 35% 30%,#ffffff 0%,#f0f2ff 55%,#dce2ff 100%)',
-                      boxShadow: otpVerified
-                        ? 'inset 2px 2px 6px rgba(46,213,115,0.18),inset -1px -1px 4px rgba(255,255,255,0.9)'
-                        : 'inset 2px 2px 6px rgba(67,97,238,0.12),inset -1px -1px 4px rgba(255,255,255,0.9)',
-                      transition:'all 0.3s ease',
-                      opacity:(!isMobileValid||busy)?0.45:1,
-                    }}
-                  />
-                  {otpVerified && (
-                    <div style={{animation:'ga-verify-pop 0.4s cubic-bezier(0.34,1.56,0.64,1)',flexShrink:0}}>
-                      <VerifyCircle3D done={true} size={28}/>
+                <div className="ga-flip-wrap">
+                  <div className={`ga-flip-inner${cardFlipped?' is-flipped':''}`}>
+                    <div
+                      className="ga-card-face"
+                      style={{cursor: cardFlipped ? 'default' : 'text'}}
+                      onClick={()=>{ if(!cardFlipped && mobileInputRef.current) mobileInputRef.current.focus(); }}
+                    >
+                      <ColorMobileBoxes
+                        digits={mobileDigits}
+                        onRef={el=>{
+                          mobileInputRef.current = el;
+                          if(el){
+                            el.value = mobile;
+                            el.oninput = ev => handleMobileChange({target:{value:ev.target.value}});
+                          }
+                        }}
+                      />
                     </div>
-                  )}
+                    <div className="ga-card-face ga-card-back" style={{position:'absolute',top:0,left:0}}>
+                      <div className="ga-otp-label-row">
+                        <span className="ga-otp-label">OTP Verification</span>
+                        <span className="ga-otp-hint">4-digit code</span>
+                      </div>
+                      <OtpDigitBoxes otpValue={otp} isVerified={otpVerified}/>
+                      <input
+                        ref={otpInputRef}
+                        type="tel" inputMode="numeric" maxLength={4}
+                        value={otp} onChange={handleOtpChange}
+                        autoComplete="one-time-code"
+                        style={{
+                          position:'absolute', top:0, left:0,
+                          width:'100%', height:'100%',
+                          opacity:0, cursor:'text', fontSize:'16px',
+                          border:'none', background:'transparent', zIndex:10,
+                        }}
+                      />
+                    </div>
+                  </div>
                 </div>
 
-                {status&&<p className="ga-status" style={{marginTop:10}}>{status}</p>}
+                {cardFlipped && (
+                  <button type="button"
+                    onClick={()=>{
+                      setCardFlipped(false); setMobile(''); setOtp(''); setOtpVerified(false);
+                      setTimeout(()=>{ if(mobileInputRef.current) mobileInputRef.current.focus(); }, 400);
+                    }}
+                    style={{
+                      background:'none', border:'none', color:'#4361ee',
+                      fontSize:13, fontWeight:600, cursor:'pointer',
+                      padding:'4px 0', marginBottom:4,
+                      textDecoration:'underline', alignSelf:'flex-start',
+                    }}
+                  >
+                    ← Number change karein
+                  </button>
+                )}
+                {status && <p className="ga-status" style={{marginTop:6}}>{status}</p>}
               </div>
             )}
 
-            {step===2 && (
+            {/* ════ STEP 2 ════ */}
+            {step === 2 && (
               <div className="ga-step-view ga-step-enter">
                 <h1 className="ga-heading">
-                  <Icon3D>
-                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#4361ee" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="3" y="11" width="18" height="11" rx="2"/>
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                      <circle cx="12" cy="16" r="1.5" fill="#4361ee"/>
-                    </svg>
-                  </Icon3D>
-                  Choose your<br/><strong>Symbolic ID</strong>
+                  <Step2HeaderIcon />
+                  <span style={{flex:1, textAlign:'center'}}>
+                    <span style={{color:'#2d3142', fontWeight:400, fontSize:28}}>Gloobal </span>
+                    <span style={{color:'#4361ee', fontWeight:700, fontSize:32, letterSpacing:'-0.02em'}}>ID</span>
+                  </span>
+                  <span style={{width:60, flexShrink:0, display:'inline-block'}}/>
                 </h1>
 
-                <div className={`ga-id-box ${activeField==='secure'?'ga-id-box-active':''}`}
-                  onClick={()=>setActiveField('secure')} role="button" tabIndex={0}>
-                  <div className="ga-id-top"><span>12-Symbol Secure ID</span><small>{secureSymbols.length} / 12</small></div>
-                  <ColorSymbolSlots symbols={secureSymbols} shouldHide={hideSecure}/>
-                </div>
+                {/* Network/world-connectivity illustration */}
+                <div style={{display:'flex',justifyContent:'center',marginBottom:16}}>
+  <NetworkGlobeImage size={230}/>
+</div>
 
-                <div className={`ga-id-box ${activeField==='referrer'?'ga-id-box-active':''}`}
-                  onClick={()=>setActiveField('referrer')} role="button" tabIndex={0} style={{marginTop:10}}>
-                  <div className="ga-id-top"><span>Referral ID</span><small>{referrerSymbols.length} / 12 optional</small></div>
-                  <ColorSymbolSlots symbols={referrerSymbols} shouldHide={hideReferrer}/>
-                </div>
+                {/* ID Panel Flip */}
+                <div style={{width:'100%', perspective:'1000px', marginBottom:8}}>
+                  <div style={{
+                    position:'relative', width:'100%',
+                    transformStyle:'preserve-3d',
+                    transition:'transform 0.65s cubic-bezier(0.4,0.2,0.2,1)',
+                    transform: idPanelFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)',
+                    minHeight: 110,
+                  }}>
 
-                <div style={{display:'flex',justifyContent:'space-between',width:'100%',margin:'10px 0 4px',alignItems:'center'}}>
-                  <span style={{fontSize:13,color:'#8892b0',fontWeight:500}}>Editing: {currentFieldIsSecure?'Secure ID':'Referral ID'}</span>
-                  <button type="button"
-                    onClick={()=>{ if(busy)return; if(currentFieldIsSecure)deleteLastSecureSymbol(); else deleteLastReferralSymbol(); }}
-                    disabled={busy||activeSymbols.length===0}
-                    style={{
-                      display:'flex',alignItems:'center',gap:6,padding:'7px 16px',borderRadius:50,border:'none',
-                      background:activeSymbols.length===0||busy
-                        ?'radial-gradient(circle at 35% 30%,#f5f5f5 0%,#e8e8e8 100%)'
-                        :'radial-gradient(circle at 35% 28%,#ff9aaa 0%,#FF4757 50%,#c0392b 100%)',
-                      boxShadow:activeSymbols.length===0||busy?'2px 2px 5px rgba(0,0,0,0.08)':'3px 3px 9px rgba(255,71,87,0.38)',
-                      cursor:activeSymbols.length===0||busy?'not-allowed':'pointer',
-                      opacity:activeSymbols.length===0||busy?0.4:1,
-                      fontSize:13,fontWeight:700,
-                      color:activeSymbols.length===0||busy?'#b0b8d0':'#fff',
+                    {/* ── SECURE ID FACE (front) ── */}
+                    <div style={{
+                      position:'absolute', top:0, left:0, width:'100%',
+                      backfaceVisibility:'hidden', WebkitBackfaceVisibility:'hidden',
                     }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                      stroke={activeSymbols.length===0||busy?'#b0b8d0':'#fff'} strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>
-                    </svg>
-                    Undo
-                  </button>
+                      {/* Label row OUTSIDE / ABOVE the box */}
+                      <div
+  style={{
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 5,
+    padding: '0 4px'
+  }}
+>
+  <span
+    style={{
+      fontSize: 12,
+      color: '#4361ee',
+      fontWeight: 600,
+      cursor: 'pointer'
+    }}
+  >
+    Create
+  </span>
+
+  <span className="ga-outer-count">{secureSymbols.length} / 12</span>
+</div>
+                      <div className={`ga-id-box ${activeField==='secure'?'ga-id-box-active':''}`}
+                        onClick={()=>setActiveField('secure')}>
+                          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:5,padding:'0 4px'}}>
+                        <span className="ga-outer-label-text">12-Symbolic Secure ID</span>
+                        
+                      </div>
+                        <ColorSymbolSlots symbols={secureSymbols} shouldHide={hideSecure}/>
+                      </div>
+                    </div>
+
+                    {/* ── REFERRAL ID FACE (back) ── */}
+                    <div style={{
+                      position:'absolute', top:0, left:0, width:'100%',
+                      backfaceVisibility:'hidden', WebkitBackfaceVisibility:'hidden',
+                      transform:'rotateY(180deg)',
+                    }}>
+                      <div
+  style={{
+    display: 'flex',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 5,
+    padding: '0 4px'
+  }}
+>
+
+  
+
+  <span className="ga-outer-count">
+    {referrerSymbols.length} / 12
+  </span>
+</div>
+                      <div className={`ga-id-box ${activeField==='referral'?'ga-id-box-active':''}`}
+                        onClick={()=>setActiveField('referral')}>
+                          <div style={{ textAlign: "left", marginBottom: "6px", paddingLeft: "4px" }}>
+  <span className="ga-outer-label-text">Referral ID</span>
+</div>
+                        <ColorSymbolSlots symbols={referrerSymbols} shouldHide={hideReferrer}/>
+                      </div>
+                    </div>
+
+                  </div>
                 </div>
 
-                <div className="ga-dial" aria-label="Symbol dialpad">
-                  {SYMBOL_KEYS.map((symbol,index)=>(
-                    <button key={symbol} type="button" className={`ga-dial-key ga-dial-key-${index}`}
-                      onClick={()=>handleSymbolPress(symbol)} disabled={busy||activeSymbols.length>=12}>
-                      {symbol}
-                    </button>
-                  ))}
+                {/* ── "← Secure ID edit" and "Referral ID →" buttons REMOVED ── */}
+
+                <div style={{display:'flex',justifyContent:'space-between',width:'100%',margin:'6px 0 2px',alignItems:'center'}}>
+                  {idPhase === 'referral' ? (
+  <button
+    type="button"
+    onClick={() => {
+      setIdPanelFlipped(false);
+      setIdPhase('secure');
+      setActiveField('secure');
+    }}
+    style={{
+      background: 'none',
+      border: 'none',
+      cursor: 'pointer',
+      fontSize: '22px',
+      color: '#4361ee',
+      padding: 0
+    }}
+  >
+    ←
+  </button>
+) : (
+  <span />
+)}
+                
                   <button type="button"
-                    className={`ga-dial-center ga-dial-eye ${currentFieldIsHidden?'ga-eye-closed':'ga-eye-open'}`}
-                    onClick={handleToggleVisibility} disabled={busy} aria-label={eyeButtonLabel}>
-                    {currentFieldIsHidden?<ClosedEyeIcon/>:<OpenEyeIcon/>}
+                    onClick={deleteLastSymbol}
+                    disabled={busy || activeSymbols.length === 0}
+                    style={{
+                      display:'flex', alignItems:'center', justifyContent:'center',
+                      width:36, height:36, borderRadius:'50%', border:'none',
+                      background: 'radial-gradient(circle at 35% 30%, #ffffff 0%, #f5f5f5 60%, #ebebeb 100%)',
+                      boxShadow: activeSymbols.length===0||busy
+                        ? '2px 2px 5px rgba(0,0,0,0.08), -1px -1px 3px rgba(255,255,255,0.95)'
+                        : '3px 3px 8px rgba(0,0,0,0.12), -2px -2px 5px rgba(255,255,255,0.95)',
+                      cursor: activeSymbols.length===0||busy ? 'not-allowed' : 'pointer',
+                      opacity: activeSymbols.length===0||busy ? 0.35 : 1,
+                    }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                      stroke={activeSymbols.length===0||busy ? '#e0e0e0' : '#FF4757'}
+                      strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="9 14 4 9 9 4"/>
+                      <path d="M20 20v-7a4 4 0 0 0-4-4H4"/>
+                    </svg>
                   </button>
                 </div>
 
-                <button type="button" className="ga-main-cta" disabled={!canSubmit} onClick={handleSubmit}>
-                  {busy?'Please wait...':'Register & Continue'}
-                </button>
+                <DialPadFlip
+                  onSymbolPress={handleSymbolPress}
+                  onToggleVisibility={handleToggleVisibility}
+                  busy={busy || activeSymbols.length >= 12}
+                  currentFieldIsHidden={currentFieldIsHidden}
+                />
+
+                {idPhase === 'referral' ? (
+                  <button type="button" className="ga-main-cta" disabled={!canSubmit} onClick={handleSubmit} style={{marginTop:10}}>
+                    {busy ? 'Please wait...' : (referrerSymbols.length === 0 ? 'Skip Referral & Register' : 'Register & Continue')}
+                  </button>
+                ) : (
+                  secureSymbols.length === 12 && (
+                    <p style={{fontSize:12,color:'#4361ee',fontWeight:600,textAlign:'center',margin:'8px 0 0'}}>
+                      ✓ Secure ID complete! Referral panel aa raha hai...
+                    </p>
+                  )
+                )}
+
                 <button type="button" className="ga-back-btn" onClick={()=>{setStep(1);setStatus('');}} disabled={busy}>
                   ← Back
                 </button>
-                {status&&<p className="ga-status">{status}</p>}
+                {status && <p className="ga-status">{status}</p>}
               </div>
             )}
 
             <div className="ga-footer">
-              <span className={`static-footer-master-heart ${isBeating?'beating':''}`}>
+              <span className={`static-footer-master-heart ${isBeating?'beating':''}`}
+               style={{ fontSize: '14px' }}
+>
                 ❤️
                 {hearts.map(h=>(
-                  <span key={h.id} className="ga-automatic-colored-heart" style={{'--drift-x':h.randomX}}>{h.color}</span>
+                  <span key={h.id} className="ga-automatic-colored-heart" style={{'--drift-x':h.randomX}}>
+                    {h.color}
+                  </span>
                 ))}
               </span>{' '}from भारत
             </div>
