@@ -116,6 +116,64 @@ function ReceiveIcon() {
   );
 }
 
+
+const BANK_COUNTRIES = [
+  { code: 'IN', name: 'India', flag: '🇮🇳', dial: '+91' },
+  { code: 'US', name: 'United States', flag: '🇺🇸', dial: '+1' },
+  { code: 'GB', name: 'United Kingdom', flag: '🇬🇧', dial: '+44' },
+  { code: 'AE', name: 'United Arab Emirates', flag: '🇦🇪', dial: '+971' },
+  { code: 'SG', name: 'Singapore', flag: '🇸🇬', dial: '+65' },
+  { code: 'CA', name: 'Canada', flag: '🇨🇦', dial: '+1' },
+];
+
+const BANK_DIRECTORY = {
+  IN: [
+    { name: 'Gloobal Bank', initials: 'GB', note: 'Recommended for Gloobal ID' },
+    { name: 'State Bank of India', initials: 'SBI', note: 'Public sector bank' },
+    { name: 'HDFC Bank', initials: 'HDFC', note: 'Private bank' },
+    { name: 'ICICI Bank', initials: 'ICICI', note: 'Private bank' },
+    { name: 'Axis Bank', initials: 'AXIS', note: 'Private bank' },
+    { name: 'Punjab National Bank', initials: 'PNB', note: 'Public sector bank' },
+    { name: 'Bank of Baroda', initials: 'BOB', note: 'Public sector bank' },
+  ],
+  US: [
+    { name: 'Gloobal Bank', initials: 'GB', note: 'Recommended for Gloobal ID' },
+    { name: 'JPMorgan Chase', initials: 'JPM', note: 'United States bank' },
+    { name: 'Bank of America', initials: 'BOA', note: 'United States bank' },
+    { name: 'Citibank', initials: 'CITI', note: 'United States bank' },
+    { name: 'Wells Fargo', initials: 'WF', note: 'United States bank' },
+  ],
+  GB: [
+    { name: 'Gloobal Bank', initials: 'GB', note: 'Recommended for Gloobal ID' },
+    { name: 'HSBC Bank', initials: 'HSBC', note: 'United Kingdom bank' },
+    { name: 'Barclays', initials: 'BARC', note: 'United Kingdom bank' },
+    { name: 'Lloyds Bank', initials: 'LLOY', note: 'United Kingdom bank' },
+    { name: 'NatWest', initials: 'NW', note: 'United Kingdom bank' },
+  ],
+  AE: [
+    { name: 'Gloobal Bank', initials: 'GB', note: 'Recommended for Gloobal ID' },
+    { name: 'Emirates NBD', initials: 'ENBD', note: 'UAE bank' },
+    { name: 'Abu Dhabi Commercial Bank', initials: 'ADCB', note: 'UAE bank' },
+    { name: 'First Abu Dhabi Bank', initials: 'FAB', note: 'UAE bank' },
+  ],
+  SG: [
+    { name: 'Gloobal Bank', initials: 'GB', note: 'Recommended for Gloobal ID' },
+    { name: 'DBS Bank', initials: 'DBS', note: 'Singapore bank' },
+    { name: 'OCBC Bank', initials: 'OCBC', note: 'Singapore bank' },
+    { name: 'UOB', initials: 'UOB', note: 'Singapore bank' },
+  ],
+  CA: [
+    { name: 'Gloobal Bank', initials: 'GB', note: 'Recommended for Gloobal ID' },
+    { name: 'Royal Bank of Canada', initials: 'RBC', note: 'Canada bank' },
+    { name: 'TD Bank', initials: 'TD', note: 'Canada bank' },
+    { name: 'Scotiabank', initials: 'BNS', note: 'Canada bank' },
+  ],
+};
+
+function getBanksForCountry(countryCode) {
+  return BANK_DIRECTORY[countryCode] || BANK_DIRECTORY.IN;
+}
+
 function HomeIcon() {
   return (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -188,8 +246,22 @@ export default function Dashboard({ symbolId, onLogout }) {
     ifsc: '',
   });
   const [bankMessage, setBankMessage] = useState('');
+  const [selectedBankCountry, setSelectedBankCountry] = useState('IN');
+  const [bankSearch, setBankSearch] = useState('');
 
   const dummyUpiId = useMemo(() => makeDummyUpiId(profile, symbolId), [profile, symbolId]);
+  const selectedCountry = BANK_COUNTRIES.find((country) => country.code === selectedBankCountry) || BANK_COUNTRIES[0];
+  const filteredBankOptions = useMemo(() => {
+    const query = bankSearch.trim().toLowerCase();
+    const banks = getBanksForCountry(selectedBankCountry);
+
+    if (!query) return banks;
+
+    return banks.filter((bank) =>
+      bank.name.toLowerCase().includes(query) ||
+      bank.initials.toLowerCase().includes(query)
+    );
+  }, [bankSearch, selectedBankCountry]);
 
   const profileName = profile?.fullName || profile?.name || 'Gloobal User';
   const profileMobile = profile?.mobileNumber || '+91 mobile not available';
@@ -224,7 +296,12 @@ export default function Dashboard({ symbolId, onLogout }) {
     if (!savedBank) return;
 
     try {
-      setBankForm(JSON.parse(savedBank));
+      const parsedBank = JSON.parse(savedBank);
+      setBankForm(parsedBank);
+
+      if (parsedBank.bankCountry) {
+        setSelectedBankCountry(parsedBank.bankCountry);
+      }
     } catch {
       localStorage.removeItem(`gloobal.bank.${symbolId || 'guest'}`);
     }
@@ -421,13 +498,32 @@ export default function Dashboard({ symbolId, onLogout }) {
   function handleSaveBank(event) {
     event.preventDefault();
 
-    if (!bankForm.bankName || !bankForm.accountName || !bankForm.accountNumber || !bankForm.ifsc) {
-      setBankMessage('Fill all bank account details.');
+    const accountDigits = String(bankForm.accountNumber || '').replace(/\D/g, '');
+
+    if (!bankForm.bankName || !bankForm.accountName || accountDigits.length < 4 || !bankForm.ifsc) {
+      setBankMessage('Select bank and fill account holder, account number, and IFSC.');
       return;
     }
 
-    localStorage.setItem(`gloobal.bank.${symbolId || 'guest'}`, JSON.stringify(bankForm));
-    setBankMessage('Prototype bank account saved on this device.');
+    const selectedCountryInfo = BANK_COUNTRIES.find((country) => country.code === selectedBankCountry) || BANK_COUNTRIES[0];
+
+    const bankPayload = {
+      ...bankForm,
+      bankName: bankForm.bankName.trim(),
+      accountName: bankForm.accountName.trim(),
+      accountNumber: bankForm.accountNumber.trim(),
+      ifsc: bankForm.ifsc.trim().toUpperCase(),
+      bankCountry: selectedCountryInfo.code,
+      countryName: selectedCountryInfo.name,
+      dialCode: selectedCountryInfo.dial,
+      upiId: dummyUpiId,
+      maskedAccountNumber: accountDigits.length > 4 ? '•••• ' + accountDigits.slice(-4) : bankForm.accountNumber.trim(),
+      savedAt: new Date().toISOString(),
+    };
+
+    localStorage.setItem('gloobal.bank.' + (symbolId || 'guest'), JSON.stringify(bankPayload));
+    setBankForm(bankPayload);
+    setBankMessage('Bank selected and prototype account saved on this device.');
   }
 
   function goHome() {
@@ -562,45 +658,78 @@ export default function Dashboard({ symbolId, onLogout }) {
         )}
 
         {activeView === 'send' && (
-          <section className="dash-panel">
+          <section className="dash-panel send-flow-panel">
             <div className="panel-head">
               <button onClick={goHome}>Back</button>
               <h2>Send Money</h2>
             </div>
 
-            <label className="dash-label">Receiver Mobile No. or Gloobal ID</label>
-
-            <div className="inline-field">
-              <input
-                value={sendForm.receiver}
-                onChange={(event) => {
-                  setSendForm((current) => ({ ...current, receiver: event.target.value }));
-                  setReceiverPreview(null);
-                }}
-                placeholder="Enter mobile or Gloobal ID"
-              />
-
-              <button type="button" onClick={() => resolveUser(sendForm.receiver, 'send')} disabled={receiverLoading}>
-                {receiverLoading ? '...' : 'Check'}
-              </button>
+            <div className="send-transfer-banner">
+              <span>Global Transfer</span>
+              <strong>Send with Gloobal ID</strong>
+              <small>Receiver lookup and PIN verification stay connected to the live backend.</small>
             </div>
 
-            {receiverPreview && (
-              <div className="receiver-card">
-                <span>Paying to</span>
-                <strong>{receiverPreview.fullName || receiverPreview.name || 'Receiver'}</strong>
-                <small>{receiverPreview.symbolId || sendForm.receiver}</small>
+            <div className="send-person-card send-from-card">
+              <div className="send-person-top">
+                <span className="send-flag">🇮🇳</span>
+                <div>
+                  <label>From</label>
+                  <strong>{profileName}</strong>
+                  <small>{symbolId || 'Current Gloobal ID'}</small>
+                </div>
               </div>
-            )}
 
-            <label className="dash-label">Amount</label>
-            <input
-              className="dash-input"
-              value={sendForm.amount}
-              onChange={(event) => setSendForm((current) => ({ ...current, amount: event.target.value }))}
-              placeholder="Enter amount"
-              inputMode="decimal"
-            />
+              <div className="send-meta-row">
+                <span>{profileMobile}</span>
+                <b>INR</b>
+              </div>
+            </div>
+
+            <div className="send-swap-dot">
+              <span>↓</span>
+            </div>
+
+            <div className="send-person-card">
+              <div className="send-person-top">
+                <span className="send-flag">🌍</span>
+                <div>
+                  <label>To</label>
+                  <strong>{receiverPreview ? (receiverPreview.fullName || receiverPreview.name || 'Receiver') : 'Find receiver'}</strong>
+                  <small>{receiverPreview ? (receiverPreview.symbolId || sendForm.receiver) : 'Mobile number or Gloobal ID'}</small>
+                </div>
+              </div>
+
+              <div className="send-lookup-row">
+                <input
+                  value={sendForm.receiver}
+                  onChange={(event) => {
+                    setSendForm((current) => ({ ...current, receiver: event.target.value }));
+                    setReceiverPreview(null);
+                  }}
+                  placeholder="Enter mobile or Gloobal ID"
+                />
+
+                <button type="button" onClick={() => resolveUser(sendForm.receiver, 'send')} disabled={receiverLoading}>
+                  {receiverLoading ? '...' : 'Check'}
+                </button>
+              </div>
+            </div>
+
+            <div className="send-amount-card">
+              <label>Amount</label>
+              <div className="send-amount-row">
+                <span>₹</span>
+                <input
+                  value={sendForm.amount}
+                  onChange={(event) => setSendForm((current) => ({ ...current, amount: event.target.value }))}
+                  placeholder="0.00"
+                  inputMode="decimal"
+                />
+                <b>INR</b>
+              </div>
+              <small>Prototype safety limit is handled by backend.</small>
+            </div>
 
             <label className="dash-label">Note</label>
             <input
@@ -612,13 +741,13 @@ export default function Dashboard({ symbolId, onLogout }) {
 
             {sendMessage && <p className="dash-message">{sendMessage}</p>}
 
-            <button className="dash-primary-btn" onClick={handleProceedToPin}>
+            <button className="dash-primary-btn send-main-btn" onClick={handleProceedToPin}>
               Proceed Securely
             </button>
 
             {receipt && (
               <div className="receipt-card">
-                <div className="success-mark">✓</div>
+                <div className="success-mark">&#10003;</div>
                 <h3>Payment Successful</h3>
                 <strong>{formatMoney(receipt.amount)}</strong>
                 <p>To {receipt.receiverName}</p>
@@ -648,19 +777,78 @@ export default function Dashboard({ symbolId, onLogout }) {
         )}
 
         {activeView === 'addBank' && (
-          <section className="dash-panel">
+          <section className="dash-panel bank-global-panel">
             <div className="panel-head">
               <button onClick={goHome}>Back</button>
               <h2>Add Bank</h2>
             </div>
 
-            <form onSubmit={handleSaveBank}>
-              <label className="dash-label">Bank Name</label>
+            <div className="bank-hero-card">
+              <div>
+                <span>Gloobal Bank Link</span>
+                <h3>Bank globally. One ID for all.</h3>
+                <p>Select country, choose bank, then save prototype account details for this device.</p>
+              </div>
+              <div className="bank-hero-icon">🏦</div>
+            </div>
+
+            <div className="bank-country-strip">
+              {BANK_COUNTRIES.map((country) => (
+                <button
+                  key={country.code}
+                  type="button"
+                  className={selectedBankCountry === country.code ? 'bank-chip active' : 'bank-chip'}
+                  onClick={() => {
+                    setSelectedBankCountry(country.code);
+                    setBankSearch('');
+                    setBankForm((current) => ({ ...current, bankName: '' }));
+                    setBankMessage('');
+                  }}
+                >
+                  <span>{country.flag}</span>
+                  <small>{country.dial}</small>
+                </button>
+              ))}
+            </div>
+
+            <div className="bank-search-card">
+              <label>Country</label>
+              <strong>{selectedCountry.flag} {selectedCountry.name}</strong>
+              <input
+                value={bankSearch}
+                onChange={(event) => setBankSearch(event.target.value)}
+                placeholder="Search bank name"
+              />
+            </div>
+
+            <div className="bank-list">
+              {filteredBankOptions.map((bank) => (
+                <button
+                  type="button"
+                  key={bank.name}
+                  className={bankForm.bankName === bank.name ? 'bank-option active' : 'bank-option'}
+                  onClick={() => {
+                    setBankForm((current) => ({ ...current, bankName: bank.name }));
+                    setBankMessage('');
+                  }}
+                >
+                  <span className="bank-logo">{bank.initials}</span>
+                  <span>
+                    <strong>{bank.name}</strong>
+                    <small>{bank.note}</small>
+                  </span>
+                  <b>{bankForm.bankName === bank.name ? 'Selected' : 'Choose'}</b>
+                </button>
+              ))}
+            </div>
+
+            <form onSubmit={handleSaveBank} className="bank-form-card">
+              <label className="dash-label">Selected Bank</label>
               <input
                 className="dash-input"
                 value={bankForm.bankName}
                 onChange={(event) => setBankForm((current) => ({ ...current, bankName: event.target.value }))}
-                placeholder="HDFC Bank / SBI / ICICI"
+                placeholder="Select or type bank name"
               />
 
               <label className="dash-label">Account Holder Name</label>
@@ -679,13 +867,25 @@ export default function Dashboard({ symbolId, onLogout }) {
                 placeholder="Prototype account number"
               />
 
-              <label className="dash-label">IFSC</label>
+              <label className="dash-label">IFSC / Bank Code</label>
               <input
                 className="dash-input"
                 value={bankForm.ifsc}
                 onChange={(event) => setBankForm((current) => ({ ...current, ifsc: event.target.value.toUpperCase() }))}
-                placeholder="IFSC code"
+                placeholder="IFSC or bank code"
               />
+
+              {bankForm.bankName && (
+                <div className="bank-connected-card">
+                  <span>Linked to</span>
+                  <strong>{bankForm.bankName}</strong>
+                  <small>{dummyUpiId}</small>
+                </div>
+              )}
+
+              <p className="bank-safe-note">
+                Prototype note: real bank linking later needs backend verification, encryption, and compliance.
+              </p>
 
               {bankMessage && <p className="dash-message">{bankMessage}</p>}
 
