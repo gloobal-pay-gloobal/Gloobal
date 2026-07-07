@@ -27,9 +27,17 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
-const RAW_API_BASE = import.meta.env?.VITE_API_URL || "https://gloobal-pay.onrender.com";
+// Netlify build env can hand us VITE_API_URL/VITE_API_BASE_URL set to
+// something relative or empty (e.g. a leftover "/api" from an old
+// Netlify-function-proxy config) — that silently turns every call into a
+// same-origin request against Netlify itself, which 404s since Netlify
+// serves no such route. Only trust an env value that's actually an
+// absolute http(s) URL; anything else falls back to the real Render
+// backend, same as when neither var is set at all.
+const ENV_CANDIDATE = import.meta.env?.VITE_API_URL || import.meta.env?.VITE_API_BASE_URL || "";
+const RAW_API_BASE = /^https?:\/\//i.test(ENV_CANDIDATE) ? ENV_CANDIDATE : "https://gloobal-pay.onrender.com";
 export const API_BASE = RAW_API_BASE.replace(/\/+$/, "").replace(/\/api$/i, "");
-export const apiUrl = (path: string) => `${API_BASE}${path}`;
+export const apiUrl = (path: string) => `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
 
 async function request<TResponse>(
   method: "GET" | "POST" | "PUT" | "DELETE",
