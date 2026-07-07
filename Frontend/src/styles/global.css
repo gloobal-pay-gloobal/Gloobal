@@ -1,0 +1,92 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap');
+
+* {
+  box-sizing: border-box;
+}
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+}
+
+/* Every screen in this app renders with `position: fixed; inset: 0`,
+   which normally sizes against the browser viewport — fine on an actual
+   phone, but on a desktop browser it stretches into a giant full-width
+   canvas with the real UI pinned to a narrow center column and empty
+   whitespace on both sides. `transform` on an ancestor establishes a new
+   containing block for `position: fixed` descendants (CSS Transforms
+   spec), so giving #root a transform + max-width turns it into a real
+   phone-width frame that every fixed-position screen sizes against
+   instead of the true viewport — no changes needed to any screen itself. */
+#root {
+  max-width: 430px;
+  min-height: 100vh;
+  margin: 0 auto;
+  position: relative;
+  overflow: hidden;
+  background: #ffffff;
+  transform: translateZ(0);
+}
+
+@media (min-width: 431px) {
+  body {
+    background: #e8e9ee;
+  }
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Ambient dashboard motion — floating financial symbols, drifting dots,
+   and slow geometric outlines. Transform/opacity only, so these stay on
+   the compositor thread. */
+@keyframes finDrift {
+  0% { transform: translate3d(0, 0, 0) rotate(var(--r0)); opacity: 0; }
+  12% { opacity: var(--peak-op); }
+  88% { opacity: var(--peak-op); }
+  100% { transform: translate3d(var(--dx), var(--dy), 0) rotate(var(--r1)); opacity: 0; }
+}
+@keyframes finDotPulse {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(0.7); opacity: 0; }
+  50% { transform: translate3d(0, -6px, 0) scale(1); opacity: var(--peak-op); }
+}
+@keyframes finGlow {
+  0%, 100% { filter: none; }
+  50% { filter: drop-shadow(0 0 6px currentColor) brightness(1.5); }
+}
+@keyframes finGeoSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes signalWave {
+  0%, 100% { transform: scale(0.6); opacity: 0.3; box-shadow: none; }
+  50% { transform: scale(1.35); opacity: 1; box-shadow: 0 0 6px 2px rgba(124,58,237,0.55); }
+}
+@keyframes successPop {
+  0% { transform: scale(0.5); opacity: 0; }
+  60% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+button:focus-visible {
+  outline: 2px solid #3b6ef5;
+  outline-offset: 2px;
+}
+
+/* Shared "Version 2" tap/row feedback — used across registration,
+   dashboard, country picker, and PIN screens for a consistent,
+   lightweight "premium" press feel. Purely visual, no logic. */
+.v2-tap { transition: transform 0.1s ease, box-shadow 0.15s ease, background 0.15s ease; }
+.v2-tap:active { transform: scale(0.94); }
+.v2-row { transition: background 0.15s ease; }
+.v2-row:hover { background: rgba(124,58,237,0.05); }
+.v2-row:active { background: rgba(124,58,237,0.09); }
+.v2-success-pop { animation: successPop 0.35s cubic-bezier(.34,1.56,.64,1); }
+
+@media (prefers-reduced-motion: reduce) {
+  [aria-hidden="true"] span, [aria-hidden="true"] div { animation: none !important; opacity: 0 !important; }
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  .v2-tap:active { transform: none; }
+}
