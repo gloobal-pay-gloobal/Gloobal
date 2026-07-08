@@ -3,7 +3,7 @@ import { useCoverageStats } from "../../api/coverage";
 import { Flag } from "../../components/common/Flag";
 import { FlagEmoji } from "../../components/icons/MiscIcons";
 import { ALL_COUNTRIES, COUNTRY_BY_ISO, countryMatches, isoToFlag } from "../../data/countries";
-import { Activity, ArrowDown, ArrowUp, Bell, ChevronLeft, Globe2, History, Home, RefreshCw, ScanLine, Search, User, Users2, X, Zap } from "lucide-react";
+import { Activity, ArrowDown, ArrowUp, Bell, ChevronLeft, Globe2, History, RefreshCw, Search, Users2, X, Zap } from "lucide-react";
 import type { DialCountry } from "../../types";
 
 /** Live/animated stats for one coverage country — current tick plus the
@@ -267,8 +267,6 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
     });
   }, [liveStats]);
   const [lastUpdated, setLastUpdated] = useState(new Date());
-  const [activeTab, setActiveTab] = useState('Home');
-  const [toast, setToast] = useState<string | null>(null);
   const [countryQuery, setCountryQuery] = useState('');
   // Manual pinch/wheel zoom, layered on top of the automatic "fit the
   // country" zoom below — resets whenever the selected country changes.
@@ -355,11 +353,6 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
     saveStoredCoverageCountry(code);
     cardRefs.current[code]?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
   }
-  function handleTab(tab: string) {
-    setActiveTab(tab);
-    if (tab !== 'Home') { setToast(`${tab} is on the way`); setTimeout(() => setToast(null), 1800); }
-  }
-
   // Desktop wheel-zoom and mobile pinch-to-zoom on the map, layered on top
   // of the automatic per-country fit zoom via userZoom.
   function handleMapWheel(e: React.WheelEvent<HTMLDivElement>) {
@@ -678,33 +671,6 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
           </div>
         </div>
 
-        {/* Toast */}
-        {toast && (
-          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full text-xs font-medium" style={{ background: C.ink, color: '#fff' }}>
-            {toast}
-          </div>
-        )}
-
-        {/* Bottom nav */}
-        <div className="mt-4 px-4 pb-5 pt-2">
-          <div className="flex items-center justify-between rounded-full px-2 py-2" style={{ background: C.surface, border: `1px solid ${C.line}` }}>
-            {[
-              { key: 'Home', label: 'Home', Icon: Home },
-              { key: 'Scan', label: 'Scan', Icon: ScanLine },
-              { key: 'Profile', label: 'Profile', Icon: User },
-              { key: 'History', label: 'History', Icon: History },
-            ].map(({ key, label, Icon }) => {
-              const isActive = activeTab === key;
-              return (
-                <button key={key} onClick={() => handleTab(key)} className="flex flex-col items-center gap-1 px-4 py-1.5 rounded-full flex-1">
-                  <Icon size={18} style={{ color: isActive ? C.accent : C.inkFaint }} />
-                  <span className="text-[10px] font-medium" style={{ color: isActive ? C.accent : C.inkFaint }}>{label}</span>
-                  {isActive && <span className="w-4 h-0.5 rounded-full mt-0.5" style={{ background: C.accent }} />}
-                </button>
-              );
-            })}
-          </div>
-        </div>
       </div>
     </div>
   );

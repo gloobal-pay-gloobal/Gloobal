@@ -126,6 +126,7 @@ interface SubmitButtonProps {
 export function SubmitButton({ onClick, disabled, label = "Submit" }: SubmitButtonProps) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       className="v2-tap"
@@ -142,6 +143,7 @@ export function SubmitButton({ onClick, disabled, label = "Submit" }: SubmitButt
         background: disabled ? T.gradButtonDisabled : T.gradButton,
         boxShadow: disabled ? "none" : "0 8px 20px rgba(124,58,237,0.32)",
         transition: "box-shadow 0.15s ease, background 0.15s ease, transform 0.1s ease",
+        touchAction: "manipulation",
       }}
     >
       {label}

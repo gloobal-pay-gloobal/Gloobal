@@ -1,11 +1,10 @@
-import React, { Suspense, useState, useEffect, useRef } from "react";
+import React, { Suspense, useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { phoneSchema } from "../screens/registration/phoneSchema";
-import { GROWTH_START_SCALE, MAX_PARTICLES, makeParticle, type FlagParticle } from "../components/ambient/AmbientParticles";
+import { FloatingFlagBackground } from "../components/ambient/FloatingFlagBackground";
 import { MaskEyeIcon, SubmitButton, SymbolChipRow } from "../components/common/FormPrimitives";
 import { PinDialPad, SymbolDialPad } from "../components/dial/SymbolDial";
-import { FlagSignShape } from "../components/icons/MiscIcons";
 import { ALL_COUNTRIES, TOP_COUNTRIES, COUNTRY_BY_ISO } from "../data/countries";
 import { CountryPickerScreen } from "../screens/registration/CountryPickerScreen";
 import { PhoneConnector } from "../screens/registration/PhoneEntryForm";
@@ -54,14 +53,6 @@ const ReceiveScreen = featureRegistry.get("receive")!.Component;
 
 
 export function RootApp() {
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const particlesRef = useRef<FlagParticle[]>([]);
-  const elsRef = useRef<Record<string, HTMLElement | null>>({});
-  const rafRef = useRef<number | null>(null);
-  const dimsRef = useRef({ w: 0, h: 0 });
-  const frameRef = useRef(0);
-
-  const [, forceRender] = useState(0);
   const [verifying, setVerifying] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [registering, setRegistering] = useState(false);
@@ -77,6 +68,7 @@ export function RootApp() {
   const [loginPin, setLoginPin] = useState("");
   const [secureId, setSecureId] = useState("");
   const [referralCode, setReferralCode] = useState("");
+  const [referralFieldError, setReferralFieldError] = useState<string | null>(null);
   const [pin, setPin] = useState("");
   const [otp, setOtp] = useState("");
   const [otpError, setOtpError] = useState<string | null>(null);
@@ -227,11 +219,29 @@ export function RootApp() {
     }
   };
 
+  // Referral is optional: empty just continues like Skip. A partial code
+  // (started typing, didn't finish) shows validation instead of silently
+  // doing nothing — previously the Submit button just stayed disabled with
+  // no feedback, which read as "broken" to anyone who'd typed a few symbols.
   const handleSubmitReferral = () => {
-    if (referralCode.length === REFERRAL_LENGTH) registerAndAdvance(referralCode);
+    if (registering) return;
+    setReferralFieldError(null);
+    if (referralCode.length === 0) {
+      registerAndAdvance("");
+      return;
+    }
+    if (referralCode.length !== REFERRAL_LENGTH) {
+      setReferralFieldError(`Enter all ${REFERRAL_LENGTH} symbols, or leave blank to skip.`);
+      return;
+    }
+    registerAndAdvance(referralCode);
   };
 
-  const handleSkipReferral = () => registerAndAdvance("");
+  const handleSkipReferral = () => {
+    if (registering) return;
+    setReferralFieldError(null);
+    registerAndAdvance("");
+  };
 
   // Real PIN set: POST /api/pin/set against the symbolId the backend
   // actually returned from register-symbol (falls back to the locally
@@ -250,127 +260,6 @@ export function RootApp() {
       setRegisterError(err instanceof Error ? err.message : "Couldn't set your PIN. Try again.");
     }
   };
-
-  useEffect(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    dimsRef.current = { w: stage.clientWidth, h: stage.clientHeight };
-
-    for (let i = 0; i < 8; i++) {
-      const p = makeParticle(dimsRef.current.w, dimsRef.current.h);
-      p.y = Math.random() * dimsRef.current.h;
-      p.spawnY = p.y + dimsRef.current.h * 0.5; // already "grown up" on load
-      p.scale = 1;
-      p.opacity = 0.15 + Math.random() * 0.5;
-      particlesRef.current.push(p);
-    }
-    forceRender((n) => n + 1);
-
-    // People who've asked their OS for reduced motion get a calm, static
-    // scattering of particles instead of the continuous drifting animation.
-    const prefersReducedMotion =
-      typeof window !== "undefined" &&
-      window.matchMedia &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (prefersReducedMotion) return;
-
-    const tick = () => {
-      frameRef.current += 1;
-      const { w, h } = dimsRef.current;
-      const arr = particlesRef.current;
-
-      // 1. Move.
-      for (const p of arr) {
-        p.x += p.vx;
-        p.y += p.vy;
-        p.twinklePhase += p.twinkleSpeed;
-      }
-
-      // 2. Resolve overlaps: if two particles touch, nudge them apart and
-      // give each a small push in the opposite direction, like a soft bounce.
-      for (let i = 0; i < arr.length; i++) {
-        for (let j = i + 1; j < arr.length; j++) {
-          const a = arr[i];
-          const b = arr[j];
-          const ra = (Math.max(a.pw, a.ph) * a.scale) / 2;
-          const rb = (Math.max(b.pw, b.ph) * b.scale) / 2;
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
-          const dist = Math.sqrt(dx * dx + dy * dy) || 0.0001;
-          const minDist = (ra + rb) * 0.9;
-
-          if (dist < minDist) {
-            const nx = dx / dist;
-            const ny = dy / dist;
-            const overlap = minDist - dist;
-
-            // Separate so they no longer overlap.
-            a.x -= nx * overlap * 0.5;
-            a.y -= ny * overlap * 0.5;
-            b.x += nx * overlap * 0.5;
-            b.y += ny * overlap * 0.5;
-
-            // A small push apart, mostly sideways so the upward flow holds.
-            const push = 0.18;
-            a.vx -= nx * push;
-            a.vy -= ny * push * 0.25;
-            b.vx += nx * push;
-            b.vy += ny * push * 0.25;
-
-            a.vx = Math.max(-1.3, Math.min(1.3, a.vx));
-            b.vx = Math.max(-1.3, Math.min(1.3, b.vx));
-            a.vy = Math.max(-1.6, Math.min(-0.15, a.vy));
-            b.vy = Math.max(-1.6, Math.min(-0.15, b.vy));
-          }
-        }
-      }
-
-      // 3. Update opacity, growth, and paint.
-      for (const p of arr) {
-        const distFromBottom = h - p.y;
-        if (distFromBottom < 60) {
-          p.opacity = Math.min(0.9, distFromBottom / 60);
-        } else {
-          p.opacity = 0.35 + Math.abs(Math.sin(p.twinklePhase)) * 0.55;
-        }
-
-        // Growth: starts as a pinprick (1/10 scale) at spawn and eases up to
-        // its full, "existing" size the further it travels up the stage.
-        // Eased (not linear) so the grow-in feels smooth rather than abrupt.
-        const traveled = p.spawnY - p.y;
-        const growthRatio = Math.min(1, traveled / (h * 0.5));
-        const eased = 1 - Math.pow(1 - growthRatio, 3);
-        p.scale = GROWTH_START_SCALE + (1 - GROWTH_START_SCALE) * eased;
-
-        const el = elsRef.current[p.id];
-        if (el) {
-          el.style.transform = `translate(${p.x}px, ${p.y}px) scale(${p.scale})`;
-          el.style.opacity = String(p.opacity);
-        }
-      }
-
-      let changed = false;
-      particlesRef.current = arr.filter((p) => {
-        const alive = p.y > -30 && p.x > -30 && p.x < w + 30;
-        if (!alive) changed = true;
-        return alive;
-      });
-
-      if (frameRef.current % 10 === 0 && particlesRef.current.length < MAX_PARTICLES) {
-        particlesRef.current.push(makeParticle(w, h));
-        changed = true;
-      }
-
-      if (changed) forceRender((n) => n + 1);
-      rafRef.current = requestAnimationFrame(tick);
-    };
-
-    rafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Secure ID entry on the login card just advances to a PIN step now —
   // real POST /api/login needs both, collected together in handleLoginPin.
@@ -466,7 +355,6 @@ export function RootApp() {
 
   return (
     <div
-      ref={stageRef}
       style={{
         position: "fixed",
         inset: 0,
@@ -478,28 +366,7 @@ export function RootApp() {
           "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
-      {particlesRef.current.map((p) => (
-        <div
-          key={p.id}
-          ref={(el) => {
-            if (el) elsRef.current[p.id] = el;
-            else delete elsRef.current[p.id];
-          }}
-          style={{
-            position: "absolute",
-            top: -(p.ph / 2),
-            left: -(p.pw / 2),
-            width: p.pw,
-            height: p.ph,
-            userSelect: "none",
-            pointerEvents: "none",
-            willChange: "transform, opacity",
-            opacity: p.opacity,
-          }}
-        >
-          <FlagSignShape sign={p.sign} flag={p.flag} box={p.box} />
-        </div>
-      ))}
+      <FloatingFlagBackground />
 
       <div
         style={{
@@ -791,7 +658,14 @@ export function RootApp() {
 
             {stage === "referral" && (
               <div style={{ marginTop: 32, position: "relative", zIndex: 1, width: "100%" }}>
-                <SymbolDialPad value={referralCode} onChange={setReferralCode} length={REFERRAL_LENGTH} />
+                <SymbolDialPad
+                  value={referralCode}
+                  onChange={(v) => {
+                    setReferralCode(v);
+                    setReferralFieldError(null);
+                  }}
+                  length={REFERRAL_LENGTH}
+                />
               </div>
             )}
 
@@ -854,14 +728,31 @@ export function RootApp() {
             )}
 
             {stage === "referral" && (
-              <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div
+                style={{
+                  marginTop: 20,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  position: "relative",
+                  zIndex: 2,
+                }}
+              >
+                {referralFieldError && (
+                  <div style={{ marginBottom: 8, fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
+                    {referralFieldError}
+                  </div>
+                )}
                 <SubmitButton
                   onClick={handleSubmitReferral}
-                  disabled={referralCode.length !== REFERRAL_LENGTH || registering}
+                  disabled={registering}
+                  label={registering ? "Submitting…" : "Submit"}
                 />
                 <button
+                  type="button"
                   onClick={handleSkipReferral}
                   disabled={registering}
+                  className="v2-tap"
                   style={{
                     marginTop: 10,
                     border: "none",
@@ -871,6 +762,7 @@ export function RootApp() {
                     fontWeight: 700,
                     cursor: registering ? "not-allowed" : "pointer",
                     padding: "6px 8px",
+                    touchAction: "manipulation",
                   }}
                 >
                   Skip for now
