@@ -43,7 +43,6 @@ function transactionTitle(tx: TransactionResult): string {
 // registers the actual handler; see commandBus.ts.
 export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode, onShareReferral, onOpenSend, onOpenBank, onOpenCoverage, onOpenReceive }: DashboardScreenProps) {
   const [balanceVisible, setBalanceVisible] = useState(true);
-  const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<DashboardTab>("home");
   const [showIdTag, setShowIdTag] = useState(false);
   // No real balance endpoint exists yet (ledger entries are always 0 in
@@ -132,7 +131,11 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
         >
           <RotatingGlobeIcon />
         </button>
-        <div
+        <button
+          type="button"
+          onClick={onOpenCoverage}
+          aria-label="Search Global Coverage by country"
+          className="v2-tap"
           style={{
             flex: 1,
             display: "flex",
@@ -142,19 +145,20 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
             borderRadius: T.radiusMd,
             padding: "11px 15px",
             boxShadow: T.shadowCard,
+            border: "none",
+            cursor: "pointer",
+            textAlign: "left",
+            touchAction: "manipulation",
           }}
         >
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke={T.inkFaint} strokeWidth="2.4">
             <circle cx="11" cy="11" r="7" />
             <path d="M21 21l-4.3-4.3" strokeLinecap="round" />
           </svg>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search"
-            style={{ flex: 1, border: "none", outline: "none", background: "none", fontSize: 14, color: T.ink, fontWeight: 500 }}
-          />
-        </div>
+          <span style={{ flex: 1, fontSize: 14, color: T.inkFaint, fontWeight: 500 }}>
+            Global Coverage, Country...
+          </span>
+        </button>
         <button
           aria-label="Notifications"
           className="v2-tap"
@@ -313,11 +317,12 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
+                    aspectRatio: "1",
                     border: `1px solid ${T.line}`,
                     background: T.surface,
                     borderRadius: T.radiusLg,
                     cursor: onClick ? "pointer" : "default",
-                    padding: "15px 14px",
+                    padding: 0,
                     boxShadow: T.shadowCard,
                   }}
                 >

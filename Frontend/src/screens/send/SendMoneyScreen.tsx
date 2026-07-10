@@ -30,7 +30,7 @@ export interface SendMoneyParty {
 // person actually verified with during onboarding, instead of a fixed
 // placeholder — so the flag/currency here always matches their Global ID.
 export function buildSenderProfile(sender?: SenderProfile | null): SendMoneyParty {
-  const s = sender || { name: "United States", iso: "US", dialCode: "+1", flag: "🇺🇸", phoneNumber: "" };
+  const s = sender || { name: "India", iso: "IN", dialCode: "+91", flag: "🇮🇳", phoneNumber: "" };
   const digits = (s.phoneNumber || "").trim();
   return {
     country: s.name,

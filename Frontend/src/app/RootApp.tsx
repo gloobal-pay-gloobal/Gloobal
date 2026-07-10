@@ -85,7 +85,7 @@ export function RootApp() {
   // itself is only reachable while stage === "phone", so once registration
   // is complete this is effectively locked until a future settings screen
   // explicitly offers to change it.
-  const [dialCountry, setDialCountry] = useState<DialCountry>(TOP_COUNTRIES[0]);
+  const [dialCountry, setDialCountry] = useState<DialCountry>(COUNTRY_BY_ISO.IN || TOP_COUNTRIES[0]);
   // Real form validation via react-hook-form + zod (see phoneSchema.ts)
   // instead of the inline `digits.length < 6` check this replaced.
   // PhoneConnector itself stays a plain controlled component — it doesn't
