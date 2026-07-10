@@ -49,8 +49,10 @@ export function PhoneConnector({ country, phoneNumber, onChangePhone, onOpenPick
         </svg>
       </button>
 
-      {/* Actual phone-number entry — the dial code is fixed to the chosen
-          country and shown as a prefix; only the national number is typed. */}
+      {/* Actual phone-number entry. The dial code is still fixed to the
+          chosen country and used internally (see normalizeMobileForApi in
+          RootApp) — it's just not shown as visible text in the input
+          anymore; the flag chip to the left is the only country indicator. */}
       <div
         style={{
           flex: 1,
@@ -64,9 +66,6 @@ export function PhoneConnector({ country, phoneNumber, onChangePhone, onOpenPick
           border: `1px solid ${T.line}`,
         }}
       >
-        <span style={{ fontSize: 14, fontWeight: 700, color: T.inkSoft, flexShrink: 0 }}>
-          {country.dialCode}
-        </span>
         <input
           type="tel"
           inputMode="numeric"

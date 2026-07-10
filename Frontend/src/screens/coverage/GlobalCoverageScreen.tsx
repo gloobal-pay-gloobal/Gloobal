@@ -587,14 +587,35 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
                     key={c.code}
                     ref={(el) => (cardRefs.current[c.code] = el)}
                     onClick={() => selectCountry(c.code)}
-                    aria-label={c.name}
+                    aria-label={
+                      c.active
+                        ? `${c.name}, ${fmtUsers(data[c.code]?.users ?? 0)} active users (demo figure)`
+                        : c.name
+                    }
                     className="snap-center flex-shrink-0"
                   >
                     <div
                       className="relative rounded-xl overflow-hidden"
-                      style={{ width: 56, height: 40, border: isSel ? `2px solid ${C.accent}` : `1px solid ${C.line}`, boxShadow: isSel ? '0 6px 16px rgba(124,58,237,0.22)' : 'none', opacity: c.active ? 1 : 0.4 }}
+                      style={{ width: 64, height: 40, border: isSel ? `2px solid ${C.accent}` : `1px solid ${C.line}`, boxShadow: isSel ? '0 6px 16px rgba(124,58,237,0.22)' : 'none', opacity: c.active ? 1 : 0.4 }}
                     >
-                      <CoverageFlag code={c.code} width={56} height={40} />
+                      <CoverageFlag code={c.code} width={64} height={40} />
+                    </div>
+                    {/* Fallback/demo figure — see useCoverageStats in
+                        api/coverage.ts; no backend country-wise
+                        active-user endpoint exists yet. 12px is the
+                        react-doctor no-tiny-text floor for body text. */}
+                    <div
+                      style={{
+                        marginTop: 3,
+                        textAlign: "center",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        letterSpacing: 0.1,
+                        whiteSpace: "nowrap",
+                        color: isSel ? C.accent : C.inkFaint,
+                      }}
+                    >
+                      {c.active ? fmtUsers(data[c.code]?.users ?? 0) : "—"}
                     </div>
                   </button>
                 );

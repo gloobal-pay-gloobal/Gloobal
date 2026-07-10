@@ -166,7 +166,7 @@ export function CountryPickerScreen({ topCountries, countries, search, onSearch,
                   boxShadow: T.shadowCard,
                 }}
               >
-                See all countries
+                Total Users
               </button>
             )}
           </>
