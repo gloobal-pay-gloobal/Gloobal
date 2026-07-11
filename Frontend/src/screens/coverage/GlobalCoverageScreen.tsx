@@ -4,7 +4,7 @@ import { Flag } from "../../components/common/Flag";
 import { GlobalSearchField } from "../../components/common/GlobalSearchField";
 import { FlagEmoji } from "../../components/icons/MiscIcons";
 import { ALL_COUNTRIES, COUNTRY_BY_ISO, countryMatches, isoToFlag } from "../../data/countries";
-import { Activity, ArrowDown, ArrowUp, Bell, ChevronLeft, Globe2, History, RefreshCw, Search, Users2, Zap } from "lucide-react";
+import { Activity, ArrowDown, ArrowUp, Bell, ChevronDown, ChevronLeft, Globe2, History, RefreshCw, Search, Users2, Zap } from "lucide-react";
 import type { DialCountry } from "../../types";
 
 /** Live/animated stats for one coverage country — current tick plus the
@@ -128,28 +128,6 @@ export function CoverageStatusDot({ active, size = 12 }: { active: boolean; size
   );
 }
 
-export const LANDMASSES = [
-  { cx: -155, cy: 64, rx: 14, ry: 9 }, { cx: -105, cy: 46, rx: 28, ry: 17 }, { cx: -80, cy: 55, rx: 14, ry: 14 },
-  { cx: -42, cy: 73, rx: 11, ry: 9 }, { cx: -92, cy: 18, rx: 8, ry: 6 }, { cx: -60, cy: -8, rx: 16, ry: 20 },
-  { cx: -65, cy: -32, rx: 11, ry: 14 }, { cx: -6, cy: 53, rx: 8, ry: 6 }, { cx: 14, cy: 49, rx: 17, ry: 11 },
-  { cx: 38, cy: 62, rx: 12, ry: 9 }, { cx: 18, cy: 4, rx: 20, ry: 16 }, { cx: 25, cy: -20, rx: 15, ry: 16 },
-  { cx: 45, cy: 26, rx: 12, ry: 10 }, { cx: 90, cy: 58, rx: 42, ry: 17 }, { cx: 78, cy: 22, rx: 12, ry: 12 },
-  { cx: 108, cy: 12, rx: 11, ry: 9 }, { cx: 117, cy: 35, rx: 16, ry: 13 }, { cx: 136, cy: -25, rx: 15, ry: 10 },
-];
-
-export function lonLatToXY(lng: number, lat: number, w: number, h: number): [number, number] { return [((lng + 180) / 360) * w, ((90 - lat) / 180) * h]; }
-export function isLand(lng: number, lat: number) {
-  return LANDMASSES.some((e) => { const dx = (lng - e.cx) / e.rx, dy = (lat - e.cy) / e.ry; return dx * dx + dy * dy <= 1; });
-}
-export const MAP_W = 600, MAP_H = 280;
-export function buildDots() {
-  const cols = 62, rows = 28, out: { x: number; y: number; key: string }[] = [];
-  for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
-    const lng = -180 + (i + 0.5) * (360 / cols), lat = 88 - (j + 0.9) * (176 / rows);
-    if (isLand(lng, lat)) { const [x, y] = lonLatToXY(lng, lat, MAP_W, MAP_H); out.push({ x, y, key: `${i}-${j}` }); }
-  }
-  return out;
-}
 export function fmtVolume(v: number) { return `$${v.toFixed(2)}M+`; }
 export function fmtUsers(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -157,14 +135,6 @@ export function fmtUsers(n: number) {
   return `${Math.round(n)}`;
 }
 export function fmtTime(d: Date) { return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
-
-// Builds the CSS transform that re-centers the map on (cx, cy) at the given
-// zoom, keeping the point fixed at the viewport's center after scaling —
-// this is what lets tapping a flag "fit the whole country" instead of a
-// fixed, tight zoom.
-export function mapFocusTransform(cx: number, cy: number, zoom: number) {
-  return `translate(${MAP_W / 2}px, ${MAP_H / 2}px) scale(${zoom}) translate(${-cx}px, ${-cy}px)`;
-}
 
 // Remembers which country the person last picked on this screen, so it
 // reopens centered on that choice instead of always resetting — the web
@@ -185,32 +155,6 @@ export function saveStoredCoverageCountry(code: string) {
   } catch {
     /* ignore — persistence is a nice-to-have, not a requirement */
   }
-}
-
-export function clampZoom(z: number) {
-  return Math.min(3, Math.max(0.6, z));
-}
-
-// A small, curated set of major financial-hub countries the selected
-// country's banking network connects out to. Kept short on purpose (the
-// design calls for 6–12 connections) so the map reads as a deliberate,
-// balanced network rather than a dense web — never all 22 countries.
-export const HUB_PRIORITY = ['US', 'GB', 'CN', 'JP', 'DE', 'CH', 'AE', 'FR', 'SA', 'KR'];
-
-// A gentle outward arc between two map points, instead of a straight
-// line — reads as a "flight path" style banking connection.
-export function curvedConnectionPath([x1, y1]: [number, number], [x2, y2]: [number, number]) {
-  const mx = (x1 + x2) / 2;
-  const my = (y1 + y2) / 2;
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-  const offset = Math.min(dist * 0.22, 46);
-  const nx = -dy / dist;
-  const ny = dx / dist;
-  const cx = mx + nx * offset;
-  const cy = my + ny * offset;
-  return `M ${x1},${y1} Q ${cx},${cy} ${x2},${y2}`;
 }
 
 // A handful of country flags that gently drift/fade behind the map as
@@ -234,6 +178,52 @@ export function useAmbientFlags() {
     []
   );
 }
+
+// ---------------------------------------------------------------------
+// Hero panel geometry — a stylized (not geographically precise) India
+// silhouette used only for the light "Global Coverage" hero card at the
+// top of the screen. This is a decorative brand panel, independent of
+// the searchable per-country picker (flag strip + live stats card)
+// further down, which still runs on `selected`/`data` as before.
+// ---------------------------------------------------------------------
+export const INDIA_HERO_VB = { w: 210, h: 240 };
+export const INDIA_HERO_PATH =
+  "M105,6 C122,6 138,14 148,30 C156,42 168,44 178,36 C176,54 162,60 166,74 " +
+  "C170,86 186,92 180,106 C176,116 162,112 158,124 C154,138 162,150 152,162 " +
+  "C146,170 134,166 130,178 C124,196 116,214 104,226 C96,234 88,232 82,222 " +
+  "C74,210 70,194 62,184 C54,174 40,176 36,162 C32,148 44,140 40,126 " +
+  "C36,112 20,104 26,88 C30,76 44,74 48,62 C40,50 46,36 58,26 " +
+  "C66,18 76,10 88,7 C93,5.5 99,5.5 105,6 Z";
+export const INDIA_HERO_SRI_LANKA = { x: 118, y: 232 };
+
+function heroArc(x1: number, y1: number, x2: number, y2: number) {
+  const mx = (x1 + x2) / 2;
+  const my = (y1 + y2) / 2;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+  const offset = Math.min(dist * 0.25, 40);
+  const nx = -dy / dist;
+  const ny = dx / dist;
+  return `M ${x1},${y1} Q ${mx + nx * offset},${my + ny * offset} ${x2},${y2}`;
+}
+
+const HERO_HUB = { x: 100, y: 45 };
+export const HERO_NODES = [
+  { id: "delhi", x: 100, y: 45, color: "#8B5CF6" },
+  { id: "mumbai", x: 55, y: 125, color: "#3B82F6" },
+  { id: "kolkata", x: 150, y: 100, color: "#EC4899" },
+  { id: "bangalore", x: 90, y: 175, color: "#22D3EE" },
+  { id: "chennai", x: 118, y: 185, color: "#F59E0B" },
+];
+export const HERO_CONNECTIONS = [
+  { id: "hc-mumbai", d: heroArc(HERO_HUB.x, HERO_HUB.y, 55, 125), from: "#8B5CF6", to: "#3B82F6" },
+  { id: "hc-kolkata", d: heroArc(HERO_HUB.x, HERO_HUB.y, 150, 100), from: "#8B5CF6", to: "#EC4899" },
+  { id: "hc-bangalore", d: heroArc(HERO_HUB.x, HERO_HUB.y, 90, 175), from: "#8B5CF6", to: "#22D3EE" },
+  { id: "hc-chennai", d: heroArc(HERO_HUB.x, HERO_HUB.y, 118, 185), from: "#8B5CF6", to: "#F59E0B" },
+  { id: "hc-edge-left", d: heroArc(HERO_HUB.x, HERO_HUB.y, 4, 6), from: "#8B5CF6", to: "#60A5FA" },
+  { id: "hc-edge-right", d: heroArc(HERO_HUB.x, HERO_HUB.y, 204, 14), from: "#8B5CF6", to: "#FACC15" },
+];
 
 export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => void; dialCountry?: DialCountry | null }) {
   // First launch: use the detected/registered country, or a default if
@@ -269,17 +259,8 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
   }, [liveStats]);
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [countryQuery, setCountryQuery] = useState('');
-  // Manual pinch/wheel zoom, layered on top of the automatic "fit the
-  // country" zoom below — resets whenever the selected country changes.
-  const [userZoom, setUserZoom] = useState(1);
   const cardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const pinchDistRef = useRef<number | null>(null);
-  const dots = useMemo(buildDots, []);
   const ambientFlags = useAmbientFlags();
-
-  useEffect(() => {
-    setUserZoom(1);
-  }, [selected]);
 
   // Global Coverage now searches/browses the exact same complete country
   // list as the Registration country picker (COVERAGE_ALL_COUNTRIES is
@@ -324,59 +305,15 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
   const cd = isActive ? data[selected] : null;
   const volPct = cd?.prevVolume ? ((cd.volume - cd.prevVolume) / cd.prevVolume) * 100 : 0;
   const tpsPct = cd?.prevTps ? ((cd.tps - cd.prevTps) / cd.prevTps) * 100 : 0;
-  const marker = useMemo(
-    () => (isActive && country.coverage ? lonLatToXY(country.coverage.lng, country.coverage.lat, MAP_W, MAP_H) : null),
-    [country, isActive]
-  );
-  const mapZoom = isActive && country.coverage?.zoom ? country.coverage.zoom : 1;
-  const mapTransform = marker
-    ? mapFocusTransform(marker[0], marker[1], clampZoom(mapZoom * userZoom))
-    : mapFocusTransform(MAP_W / 2, MAP_H / 2, clampZoom(userZoom));
   const totalLiveUsers = useMemo(
     () => COVERAGE_COUNTRIES.reduce((sum, c) => sum + (data[c.code]?.users || 0), 0),
     [data]
   );
 
-  // The selected country's small, curated banking network — a handful of
-  // major financial hubs it "connects" to. Recomputed (and re-animated,
-  // since each connection remounts with a fresh key) every time the hub
-  // changes.
-  const networkTargets = useMemo(() => {
-    if (!marker) return [];
-    return HUB_PRIORITY
-      .filter((code) => code !== selected && COVERAGE_BY_ISO[code])
-      .slice(0, 8)
-      .map((code) => COVERAGE_BY_ISO[code]);
-  }, [selected, marker]);
-
   function selectCountry(code: string) {
     setSelected(code);
     saveStoredCoverageCountry(code);
     cardRefs.current[code]?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-  }
-  // Desktop wheel-zoom and mobile pinch-to-zoom on the map, layered on top
-  // of the automatic per-country fit zoom via userZoom.
-  function handleMapWheel(e: React.WheelEvent<HTMLDivElement>) {
-    e.preventDefault();
-    setUserZoom((z) => clampZoom(z * (e.deltaY < 0 ? 1.08 : 0.93)));
-  }
-  function touchDistance(touches: React.TouchList) {
-    const dx = touches[0].clientX - touches[1].clientX;
-    const dy = touches[0].clientY - touches[1].clientY;
-    return Math.sqrt(dx * dx + dy * dy);
-  }
-  function handleMapTouchStart(e: React.TouchEvent<HTMLDivElement>) {
-    if (e.touches.length === 2) pinchDistRef.current = touchDistance(e.touches);
-  }
-  function handleMapTouchMove(e: React.TouchEvent<HTMLDivElement>) {
-    if (e.touches.length === 2 && pinchDistRef.current) {
-      const d = touchDistance(e.touches);
-      setUserZoom((z) => clampZoom(z * (d / pinchDistRef.current!)));
-      pinchDistRef.current = d;
-    }
-  }
-  function handleMapTouchEnd(e: React.TouchEvent<HTMLDivElement>) {
-    if (e.touches.length < 2) pinchDistRef.current = null;
   }
 
   return (
@@ -451,141 +388,132 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
           </button>
         </div>
 
-        {/* Map — now the primary focus of the screen */}
+        {/* Hero: light "Global Coverage" panel with a stylized India map —
+            a decorative brand panel, separate from the searchable
+            per-country picker (flag strip + live stats card below it,
+            which still runs on `selected`/`data` exactly as before). */}
         <div className="mt-1 px-5">
           <div
-            className="relative rounded-2xl overflow-hidden"
-            style={{ background: C.mapBg, touchAction: "none", border: "1px solid rgba(148,163,184,0.14)", boxShadow: "0 16px 40px rgba(10,14,28,0.35)" }}
-            onWheel={handleMapWheel}
-            onTouchStart={handleMapTouchStart}
-            onTouchMove={handleMapTouchMove}
-            onTouchEnd={handleMapTouchEnd}
+            className="relative rounded-3xl overflow-hidden"
+            style={{
+              background: "linear-gradient(180deg, #FFFFFF 0%, #F7F5FF 100%)",
+              border: "1px solid rgba(124,58,237,0.10)",
+              boxShadow: "0 14px 34px rgba(76,29,149,0.10)",
+            }}
           >
-            {/* Soft atmosphere glow behind the map content, for depth */}
-            <div
-              aria-hidden="true"
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                background: "radial-gradient(60% 60% at 50% 40%, rgba(124,58,237,0.16) 0%, rgba(124,58,237,0) 70%)",
-              }}
-            />
-
-            {/* Card header: live network label, sits above the map itself */}
-            <div className="relative flex items-center gap-1.5 px-4 pt-3.5">
-              <span
-                className="live-dot"
-                style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", boxShadow: "0 0 6px 1px rgba(74,222,128,0.7)", animation: "livePulse 1.8s ease-in-out infinite" }}
-              />
-              <span className="mono" style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase", color: "rgba(255,255,255,0.72)" }}>
-                Live Global Network
-              </span>
-            </div>
-
-            <svg viewBox={`0 0 ${MAP_W} ${MAP_H}`} className="relative w-full h-auto block" style={{ display: "block" }}>
-              <defs>
-                <linearGradient id="covConnGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#A78BFA" stopOpacity="0.95" />
-                  <stop offset="100%" stopColor="#60A5FA" stopOpacity="0.3" />
-                </linearGradient>
-                <filter id="covGlow" x="-60%" y="-60%" width="220%" height="220%">
-                  <feGaussianBlur stdDeviation="2.4" result="blur" />
-                  <feMerge>
-                    <feMergeNode in="blur" />
-                    <feMergeNode in="SourceGraphic" />
-                  </feMerge>
-                </filter>
-              </defs>
-              <g style={{ transform: mapTransform, transformOrigin: "0px 0px", transition: "transform 0.85s cubic-bezier(0.22, 1, 0.36, 1)" }}>
-                {/* Faint graticule — quiet lat/long grid so the card reads as a
-                    map/network, not just a scatter of dots on a flat panel. */}
-                {[0.2, 0.4, 0.6, 0.8].map((f) => (
-                  <line key={`h${f}`} x1={0} y1={MAP_H * f} x2={MAP_W} y2={MAP_H * f} stroke="rgba(148,163,184,0.07)" strokeWidth="0.6" />
-                ))}
-                {[0.1, 0.25, 0.4, 0.55, 0.7, 0.85].map((f) => (
-                  <line key={`v${f}`} x1={MAP_W * f} y1={0} x2={MAP_W * f} y2={MAP_H} stroke="rgba(148,163,184,0.07)" strokeWidth="0.6" />
-                ))}
-
-                {/* Muted-gray landmasses — a clean, quiet base for the network to stand out against */}
-                {dots.map((d) => <circle key={d.key} cx={d.x} cy={d.y} r={1.5} fill={C.mapLand} />)}
-
-                {/* Banking network: a small, curated set of glowing connections
-                    fanning out from the selected country (the hub) — no more a
-                    dense scatter of every country's marker. */}
-                {marker && networkTargets.map((t, i) => {
-                  const target = lonLatToXY(t.lng, t.lat, MAP_W, MAP_H);
-                  const pathD = curvedConnectionPath(marker, target);
-                  const pathId = `cov-conn-${t.code}`;
-                  const dur = (3.4 + (i % 4) * 0.5).toFixed(1);
-                  return (
-                    <g key={t.code}>
-                      <path
-                        id={pathId}
-                        d={pathD}
-                        fill="none"
-                        stroke="url(#covConnGradient)"
-                        strokeWidth="1.3"
-                        strokeLinecap="round"
-                        filter="url(#covGlow)"
-                        opacity="0.8"
-                      />
-                      <circle r="2.2" fill="#C4B5FD" filter="url(#covGlow)">
-                        <animateMotion dur={`${dur}s`} repeatCount="indefinite">
-                          <mpath href={`#${pathId}`} />
-                        </animateMotion>
-                      </circle>
-                      <g onClick={() => selectCountry(t.code)} style={{ cursor: "pointer" }}>
-                        <circle cx={target[0]} cy={target[1]} r={9} fill="transparent" />
-                        <circle cx={target[0]} cy={target[1]} r={6.5} fill="none" stroke="#8B5CF6" strokeOpacity="0.4" strokeWidth="1.4" />
-                        <circle cx={target[0]} cy={target[1]} r={3.4} fill="#8B5CF6" filter="url(#covGlow)" />
-                      </g>
-                    </g>
-                  );
-                })}
-
-                {/* The hub itself — the selected country, glowing in the app's accent color */}
-                {marker && (
-                  <>
-                    <circle cx={marker[0]} cy={marker[1]} r={14} fill="url(#covConnGradient)" opacity="0.18" />
-                    <circle className="pulse-ring" cx={marker[0]} cy={marker[1]} r={7} fill="none" stroke="#8B5CF6" strokeWidth="2" style={{ animation: 'pulseRing 2.2s ease-out infinite', transformOrigin: `${marker[0]}px ${marker[1]}px` }} />
-                    <circle cx={marker[0]} cy={marker[1]} r={5.5} fill="#C4B5FD" filter="url(#covGlow)" />
-                  </>
-                )}
-              </g>
-            </svg>
-
-            {/* Labeled stat bar: Active Users + Countries, docked as a footer
-                strip under the map so the numbers stay legible and never
-                cover the network lines. */}
-            <div
-              className="relative flex items-stretch"
-              style={{
-                borderTop: "1px solid rgba(148,163,184,0.14)",
-                background: "rgba(255,255,255,0.03)",
-              }}
-            >
-              <div className="flex-1 flex items-center gap-2 px-4 py-3">
-                <span
-                  className="flex items-center justify-center flex-shrink-0 rounded-full"
-                  style={{ width: 26, height: 26, background: "rgba(139,92,246,0.22)" }}
-                >
-                  <Users2 size={13} style={{ color: "#C4B5FD" }} />
-                </span>
-                <div className="min-w-0">
-                  <div className="mono font-bold text-[13px] leading-tight" style={{ color: "#fff" }}>{fmtUsers(totalLiveUsers)}</div>
-                  <div className="text-[10px] leading-tight" style={{ color: "rgba(255,255,255,0.6)" }}>Active Users</div>
+            <div className="flex items-start justify-between px-4 pt-4">
+              <div>
+                <div className="display" style={{ fontSize: 16, fontWeight: 800, color: C.ink }}>
+                  Global Coverage
+                </div>
+                <div style={{ fontSize: 11, color: C.inkSoft, marginTop: 2, maxWidth: 180, lineHeight: 1.3 }}>
+                  Real-time overview of your global transactions
                 </div>
               </div>
-              <div style={{ width: 1, background: "rgba(255,255,255,0.12)", margin: "10px 0" }} />
-              <div className="flex-1 flex items-center gap-2 px-4 py-3">
-                <span
-                  className="flex items-center justify-center flex-shrink-0 rounded-full"
-                  style={{ width: 26, height: 26, background: "rgba(96,165,250,0.22)" }}
+              <div
+                className="flex items-center gap-1 rounded-full flex-shrink-0"
+                style={{ background: C.surface, border: `1px solid ${C.line}`, padding: "5px 8px 5px 6px" }}
+              >
+                <span style={{ fontSize: 13, lineHeight: 1 }}>🇮🇳</span>
+                <span style={{ fontSize: 11.5, fontWeight: 700, color: C.ink }}>India</span>
+                <ChevronDown size={12} style={{ color: C.inkFaint }} />
+              </div>
+            </div>
+
+            <div className="relative" style={{ height: "clamp(150px, 40vw, 180px)", marginTop: 2 }}>
+              <svg
+                viewBox={`0 0 ${INDIA_HERO_VB.w} ${INDIA_HERO_VB.h}`}
+                className="absolute"
+                style={{ right: "1%", top: "50%", transform: "translateY(-50%)", height: "104%", width: "auto" }}
+              >
+                <defs>
+                  <linearGradient id="indiaFill" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#7C3AED" />
+                    <stop offset="100%" stopColor="#3B82F6" />
+                  </linearGradient>
+                  <filter id="heroGlow" x="-80%" y="-80%" width="260%" height="260%">
+                    <feGaussianBlur stdDeviation="3" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                  <clipPath id="indiaClip">
+                    <path d={INDIA_HERO_PATH} />
+                  </clipPath>
+                  {HERO_CONNECTIONS.map((conn) => (
+                    <linearGradient key={conn.id} id={conn.id} x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor={conn.from} stopOpacity="0.9" />
+                      <stop offset="100%" stopColor={conn.to} stopOpacity="0.15" />
+                    </linearGradient>
+                  ))}
+                </defs>
+
+                {/* Curved multicolor connection lines fanning from the India
+                    hub toward other cities and out to the panel's edges */}
+                {HERO_CONNECTIONS.map((conn) => (
+                  <path
+                    key={conn.id}
+                    d={conn.d}
+                    fill="none"
+                    stroke={`url(#${conn.id})`}
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                    filter="url(#heroGlow)"
+                    opacity="0.85"
+                  />
+                ))}
+
+                {/* India landmass, purple-to-blue gradient */}
+                <path d={INDIA_HERO_PATH} fill="url(#indiaFill)" stroke="rgba(255,255,255,0.55)" strokeWidth="1.2" />
+
+                {/* Stylized internal boundary lines, clipped to the landmass —
+                    decorative only, not literal state borders */}
+                <g clipPath="url(#indiaClip)" opacity="0.35" stroke="#fff" strokeWidth="0.8" fill="none">
+                  <path d="M60,60 C80,90 90,130 78,190" />
+                  <path d="M110,20 C115,60 120,110 105,170" />
+                  <path d="M40,120 C70,125 110,128 165,110" />
+                  <path d="M55,175 C80,165 105,160 140,150" />
+                </g>
+
+                {/* Sri Lanka, for scale/orientation */}
+                <circle cx={INDIA_HERO_SRI_LANKA.x} cy={INDIA_HERO_SRI_LANKA.y} r="4" fill="url(#indiaFill)" opacity="0.85" />
+
+                {/* Glowing connection nodes over the map */}
+                {HERO_NODES.map((n) => (
+                  <g key={n.id}>
+                    <circle cx={n.x} cy={n.y} r="9" fill={n.color} opacity="0.18" />
+                    <circle cx={n.x} cy={n.y} r="4.5" fill={n.color} filter="url(#heroGlow)" />
+                    <circle cx={n.x} cy={n.y} r="2" fill="#fff" />
+                  </g>
+                ))}
+              </svg>
+
+              {/* Stat chips — bottom-left, clear of the map's center */}
+              <div className="absolute flex flex-col gap-2" style={{ left: "4%", bottom: "6%" }}>
+                <div
+                  className="flex items-center gap-2 rounded-2xl"
+                  style={{ background: C.surface, border: `1px solid ${C.line}`, boxShadow: "0 6px 16px rgba(76,29,149,0.10)", padding: "7px 11px" }}
                 >
-                  <Globe2 size={13} style={{ color: "#93C5FD" }} />
-                </span>
-                <div className="min-w-0">
-                  <div className="mono font-bold text-[13px] leading-tight" style={{ color: "#fff" }}>{COVERAGE_ALL_COUNTRIES.length}</div>
-                  <div className="text-[10px] leading-tight" style={{ color: "rgba(255,255,255,0.6)" }}>Countries</div>
+                  <span className="flex items-center justify-center flex-shrink-0 rounded-full" style={{ width: 24, height: 24, background: C.accentSoft }}>
+                    <Users2 size={12} style={{ color: C.accent }} />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="mono font-bold text-[12px] leading-tight" style={{ color: C.ink }}>{fmtUsers(totalLiveUsers)}</div>
+                    <div style={{ fontSize: 9.5, color: C.inkSoft, lineHeight: 1.1 }}>Active Users</div>
+                  </div>
+                </div>
+                <div
+                  className="flex items-center gap-2 rounded-2xl"
+                  style={{ background: C.surface, border: `1px solid ${C.line}`, boxShadow: "0 6px 16px rgba(76,29,149,0.10)", padding: "7px 11px" }}
+                >
+                  <span className="flex items-center justify-center flex-shrink-0 rounded-full" style={{ width: 24, height: 24, background: C.positiveSoft }}>
+                    <Globe2 size={12} style={{ color: C.positive }} />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="mono font-bold text-[12px] leading-tight" style={{ color: C.ink }}>{COVERAGE_ALL_COUNTRIES.length}</div>
+                    <div style={{ fontSize: 9.5, color: C.inkSoft, lineHeight: 1.1 }}>Countries</div>
+                  </div>
                 </div>
               </div>
             </div>

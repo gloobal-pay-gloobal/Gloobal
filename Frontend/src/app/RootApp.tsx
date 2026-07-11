@@ -18,6 +18,7 @@ import { saveSession, loadSession, clearSession } from "./sessionPersistence";
 import { useSessionLock } from "./useSessionLock";
 import { readReferralCodeFromUrl, shareReferralLink } from "./referralLink";
 import { featureRegistry } from "./featureRegistry";
+import globalIdLogo from "../assets/globalid-logo.png";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ScreenFallback } from "../components/common/ScreenFallback";
 import type { RegistrationStage, ActiveScreen, DialCountry } from "../types";
@@ -373,29 +374,19 @@ export function RootApp() {
           position: "absolute",
           top: "calc(18px + env(safe-area-inset-top, 0px))",
           left: "calc(18px + env(safe-area-inset-left, 0px))",
-          width: 44,
-          height: 44,
           zIndex: 20,
         }}
       >
-        <svg viewBox="0 0 44 44" width="100%" height="100%">
-          <defs>
-            <linearGradient id="lg1" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor={T.accent2} />
-              <stop offset="50%" stopColor={T.accent} />
-              <stop offset="100%" stopColor="#C026D3" />
-            </linearGradient>
-          </defs>
-          <circle cx="22" cy="22" r="20" fill="url(#lg1)" />
-          <path
-            d="M13 24 L20 15 L27 22 L34 13"
-            stroke="#fff"
-            strokeWidth="2.6"
-            fill="none"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <img
+          src={globalIdLogo}
+          alt="Gloobal ID"
+          style={{
+            display: "block",
+            width: "clamp(46px, 12vw, 52px)",
+            height: "auto",
+            objectFit: "contain",
+          }}
+        />
       </div>
 
       <div
