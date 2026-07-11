@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { CardAmbientField, DashboardAmbientBg } from "../../components/ambient/AmbientParticles";
+import { GlobalSearchField } from "../../components/common/GlobalSearchField";
 import { ChevronRightIcon, EyeIcon, FlagEmoji, HomeTabIcon, LogoutIcon, NotificationIcon, ProfileTabIcon, RotatingGlobeIcon } from "../../components/icons/MiscIcons";
 import { DASHBOARD_ACTIONS, PROFILE_ROWS } from "../../data/dashboardActions";
 import { T } from "../../styles/theme";
@@ -131,34 +132,7 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
         >
           <RotatingGlobeIcon />
         </button>
-        <button
-          type="button"
-          onClick={onOpenCoverage}
-          aria-label="Search Global Coverage by country"
-          className="v2-tap"
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            background: T.surface,
-            borderRadius: T.radiusMd,
-            padding: "11px 15px",
-            boxShadow: T.shadowCard,
-            border: "none",
-            cursor: "pointer",
-            textAlign: "left",
-            touchAction: "manipulation",
-          }}
-        >
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke={T.inkFaint} strokeWidth="2.4">
-            <circle cx="11" cy="11" r="7" />
-            <path d="M21 21l-4.3-4.3" strokeLinecap="round" />
-          </svg>
-          <span style={{ flex: 1, fontSize: 14, color: T.inkFaint, fontWeight: 500 }}>
-            Global Coverage, Country...
-          </span>
-        </button>
+        <GlobalSearchField readOnly onClick={onOpenCoverage} />
         <button
           aria-label="Notifications"
           className="v2-tap"
@@ -295,7 +269,7 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
               )}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, maxWidth: 220, margin: "0 auto", width: "100%" }}>
               {DASHBOARD_ACTIONS.map(({ key, label, Icon }) => {
                 const onClick =
                   key === "send"
@@ -331,10 +305,12 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
                     style={{
                       position: "relative",
                       zIndex: 1,
-                      width: 42,
-                      height: 42,
+                      width: "48%",
+                      height: "48%",
+                      maxWidth: 34,
+                      maxHeight: 34,
                       flexShrink: 0,
-                      borderRadius: 14,
+                      borderRadius: 11,
                       background: T.accentSoft,
                       display: "flex",
                       alignItems: "center",

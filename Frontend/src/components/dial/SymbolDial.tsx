@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
-import { RotatingGlobeIcon } from "../icons/MiscIcons";
 import { T } from "../../styles/theme";
 import { Delete } from "lucide-react";
+import globalIdLogo from "../../assets/globalid-logo.png";
 
 interface SymbolDialPadProps {
   value: string;
@@ -343,10 +343,13 @@ export function SymbolDialPad({ value, onChange, length }: SymbolDialPadProps) {
                 gap: 8,
               }}
             >
-              <RotatingGlobeIcon size={38} />
+              <img
+                src={globalIdLogo}
+                alt="Gloobal ID"
+                style={{ height: 40, width: "auto", objectFit: "contain" }}
+              />
               <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 0.4, color: T.ink, fontFamily: T.fontDisplay }}>
-                Gl<span style={{ color: T.accent2 }}>o</span>
-                <span style={{ color: "#C026D3" }}>o</span>bal ID
+                Gloobal ID
               </div>
             </div>
           </div>

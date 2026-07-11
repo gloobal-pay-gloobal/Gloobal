@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useCoverageStats } from "../../api/coverage";
 import { Flag } from "../../components/common/Flag";
+import { GlobalSearchField } from "../../components/common/GlobalSearchField";
 import { FlagEmoji } from "../../components/icons/MiscIcons";
 import { ALL_COUNTRIES, COUNTRY_BY_ISO, countryMatches, isoToFlag } from "../../data/countries";
-import { Activity, ArrowDown, ArrowUp, Bell, ChevronLeft, Globe2, History, RefreshCw, Search, Users2, X, Zap } from "lucide-react";
+import { Activity, ArrowDown, ArrowUp, Bell, ChevronLeft, Globe2, History, RefreshCw, Search, Users2, Zap } from "lucide-react";
 import type { DialCountry } from "../../types";
 
 /** Live/animated stats for one coverage country — current tick plus the
@@ -439,29 +440,11 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
           >
             <ChevronLeft size={18} />
           </button>
-          <div
-            className="flex-1 flex items-center gap-2 rounded-2xl px-4 py-2.5"
-            style={{ background: C.surface, border: `1px solid ${C.line}` }}
-          >
-            <Globe2 size={16} style={{ color: C.accent, flexShrink: 0 }} />
-            <input
-              value={countryQuery}
-              onChange={(e) => setCountryQuery(e.target.value)}
-              placeholder="Global Coverage, Country..."
-              aria-label="Search Global Coverage by country"
-              className="flex-1 min-w-0 bg-transparent outline-none text-sm"
-              style={{ color: C.ink }}
-            />
-            {countryQuery && (
-              <button
-                onClick={() => setCountryQuery('')}
-                aria-label="Clear search"
-                className="flex-shrink-0"
-              >
-                <X size={14} style={{ color: C.inkFaint }} />
-              </button>
-            )}
-          </div>
+          <GlobalSearchField
+            value={countryQuery}
+            onChange={setCountryQuery}
+            onClear={() => setCountryQuery('')}
+          />
           <button aria-label="Notifications" className="relative w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: C.surface, border: `1px solid ${C.line}` }}>
             <Bell size={17} style={{ color: C.ink }} />
             <span className="absolute top-2 right-2.5 w-1.5 h-1.5 rounded-full" style={{ background: C.negative }} />
@@ -472,7 +455,7 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
         <div className="mt-1 px-5">
           <div
             className="relative rounded-2xl overflow-hidden"
-            style={{ background: C.mapBg, touchAction: "none" }}
+            style={{ background: C.mapBg, touchAction: "none", border: "1px solid rgba(148,163,184,0.14)", boxShadow: "0 16px 40px rgba(10,14,28,0.35)" }}
             onWheel={handleMapWheel}
             onTouchStart={handleMapTouchStart}
             onTouchMove={handleMapTouchMove}
@@ -486,6 +469,18 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
                 background: "radial-gradient(60% 60% at 50% 40%, rgba(124,58,237,0.16) 0%, rgba(124,58,237,0) 70%)",
               }}
             />
+
+            {/* Card header: live network label, sits above the map itself */}
+            <div className="relative flex items-center gap-1.5 px-4 pt-3.5">
+              <span
+                className="live-dot"
+                style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", boxShadow: "0 0 6px 1px rgba(74,222,128,0.7)", animation: "livePulse 1.8s ease-in-out infinite" }}
+              />
+              <span className="mono" style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase", color: "rgba(255,255,255,0.72)" }}>
+                Live Global Network
+              </span>
+            </div>
+
             <svg viewBox={`0 0 ${MAP_W} ${MAP_H}`} className="relative w-full h-auto block" style={{ display: "block" }}>
               <defs>
                 <linearGradient id="covConnGradient" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -501,6 +496,15 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
                 </filter>
               </defs>
               <g style={{ transform: mapTransform, transformOrigin: "0px 0px", transition: "transform 0.85s cubic-bezier(0.22, 1, 0.36, 1)" }}>
+                {/* Faint graticule — quiet lat/long grid so the card reads as a
+                    map/network, not just a scatter of dots on a flat panel. */}
+                {[0.2, 0.4, 0.6, 0.8].map((f) => (
+                  <line key={`h${f}`} x1={0} y1={MAP_H * f} x2={MAP_W} y2={MAP_H * f} stroke="rgba(148,163,184,0.07)" strokeWidth="0.6" />
+                ))}
+                {[0.1, 0.25, 0.4, 0.55, 0.7, 0.85].map((f) => (
+                  <line key={`v${f}`} x1={MAP_W * f} y1={0} x2={MAP_W * f} y2={MAP_H} stroke="rgba(148,163,184,0.07)" strokeWidth="0.6" />
+                ))}
+
                 {/* Muted-gray landmasses — a clean, quiet base for the network to stand out against */}
                 {dots.map((d) => <circle key={d.key} cx={d.x} cy={d.y} r={1.5} fill={C.mapLand} />)}
 
@@ -549,24 +553,40 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
               </g>
             </svg>
 
-            {/* Floating glass overlay: icons + numbers only */}
+            {/* Labeled stat bar: Active Users + Countries, docked as a footer
+                strip under the map so the numbers stay legible and never
+                cover the network lines. */}
             <div
-              className="absolute top-3 right-3 flex flex-col gap-2 rounded-2xl px-3 py-2.5"
+              className="relative flex items-stretch"
               style={{
-                background: "rgba(255,255,255,0.14)",
-                backdropFilter: "blur(10px)",
-                WebkitBackdropFilter: "blur(10px)",
-                border: "1px solid rgba(255,255,255,0.25)",
-                boxShadow: "0 8px 20px rgba(0,0,0,0.25)",
+                borderTop: "1px solid rgba(148,163,184,0.14)",
+                background: "rgba(255,255,255,0.03)",
               }}
             >
-              <div className="flex items-center gap-1.5">
-                <Users2 size={13} style={{ color: "#fff" }} />
-                <span className="mono text-[12px] font-semibold" style={{ color: "#fff" }}>{fmtUsers(totalLiveUsers)}</span>
+              <div className="flex-1 flex items-center gap-2 px-4 py-3">
+                <span
+                  className="flex items-center justify-center flex-shrink-0 rounded-full"
+                  style={{ width: 26, height: 26, background: "rgba(139,92,246,0.22)" }}
+                >
+                  <Users2 size={13} style={{ color: "#C4B5FD" }} />
+                </span>
+                <div className="min-w-0">
+                  <div className="mono font-bold text-[13px] leading-tight" style={{ color: "#fff" }}>{fmtUsers(totalLiveUsers)}</div>
+                  <div className="text-[10px] leading-tight" style={{ color: "rgba(255,255,255,0.6)" }}>Active Users</div>
+                </div>
               </div>
-              <div className="flex items-center gap-1.5">
-                <Globe2 size={13} style={{ color: "#fff" }} />
-                <span className="mono text-[12px] font-semibold" style={{ color: "#fff" }}>{COVERAGE_ALL_COUNTRIES.length}</span>
+              <div style={{ width: 1, background: "rgba(255,255,255,0.12)", margin: "10px 0" }} />
+              <div className="flex-1 flex items-center gap-2 px-4 py-3">
+                <span
+                  className="flex items-center justify-center flex-shrink-0 rounded-full"
+                  style={{ width: 26, height: 26, background: "rgba(96,165,250,0.22)" }}
+                >
+                  <Globe2 size={13} style={{ color: "#93C5FD" }} />
+                </span>
+                <div className="min-w-0">
+                  <div className="mono font-bold text-[13px] leading-tight" style={{ color: "#fff" }}>{COVERAGE_ALL_COUNTRIES.length}</div>
+                  <div className="text-[10px] leading-tight" style={{ color: "rgba(255,255,255,0.6)" }}>Countries</div>
+                </div>
               </div>
             </div>
           </div>
