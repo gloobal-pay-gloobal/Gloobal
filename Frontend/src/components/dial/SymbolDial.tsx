@@ -185,10 +185,10 @@ export function SymbolDialPad({ value, onChange, length }: SymbolDialPadProps) {
     else if (k && value.length < length) onChange(value + k);
   };
 
-  const radius = 58;
-  const buttonSize = 42;
+  const radius = 64;
+  const buttonSize = 50;
   const ringSize = radius * 2 + buttonSize;
-  const ringGap = 18; // breathing room between tile edges and the housing's inner boundary
+  const ringGap = 12; // breathing room between tile edges and the housing's inner boundary — tiles sit closer to the rim than before for easier thumb reach
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, width: "100%" }}>
@@ -282,7 +282,7 @@ export function SymbolDialPad({ value, onChange, length }: SymbolDialPadProps) {
                       border: "1px solid rgba(124,58,237,0.18)",
                       background: "linear-gradient(160deg, #ffffff 0%, #f2effb 100%)",
                       color: T.ink,
-                      fontSize: 17,
+                      fontSize: 20,
                       fontWeight: 800,
                       display: "flex",
                       alignItems: "center",
@@ -322,7 +322,7 @@ export function SymbolDialPad({ value, onChange, length }: SymbolDialPadProps) {
                   boxShadow: T.shadowCard,
                 }}
               >
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke={T.accent} strokeWidth="2.4">
+                <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke={T.accent} strokeWidth="2.4">
                   <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
                 </svg>
               </button>
@@ -674,9 +674,9 @@ export function PinDialPad({ value, onChange, length }: PinDialPadProps) {
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)",
-          gap: 12,
+          gap: 16,
           width: "100%",
-          maxWidth: 220,
+          maxWidth: 260,
         }}
       >
         {keys.map((k, i) => {
@@ -695,7 +695,7 @@ export function PinDialPad({ value, onChange, length }: PinDialPadProps) {
                 border: `1px solid ${T.line}`,
                 background: T.surface,
                 color: T.ink,
-                fontSize: 19,
+                fontSize: 22,
                 fontWeight: 700,
                 display: "flex",
                 alignItems: "center",
@@ -706,7 +706,7 @@ export function PinDialPad({ value, onChange, length }: PinDialPadProps) {
               }}
             >
               {isBack ? (
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke={T.accent} strokeWidth="2.2">
+                <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke={T.accent} strokeWidth="2.2">
                   <path d="M21 5H8l-6 7 6 7h13a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z" strokeLinecap="round" strokeLinejoin="round" />
                   <path d="M14 9.5l-4 5M10 9.5l4 5" strokeLinecap="round" />
                 </svg>

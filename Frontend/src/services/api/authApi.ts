@@ -1,5 +1,12 @@
-import { apiClient } from "../httpClient";
+import { apiClient, ApiError } from "../httpClient";
 import { checkAndRecordAttempt, clearAttempts } from "../../lib/rateLimiter";
+
+// Render's free tier spins the backend down after idle and takes 20-50s to
+// wake back up on the next request — the default 15s client timeout was
+// tripping mid-wake-up and reading as "login doesn't work," when the
+// backend was actually just still booting. Login gets a longer timeout to
+// give a cold start room to finish.
+const LOGIN_TIMEOUT_MS = 45_000;
 
 // ---------------------------------------------------------------------------
 // Real Gloobal backend surface (see CLAUDE.md's endpoint table). The
@@ -69,17 +76,46 @@ export interface LoginResult {
 /** POST /api/login — verifies Secure ID + PIN against the backend. */
 export async function login(symbolId: string, pin: string): Promise<LoginResult> {
   checkAndRecordAttempt("login");
-  const result = await apiClient.post<{ user?: BackendUser }>("/api/login", { symbolId, secureId: symbolId, pin });
-  clearAttempts("login");
-  return { user: result.user || { symbolId } };
+  try {
+    const result = await apiClient.post<{ user?: BackendUser }>(
+      "/api/login",
+      { symbolId, secureId: symbolId, pin },
+      { timeoutMs: LOGIN_TIMEOUT_MS }
+    );
+    clearAttempts("login");
+    return { user: result.user || { symbolId } };
+  } catch (err) {
+    // status 0 means the request never got a response at all (timeout or
+    // network failure) — a cold backend, not a wrong Secure ID/PIN. That
+    // shouldn't burn down the local guessing throttle, or a person who hit
+    // one slow cold start ends up locked out of their next, perfectly
+    // correct, attempt.
+    if (err instanceof ApiError && err.status === 0) {
+      clearAttempts("login");
+      throw new Error("Couldn't reach the server — it may still be waking up. Please try again in a few seconds.");
+    }
+    throw err;
+  }
 }
 
 /** GET /api/users/resolve?identifier=... — looks up a user by symbolId or
- * mobile number, used by Send Money's receiver lookup. */
+ * mobile number. Used by Send Money's receiver lookup, and by mobile-number
+ * login (see RootApp's handleLoginWithMobile) to find the Secure ID behind
+ * a typed mobile number before continuing into the normal PIN step. */
 export async function resolveUser(identifier: string): Promise<BackendUser> {
-  const result = await apiClient.get<{ user?: BackendUser }>(`/api/users/resolve?identifier=${encodeURIComponent(identifier)}`);
-  if (!result.user) throw new Error("No user found.");
-  return result.user;
+  try {
+    const result = await apiClient.get<{ user?: BackendUser }>(
+      `/api/users/resolve?identifier=${encodeURIComponent(identifier)}`,
+      { timeoutMs: LOGIN_TIMEOUT_MS }
+    );
+    if (!result.user) throw new Error("No user found.");
+    return result.user;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 0) {
+      throw new Error("Couldn't reach the server — it may still be waking up. Please try again in a few seconds.");
+    }
+    throw err;
+  }
 }
 
 export interface SendTransactionPayload {

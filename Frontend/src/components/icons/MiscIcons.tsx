@@ -207,6 +207,18 @@ export function LogoutIcon() {
   );
 }
 
+export function NetworkIcon({ color = "#7c3aed" }: { color?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke={color} strokeWidth="2">
+      <circle cx="12" cy="5" r="2.5" />
+      <circle cx="5" cy="19" r="2.5" />
+      <circle cx="12" cy="19" r="2.5" />
+      <circle cx="19" cy="19" r="2.5" />
+      <path d="M12 7.5V15M12 15L5 16.7M12 15v1.5M12 15l7 1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function ChevronRightIcon() {
   return (
     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#c3bfe0" strokeWidth="2.4">

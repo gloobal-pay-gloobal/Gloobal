@@ -17,12 +17,16 @@ interface PinScreenProps {
    * registration (duplicate account, validation, network), unlike the
    * old local-state-only version of this stage which could not fail. */
   error?: string | null;
+  /** Optional soft, non-error status shown while `submitting` has been true
+   * for a while — e.g. a note that a cold Render backend can take up to
+   * 30s to wake up on its first request in a while. */
+  hint?: string | null;
 }
 
 // The dedicated, full-screen PIN step: shown after the Referral step,
 // overlaying the whole stage the same way the country picker does. Gives
 // the person a dial pad to type their PIN rather than a keyboard.
-export function PinScreen({ value, length, onChange, onSubmit, onBack, submitting = false, error = null }: PinScreenProps) {
+export function PinScreen({ value, length, onChange, onSubmit, onBack, submitting = false, error = null, hint = null }: PinScreenProps) {
   const complete = value.length === length;
   return (
     <div
@@ -104,6 +108,9 @@ export function PinScreen({ value, length, onChange, onSubmit, onBack, submittin
           Choose a {length}-digit PIN to protect your Global ID
         </p>
         <PinDialPad value={value} onChange={onChange} length={length} />
+        {submitting && hint && !error && (
+          <p style={{ fontSize: 11.5, color: T.inkFaint, textAlign: "center", maxWidth: 240, margin: 0 }}>{hint}</p>
+        )}
         {error && (
           <p style={{ fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center", margin: 0 }}>{error}</p>
         )}
