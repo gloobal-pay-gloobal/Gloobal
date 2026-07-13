@@ -185,16 +185,31 @@ export function useAmbientFlags() {
 // top of the screen. This is a decorative brand panel, independent of
 // the searchable per-country picker (flag strip + live stats card)
 // further down, which still runs on `selected`/`data` as before.
+//
+// The canvas is wider than the landmass itself (320 vs the path's own
+// ~210) so the fan of connection lines has room to spread well past the
+// silhouette on both sides, matching the founder's reference — the path
+// is re-centered into that wider canvas via INDIA_HERO_OFFSET_X rather
+// than redrawn.
 // ---------------------------------------------------------------------
-export const INDIA_HERO_VB = { w: 210, h: 240 };
+// A kite-shaped silhouette (wide north, small NE panhandle, west-coast
+// bulge, narrowing to a peninsula point in the south) — still stylized,
+// but reads as "India" rather than the previous rounded blob. Own
+// bounding box is x:18-178, y:6-258 (160 x 252) — the offsets below
+// re-center that into the wider, taller canvas with real top/bottom
+// margin instead of sitting edge-to-edge.
+export const INDIA_HERO_VB = { w: 320, h: 280 };
+export const INDIA_HERO_OFFSET_X = 62;
+export const INDIA_HERO_OFFSET_Y = 8;
 export const INDIA_HERO_PATH =
-  "M105,6 C122,6 138,14 148,30 C156,42 168,44 178,36 C176,54 162,60 166,74 " +
-  "C170,86 186,92 180,106 C176,116 162,112 158,124 C154,138 162,150 152,162 " +
-  "C146,170 134,166 130,178 C124,196 116,214 104,226 C96,234 88,232 82,222 " +
-  "C74,210 70,194 62,184 C54,174 40,176 36,162 C32,148 44,140 40,126 " +
-  "C36,112 20,104 26,88 C30,76 44,74 48,62 C40,50 46,36 58,26 " +
-  "C66,18 76,10 88,7 C93,5.5 99,5.5 105,6 Z";
-export const INDIA_HERO_SRI_LANKA = { x: 118, y: 232 };
+  "M95,8 C110,8 122,14 130,26 C138,20 150,22 158,32 C152,42 145,48 148,58 " +
+  "C158,62 172,64 175,78 C178,92 168,100 172,112 C176,124 168,130 160,140 " +
+  "C152,150 150,162 152,175 C154,188 148,198 138,206 C128,214 122,224 118,236 " +
+  "C114,248 106,256 96,258 C90,246 92,232 84,224 C76,216 68,214 62,204 " +
+  "C56,194 60,182 52,174 C44,166 38,168 34,156 C30,144 38,136 32,126 " +
+  "C26,116 18,112 20,100 C22,88 32,84 30,72 C28,60 36,54 34,42 " +
+  "C32,30 44,24 52,16 C60,10 72,6 82,6 C87,6 91,7 95,8 Z";
+export const INDIA_HERO_SRI_LANKA = { x: 110, y: 268 };
 
 function heroArc(x1: number, y1: number, x2: number, y2: number) {
   const mx = (x1 + x2) / 2;
@@ -202,28 +217,74 @@ function heroArc(x1: number, y1: number, x2: number, y2: number) {
   const dx = x2 - x1;
   const dy = y2 - y1;
   const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-  const offset = Math.min(dist * 0.25, 40);
+  const offset = Math.min(dist * 0.3, 55);
   const nx = -dy / dist;
   const ny = dx / dist;
   return `M ${x1},${y1} Q ${mx + nx * offset},${my + ny * offset} ${x2},${y2}`;
 }
 
-const HERO_HUB = { x: 100, y: 45 };
+// Glowing "city" nodes scattered across the landmass — both a visual
+// accent on their own and the set of arc origins below. Coordinates are
+// already in the wide 320-unit canvas, pre-shifted by both
+// INDIA_HERO_OFFSET_X and INDIA_HERO_OFFSET_Y (unlike INDIA_HERO_PATH,
+// which gets shifted at render time via a <g transform> instead).
 export const HERO_NODES = [
-  { id: "delhi", x: 100, y: 45, color: "#8B5CF6" },
-  { id: "mumbai", x: 55, y: 125, color: "#3B82F6" },
-  { id: "kolkata", x: 150, y: 100, color: "#EC4899" },
-  { id: "bangalore", x: 90, y: 175, color: "#22D3EE" },
-  { id: "chennai", x: 118, y: 185, color: "#F59E0B" },
+  { id: "delhi", x: 140, y: 48, color: "#8B5CF6" },
+  { id: "mumbai", x: 108, y: 155, color: "#3B82F6" },
+  { id: "kolkata", x: 200, y: 115, color: "#EC4899" },
+  { id: "bangalore", x: 148, y: 215, color: "#22D3EE" },
+  { id: "chennai", x: 172, y: 230, color: "#F59E0B" },
+  { id: "jaipur", x: 115, y: 90, color: "#10B981" },
+  { id: "lucknow", x: 163, y: 75, color: "#EF4444" },
 ];
-export const HERO_CONNECTIONS = [
-  { id: "hc-mumbai", d: heroArc(HERO_HUB.x, HERO_HUB.y, 55, 125), from: "#8B5CF6", to: "#3B82F6" },
-  { id: "hc-kolkata", d: heroArc(HERO_HUB.x, HERO_HUB.y, 150, 100), from: "#8B5CF6", to: "#EC4899" },
-  { id: "hc-bangalore", d: heroArc(HERO_HUB.x, HERO_HUB.y, 90, 175), from: "#8B5CF6", to: "#22D3EE" },
-  { id: "hc-chennai", d: heroArc(HERO_HUB.x, HERO_HUB.y, 118, 185), from: "#8B5CF6", to: "#F59E0B" },
-  { id: "hc-edge-left", d: heroArc(HERO_HUB.x, HERO_HUB.y, 4, 6), from: "#8B5CF6", to: "#60A5FA" },
-  { id: "hc-edge-right", d: heroArc(HERO_HUB.x, HERO_HUB.y, 204, 14), from: "#8B5CF6", to: "#FACC15" },
-];
+
+// A ring of colorful glowing dots around the panel's edge — the "reaching
+// the rest of the world" endpoints each connection line fans out to.
+const HERO_RING_COLORS = ["#F59E0B", "#EC4899", "#3B82F6", "#22D3EE", "#8B5CF6", "#10B981", "#EF4444", "#FACC15"];
+const HERO_RING_COUNT = 16;
+export const HERO_OUTER_NODES = Array.from({ length: HERO_RING_COUNT }, (_, i) => {
+  const angle = (360 / HERO_RING_COUNT) * i - 90;
+  const rad = (angle * Math.PI) / 180;
+  const cx = INDIA_HERO_VB.w / 2;
+  const cy = INDIA_HERO_VB.h / 2 + 4;
+  const rx = INDIA_HERO_VB.w / 2 - 6;
+  const ry = INDIA_HERO_VB.h / 2 - 2;
+  return {
+    id: `ring-${i}`,
+    x: cx + Math.cos(rad) * rx,
+    y: cy + Math.sin(rad) * ry,
+    color: HERO_RING_COLORS[i % HERO_RING_COLORS.length],
+  };
+});
+
+// Each outer ring dot gets a curved line back to one of the landmass
+// nodes, cycling through them — same fan-out look as the reference image,
+// scaled up from the original single-hub version.
+export const HERO_CONNECTIONS = HERO_OUTER_NODES.map((outer, i) => {
+  const origin = HERO_NODES[i % HERO_NODES.length];
+  return {
+    id: `hc-${outer.id}`,
+    d: heroArc(origin.x, origin.y, outer.x, outer.y),
+    from: origin.color,
+    to: outer.color,
+    outer,
+  };
+});
+
+// A dense scatter of small glowing dots across the landmass — the "city
+// lights at night" texture. Deterministic pseudo-spread (same modulo
+// trick as useAmbientFlags below) rather than Math.random, so the panel
+// renders identically every time; clipped to the India silhouette via
+// clipPath. Coordinates are in INDIA_HERO_PATH's own original (un-shifted)
+// space, since this renders nested inside the same translated <g> as the
+// landmass itself — not the wide 320-unit outer canvas.
+const INDIA_HERO_LOCAL_VB = { w: 200, h: 262 };
+export const HERO_STARFIELD = Array.from({ length: 220 }, (_, i) => ({
+  x: (i * 29) % INDIA_HERO_LOCAL_VB.w,
+  y: (i * 47) % INDIA_HERO_LOCAL_VB.h,
+  size: 0.6 + ((i * 7) % 5) * 0.22,
+  opacity: 0.3 + ((i * 13) % 6) * 0.09,
+}));
 
 export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => void; dialCountry?: DialCountry | null }) {
   // First launch: use the detected/registered country, or a default if
@@ -399,32 +460,37 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
               background: "linear-gradient(180deg, #FFFFFF 0%, #F7F5FF 100%)",
               border: "1px solid rgba(124,58,237,0.10)",
               boxShadow: "0 14px 34px rgba(76,29,149,0.10)",
+              // Faint world-map dot-grid texture behind the India panel,
+              // matching the reference's subtle background stipple.
+              backgroundImage: "radial-gradient(rgba(124,58,237,0.16) 1px, transparent 1px)",
+              backgroundSize: "13px 13px",
+              backgroundPosition: "-4px -4px",
             }}
           >
             <div className="flex items-start justify-between px-4 pt-4">
               <div>
-                <div className="display" style={{ fontSize: 16, fontWeight: 800, color: C.ink }}>
+                <div className="display" style={{ fontSize: 18, fontWeight: 800, color: C.ink }}>
                   Global Coverage
                 </div>
-                <div style={{ fontSize: 11, color: C.inkSoft, marginTop: 2, maxWidth: 180, lineHeight: 1.3 }}>
+                <div style={{ fontSize: 12, color: C.inkSoft, marginTop: 2, maxWidth: 190, lineHeight: 1.35 }}>
                   Real-time overview of your global transactions
                 </div>
               </div>
               <div
-                className="flex items-center gap-1 rounded-full flex-shrink-0"
-                style={{ background: C.surface, border: `1px solid ${C.line}`, padding: "5px 8px 5px 6px" }}
+                className="flex items-center gap-1.5 rounded-full flex-shrink-0"
+                style={{ background: C.surface, border: `1px solid ${C.line}`, boxShadow: "0 4px 12px rgba(76,29,149,0.08)", padding: "8px 12px 8px 8px" }}
               >
-                <span style={{ fontSize: 13, lineHeight: 1 }}>🇮🇳</span>
-                <span style={{ fontSize: 11.5, fontWeight: 700, color: C.ink }}>India</span>
-                <ChevronDown size={12} style={{ color: C.inkFaint }} />
+                <span style={{ fontSize: 17, lineHeight: 1 }}>🇮🇳</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>India</span>
+                <ChevronDown size={13} style={{ color: C.inkFaint }} />
               </div>
             </div>
 
-            <div className="relative" style={{ height: "clamp(150px, 40vw, 180px)", marginTop: 2 }}>
+            <div className="relative" style={{ height: "clamp(230px, 62vw, 300px)", marginTop: 4 }}>
               <svg
                 viewBox={`0 0 ${INDIA_HERO_VB.w} ${INDIA_HERO_VB.h}`}
-                className="absolute"
-                style={{ right: "1%", top: "50%", transform: "translateY(-50%)", height: "104%", width: "auto" }}
+                className="absolute inset-0"
+                style={{ width: "100%", height: "100%" }}
               >
                 <defs>
                   <linearGradient id="indiaFill" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -438,46 +504,63 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
                       <feMergeNode in="SourceGraphic" />
                     </feMerge>
                   </filter>
+                  {/* Kept in the path's own original coordinates — nested
+                      inside the same translated <g> as the landmass below,
+                      so it composes in that already-shifted local space
+                      rather than needing its own offset. */}
                   <clipPath id="indiaClip">
                     <path d={INDIA_HERO_PATH} />
                   </clipPath>
                   {HERO_CONNECTIONS.map((conn) => (
                     <linearGradient key={conn.id} id={conn.id} x1="0%" y1="0%" x2="100%" y2="0%">
                       <stop offset="0%" stopColor={conn.from} stopOpacity="0.9" />
-                      <stop offset="100%" stopColor={conn.to} stopOpacity="0.15" />
+                      <stop offset="100%" stopColor={conn.to} stopOpacity="0.18" />
                     </linearGradient>
                   ))}
                 </defs>
 
-                {/* Curved multicolor connection lines fanning from the India
-                    hub toward other cities and out to the panel's edges */}
+                {/* Curved multicolor connection lines fanning from nodes
+                    across the landmass out to a full ring of glowing dots
+                    around the panel's edge */}
                 {HERO_CONNECTIONS.map((conn) => (
                   <path
                     key={conn.id}
                     d={conn.d}
                     fill="none"
                     stroke={`url(#${conn.id})`}
-                    strokeWidth="1.4"
+                    strokeWidth="1.3"
                     strokeLinecap="round"
                     filter="url(#heroGlow)"
-                    opacity="0.85"
+                    opacity="0.8"
                   />
                 ))}
 
-                {/* India landmass, purple-to-blue gradient */}
-                <path d={INDIA_HERO_PATH} fill="url(#indiaFill)" stroke="rgba(255,255,255,0.55)" strokeWidth="1.2" />
+                {/* India landmass + its decorative texture, all in one
+                    group shifted into the wide canvas's center */}
+                <g transform={`translate(${INDIA_HERO_OFFSET_X}, ${INDIA_HERO_OFFSET_Y})`}>
+                  <path d={INDIA_HERO_PATH} fill="url(#indiaFill)" stroke="rgba(255,255,255,0.55)" strokeWidth="1.2" />
 
-                {/* Stylized internal boundary lines, clipped to the landmass —
-                    decorative only, not literal state borders */}
-                <g clipPath="url(#indiaClip)" opacity="0.35" stroke="#fff" strokeWidth="0.8" fill="none">
-                  <path d="M60,60 C80,90 90,130 78,190" />
-                  <path d="M110,20 C115,60 120,110 105,170" />
-                  <path d="M40,120 C70,125 110,128 165,110" />
-                  <path d="M55,175 C80,165 105,160 140,150" />
+                  {/* Stylized internal boundary lines, clipped to the landmass —
+                      decorative only, not literal state borders */}
+                  <g clipPath="url(#indiaClip)" opacity="0.3" stroke="#fff" strokeWidth="0.8" fill="none">
+                    <path d="M60,50 C75,90 85,140 75,200" />
+                    <path d="M100,15 C105,60 110,120 95,190" />
+                    <path d="M35,110 C65,115 105,120 155,105" />
+                    <path d="M50,175 C75,165 100,160 135,150" />
+                  </g>
+
+                  {/* Dense scatter of small glowing dots across the
+                      landmass — the "city lights at night" texture from
+                      the reference image. */}
+                  <g clipPath="url(#indiaClip)">
+                    {HERO_STARFIELD.map((d, i) => (
+                      <circle key={i} cx={d.x} cy={d.y} r={d.size} fill="#fff" opacity={d.opacity} />
+                    ))}
+                  </g>
+
+                  {/* Sri Lanka, for scale/orientation */}
+                  <circle cx={INDIA_HERO_SRI_LANKA.x} cy={INDIA_HERO_SRI_LANKA.y} r="4" fill="url(#indiaFill)" opacity="0.85" />
                 </g>
-
-                {/* Sri Lanka, for scale/orientation */}
-                <circle cx={INDIA_HERO_SRI_LANKA.x} cy={INDIA_HERO_SRI_LANKA.y} r="4" fill="url(#indiaFill)" opacity="0.85" />
 
                 {/* Glowing connection nodes over the map */}
                 {HERO_NODES.map((n) => (
@@ -487,32 +570,41 @@ export function GlobalCoverageScreen({ onClose, dialCountry }: { onClose: () => 
                     <circle cx={n.x} cy={n.y} r="2" fill="#fff" />
                   </g>
                 ))}
+
+                {/* Ring of glowing endpoint dots around the panel's edge */}
+                {HERO_OUTER_NODES.map((n) => (
+                  <g key={n.id}>
+                    <circle cx={n.x} cy={n.y} r="6" fill={n.color} opacity="0.22" />
+                    <circle cx={n.x} cy={n.y} r="3" fill={n.color} filter="url(#heroGlow)" />
+                    <circle cx={n.x} cy={n.y} r="1.3" fill="#fff" />
+                  </g>
+                ))}
               </svg>
 
               {/* Stat chips — bottom-left, clear of the map's center */}
-              <div className="absolute flex flex-col gap-2" style={{ left: "4%", bottom: "6%" }}>
+              <div className="absolute flex flex-col gap-2.5" style={{ left: "5%", bottom: "6%" }}>
                 <div
-                  className="flex items-center gap-2 rounded-2xl"
-                  style={{ background: C.surface, border: `1px solid ${C.line}`, boxShadow: "0 6px 16px rgba(76,29,149,0.10)", padding: "7px 11px" }}
+                  className="flex items-center gap-2.5 rounded-2xl"
+                  style={{ background: C.surface, border: `1px solid ${C.line}`, boxShadow: "0 6px 16px rgba(76,29,149,0.10)", padding: "9px 14px" }}
                 >
-                  <span className="flex items-center justify-center flex-shrink-0 rounded-full" style={{ width: 24, height: 24, background: C.accentSoft }}>
-                    <Users2 size={12} style={{ color: C.accent }} />
+                  <span className="flex items-center justify-center flex-shrink-0 rounded-full" style={{ width: 30, height: 30, background: C.accentSoft }}>
+                    <Users2 size={15} style={{ color: C.accent }} />
                   </span>
                   <div className="min-w-0">
-                    <div className="mono font-bold text-[12px] leading-tight" style={{ color: C.ink }}>{fmtUsers(totalLiveUsers)}</div>
                     <div style={{ fontSize: 9.5, color: C.inkSoft, lineHeight: 1.1 }}>Active Users</div>
+                    <div className="mono font-bold" style={{ fontSize: 15, color: C.accent, lineHeight: 1.25 }}>{fmtUsers(totalLiveUsers)}</div>
                   </div>
                 </div>
                 <div
-                  className="flex items-center gap-2 rounded-2xl"
-                  style={{ background: C.surface, border: `1px solid ${C.line}`, boxShadow: "0 6px 16px rgba(76,29,149,0.10)", padding: "7px 11px" }}
+                  className="flex items-center gap-2.5 rounded-2xl"
+                  style={{ background: C.surface, border: `1px solid ${C.line}`, boxShadow: "0 6px 16px rgba(76,29,149,0.10)", padding: "9px 14px" }}
                 >
-                  <span className="flex items-center justify-center flex-shrink-0 rounded-full" style={{ width: 24, height: 24, background: C.positiveSoft }}>
-                    <Globe2 size={12} style={{ color: C.positive }} />
+                  <span className="flex items-center justify-center flex-shrink-0 rounded-full" style={{ width: 30, height: 30, background: C.accentSoft }}>
+                    <Globe2 size={15} style={{ color: C.accent }} />
                   </span>
                   <div className="min-w-0">
-                    <div className="mono font-bold text-[12px] leading-tight" style={{ color: C.ink }}>{COVERAGE_ALL_COUNTRIES.length}</div>
                     <div style={{ fontSize: 9.5, color: C.inkSoft, lineHeight: 1.1 }}>Countries</div>
+                    <div className="mono font-bold" style={{ fontSize: 15, color: C.accent, lineHeight: 1.25 }}>{COVERAGE_ALL_COUNTRIES.length}</div>
                   </div>
                 </div>
               </div>
