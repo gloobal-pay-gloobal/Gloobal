@@ -7,7 +7,7 @@ import { ReferralNetworkScreen } from "../referral/ReferralNetworkScreen";
 import { T } from "../../styles/theme";
 import { Home, Search } from "lucide-react";
 import { commandBus } from "../../app/commandBus";
-import { getProfile, getHistory, type BackendUser, type TransactionResult } from "../../services/api/authApi";
+import { getProfile, getHistory, type BackendUser, type TransactionHistoryEntry } from "../../services/api/authApi";
 import type { DialCountry } from "../../types";
 
 interface DashboardScreenProps {
@@ -29,13 +29,15 @@ function formatMoney(amount: unknown): string {
   return `₹${value.toLocaleString("en-IN")}`;
 }
 
-function transactionTitle(tx: TransactionResult): string {
-  if (tx.note) return String(tx.note);
-  if (tx.receiverName) return `Paid to ${tx.receiverName}`;
-  if (tx.senderName) return `Received from ${tx.senderName}`;
-  if (tx.receiverSymbolId) return `Paid to ${tx.receiverSymbolId}`;
-  if (tx.senderSymbolId) return `Received from ${tx.senderSymbolId}`;
-  return "Gloobal payment";
+// Matches the real shape /api/transactions/history/:symbolId returns —
+// `direction` and `counterparty` are computed server-side relative to
+// whichever symbolId was requested, so this works identically for every
+// Global Secure ID user's own history, not just one account.
+function transactionTitle(tx: TransactionHistoryEntry): string {
+  if (tx.note) return tx.note;
+  const name = tx.counterparty?.fullName || tx.counterparty?.symbolId;
+  if (!name) return "Gloobal payment";
+  return tx.direction === "sent" ? `Paid to ${name}` : `Received from ${name}`;
 }
 
 // Logout is dispatched through the Command Bus rather than an `onLogout`
@@ -54,7 +56,7 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
   const balance = "12,480.50";
 
   const [profile, setProfile] = useState<BackendUser | null>(null);
-  const [history, setHistory] = useState<TransactionResult[]>([]);
+  const [history, setHistory] = useState<TransactionHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
 
@@ -504,7 +506,7 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
 
             {history.map((tx, i) => (
               <div
-                key={(tx.referenceId as string) || i}
+                key={tx.referenceId || i}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -517,11 +519,32 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
               >
                 <div>
                   <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>{transactionTitle(tx)}</div>
-                  <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 2 }}>
-                    {tx.createdAt ? new Date(tx.createdAt as string).toLocaleString() : "Recent"}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                    <span style={{ fontSize: 11.5, color: T.inkFaint }}>
+                      {tx.createdAt ? new Date(tx.createdAt).toLocaleString() : "Recent"}
+                    </span>
+                    {tx.status !== "success" && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 800,
+                          textTransform: "uppercase",
+                          letterSpacing: 0.3,
+                          color: tx.status === "failed" ? T.negative : T.inkSoft,
+                          background: tx.status === "failed" ? T.negativeSoft : T.surfaceAlt,
+                          borderRadius: 6,
+                          padding: "2px 6px",
+                        }}
+                      >
+                        {tx.status}
+                      </span>
+                    )}
                   </div>
                 </div>
-                <strong style={{ fontSize: 14, color: T.ink }}>{formatMoney(tx.amount)}</strong>
+                <strong style={{ fontSize: 14, color: tx.direction === "sent" ? T.negative : T.positive }}>
+                  {tx.direction === "sent" ? "−" : "+"}
+                  {formatMoney(tx.amount)}
+                </strong>
               </div>
             ))}
           </div>
