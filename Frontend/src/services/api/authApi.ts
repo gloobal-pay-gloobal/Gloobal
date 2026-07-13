@@ -148,9 +148,30 @@ export async function getProfile(symbolId: string): Promise<BackendUser> {
   return result.user || { symbolId };
 }
 
+export interface TransactionCounterparty {
+  fullName: string;
+  symbolId: string;
+}
+
+/** Shape actually returned by GET /api/transactions/history/:symbolId — a
+ * per-viewer projection (see server.js: `direction` and `counterparty` are
+ * computed relative to whichever symbolId was requested), distinct from
+ * the sender/receiver shape POST /api/transactions/send returns. */
+export interface TransactionHistoryEntry {
+  id: string;
+  referenceId: string;
+  direction: "sent" | "received";
+  amount: number;
+  currency: string;
+  status: string;
+  note: string;
+  counterparty: TransactionCounterparty | null;
+  createdAt: string;
+}
+
 /** GET /api/transactions/history/:symbolId */
-export async function getHistory(symbolId: string): Promise<TransactionResult[]> {
-  const result = await apiClient.get<{ transactions?: TransactionResult[] }>(
+export async function getHistory(symbolId: string): Promise<TransactionHistoryEntry[]> {
+  const result = await apiClient.get<{ transactions?: TransactionHistoryEntry[] }>(
     `/api/transactions/history/${encodeURIComponent(symbolId)}`
   );
   return Array.isArray(result.transactions) ? result.transactions : [];
