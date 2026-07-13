@@ -12,6 +12,7 @@ import { PinScreen } from "../screens/registration/PinScreen";
 import { T } from "../styles/theme";
 import { commandBus } from "./commandBus";
 import { login, register, resolveUser, sendOtp, verifyOtp, setPin as apiSetPin, type BackendUser } from "../services/api/authApi";
+import { ApiError } from "../services/httpClient";
 import { OtpVerifyScreen } from "../screens/registration/OtpVerifyScreen";
 import { DeviceVerificationScreen } from "../screens/registration/DeviceVerificationScreen";
 import { saveSession, loadSession, clearSession } from "./sessionPersistence";
@@ -90,6 +91,12 @@ export function RootApp() {
   const loginMethodRef = useRef(loginMethod);
   loginMethodRef.current = loginMethod;
   const [secureId, setSecureId] = useState("");
+  // Live availability check against the real backend while the person is
+  // picking their Secure ID — see the debounced effect below. This is a
+  // UX nicety only: the backend's own duplicate checks in /api/register-symbol
+  // (plus the unique index on User.symbolId) are the actual source of
+  // truth and still run at submit time regardless of what this shows.
+  const [secureIdCheck, setSecureIdCheck] = useState<"idle" | "checking" | "available" | "taken" | "error">("idle");
   const [referralCode, setReferralCode] = useState("");
   const [referralFieldError, setReferralFieldError] = useState<string | null>(null);
   const [pin, setPin] = useState("");
@@ -155,6 +162,38 @@ export function RootApp() {
     if (refFromUrl) setReferralCode(refFromUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Live Secure ID availability check: the moment a full 12-symbol code is
+  // dialed in, ask the real backend (via the existing /api/users/resolve
+  // lookup — no new endpoint needed) whether it's already taken, instead of
+  // only finding out after Referral/PIN at final submit. 404 means nobody
+  // has it (available); a resolved user means it's taken; anything else
+  // (network hiccup, cold Render backend) is left as "error" and doesn't
+  // block continuing — /api/register-symbol's own duplicate checks and the
+  // unique index on User.symbolId are still the real, final guard.
+  useEffect(() => {
+    if (stage !== "secureId" || secureId.length !== SECURE_ID_LENGTH) {
+      setSecureIdCheck("idle");
+      return;
+    }
+    let cancelled = false;
+    setSecureIdCheck("checking");
+    const timer = setTimeout(() => {
+      resolveUser(secureId)
+        .then(() => {
+          if (!cancelled) setSecureIdCheck("taken");
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          if (err instanceof ApiError && err.status === 404) setSecureIdCheck("available");
+          else setSecureIdCheck("error");
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [secureId, stage]);
 
   // Restores wherever the person left off on the dashboard after a page
   // refresh or PWA relaunch, instead of dropping them back to the login
@@ -229,11 +268,18 @@ export function RootApp() {
     }, 220);
   };
 
-  // Secure ID doesn't call the backend yet — referral (or skipping it)
-  // is what actually registers, since referredBy needs the referral
-  // field's final value either way.
+  // Secure ID itself doesn't register with the backend yet — referral (or
+  // skipping it) is what actually calls /api/register-symbol, since
+  // referredBy needs the referral field's final value either way. Blocked
+  // here on the live availability check (see the debounced effect above)
+  // finding this code already taken; "checking"/"idle" also block so a
+  // fast tap can't outrun the in-flight lookup. "error" (network hiccup)
+  // does NOT block — register-symbol's own duplicate check is the real
+  // guard regardless of what this pre-check managed to confirm.
   const handleSubmitSecureId = () => {
-    if (secureId.length === SECURE_ID_LENGTH) flipTo("referral");
+    if (secureId.length !== SECURE_ID_LENGTH) return;
+    if (secureIdCheck === "checking" || secureIdCheck === "taken") return;
+    flipTo("referral");
   };
 
   // Shared by the Referral submit button and "Skip for now" — real
@@ -867,10 +913,31 @@ export function RootApp() {
             )}
 
             {stage === "secureId" && (
-              <div style={{ marginTop: 20 }}>
+              <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "center" }}>
+                {secureId.length === SECURE_ID_LENGTH && secureIdCheck !== "idle" && (
+                  <div
+                    style={{
+                      marginBottom: 8,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      textAlign: "center",
+                      color:
+                        secureIdCheck === "taken"
+                          ? "#EF4444"
+                          : secureIdCheck === "available"
+                          ? T.positive
+                          : T.inkFaint,
+                    }}
+                  >
+                    {secureIdCheck === "checking" && "Checking availability…"}
+                    {secureIdCheck === "available" && "✓ Available"}
+                    {secureIdCheck === "taken" && "This Secure ID is already taken — try a different one"}
+                    {secureIdCheck === "error" && "Couldn't check availability right now — you can still continue"}
+                  </div>
+                )}
                 <SubmitButton
                   onClick={handleSubmitSecureId}
-                  disabled={secureId.length !== SECURE_ID_LENGTH}
+                  disabled={secureId.length !== SECURE_ID_LENGTH || secureIdCheck === "checking" || secureIdCheck === "taken"}
                 />
               </div>
             )}
