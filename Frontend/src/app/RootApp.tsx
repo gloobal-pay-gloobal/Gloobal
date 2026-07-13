@@ -1,4 +1,4 @@
-import React, { Suspense, useState, useEffect } from "react";
+import React, { Suspense, useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { phoneSchema } from "../screens/registration/phoneSchema";
@@ -11,7 +11,7 @@ import { PhoneConnector } from "../screens/registration/PhoneEntryForm";
 import { PinScreen } from "../screens/registration/PinScreen";
 import { T } from "../styles/theme";
 import { commandBus } from "./commandBus";
-import { login, register, sendOtp, verifyOtp, setPin as apiSetPin, type BackendUser } from "../services/api/authApi";
+import { login, register, resolveUser, sendOtp, verifyOtp, setPin as apiSetPin, type BackendUser } from "../services/api/authApi";
 import { OtpVerifyScreen } from "../screens/registration/OtpVerifyScreen";
 import { DeviceVerificationScreen } from "../screens/registration/DeviceVerificationScreen";
 import { saveSession, loadSession, clearSession } from "./sessionPersistence";
@@ -67,6 +67,28 @@ export function RootApp() {
   const [loginSecureId, setLoginSecureId] = useState("");
   const [loginRevealed, setLoginRevealed] = useState(false);
   const [loginPin, setLoginPin] = useState("");
+  // Login accepts either a Secure ID (dial pad, unchanged) or a mobile
+  // number — resolved to the owning Secure ID via the existing
+  // GET /api/users/resolve endpoint (already used by Send Money's
+  // recipient lookup) before falling into the same loginPin step either
+  // way. No backend change needed.
+  const [loginMethod, setLoginMethod] = useState<"secureId" | "mobile">("secureId");
+  const [loginMobileNumber, setLoginMobileNumber] = useState("");
+  // Deliberately separate from `verifying`: that flag also drives the
+  // Secure ID Log In button, OTP send, etc. Sharing one flag meant
+  // switching from the Mobile Number tab back to Secure ID while a lookup
+  // was still in flight left the whole login UI stuck on "Logging in…"
+  // until the unrelated mobile request settled (caught in manual testing).
+  const [resolvingMobile, setResolvingMobile] = useState(false);
+  // Read inside the async handler below, after the `await` — state
+  // captured by the closure at call time would still show "mobile"/"login"
+  // even if the person has since switched tabs or left the login stage
+  // entirely, so a slow, abandoned lookup could silently hijack whatever
+  // they're doing by then (also caught in manual testing).
+  const stageRef = useRef(stage);
+  stageRef.current = stage;
+  const loginMethodRef = useRef(loginMethod);
+  loginMethodRef.current = loginMethod;
   const [secureId, setSecureId] = useState("");
   const [referralCode, setReferralCode] = useState("");
   const [referralFieldError, setReferralFieldError] = useState<string | null>(null);
@@ -172,6 +194,23 @@ export function RootApp() {
 
   // App lock: only meaningful once actually authenticated (dashboard) —
   // see useSessionLock.ts for the backgrounding-threshold logic.
+  // Purely a loading-state affordance: `verifying` covers every real
+  // network call in the login/registration flow, all of which can hit a
+  // cold Render backend. Rather than sitting on a bare spinner for up to
+  // LOGIN_TIMEOUT_MS with no explanation, surface a plain-language reason
+  // once it's been running long enough to plausibly be a cold start rather
+  // than a normal round trip.
+  const [showSlowHint, setShowSlowHint] = useState(false);
+  useEffect(() => {
+    if (!verifying && !resolvingMobile) {
+      setShowSlowHint(false);
+      return;
+    }
+    const timer = setTimeout(() => setShowSlowHint(true), 5000);
+    return () => clearTimeout(timer);
+  }, [verifying, resolvingMobile]);
+  const slowHintText = "Still connecting — the server may be waking up (can take up to 30s).";
+
   const { locked, unlock } = useSessionLock({ enabled: stage === "dashboard" });
   const [unlockPin, setUnlockPin] = useState("");
   const handleUnlock = () => {
@@ -271,6 +310,32 @@ export function RootApp() {
     flipTo("loginPin");
   };
 
+  // Mobile-number login: resolves the typed number to its owning Secure ID
+  // via /api/users/resolve, then continues into the exact same loginPin
+  // step the Secure ID path uses — from there on, the two paths are
+  // identical.
+  const handleLoginWithMobile = async () => {
+    if (resolvingMobile || stage !== "login") return;
+    const digits = loginMobileNumber.replace(/\D/g, "");
+    if (digits.length < 6) return;
+    setLoginError(null);
+    setResolvingMobile(true);
+    try {
+      const identifier = normalizeMobileForApi(dialCountry, loginMobileNumber);
+      const resolved = await resolveUser(identifier);
+      setResolvingMobile(false);
+      // Abandoned if the person switched tabs or left the login stage
+      // while this was in flight — don't act on a stale result.
+      if (loginMethodRef.current !== "mobile" || stageRef.current !== "login") return;
+      setLoginSecureId(resolved.symbolId);
+      flipTo("loginPin");
+    } catch (err) {
+      setResolvingMobile(false);
+      if (loginMethodRef.current !== "mobile" || stageRef.current !== "login") return;
+      setLoginError(err instanceof Error ? err.message : "No Global ID found for that mobile number.");
+    }
+  };
+
   const handleLoginPin = async () => {
     if (loginPin.length !== PIN_LENGTH || verifying) return;
     setLoginError(null);
@@ -331,6 +396,8 @@ export function RootApp() {
     setOtpError(null);
     setLoginSecureId("");
     setLoginPin("");
+    setLoginMethod("secureId");
+    setLoginMobileNumber("");
     resetPhoneForm();
     setSecureId("");
     setReferralCode("");
@@ -430,6 +497,51 @@ export function RootApp() {
               transition: "transform 0.22s ease",
             }}
           >
+            {/* Login method switch — Secure ID (dial pad, unchanged) or
+                Mobile Number (resolved to a Secure ID via the existing
+                /api/users/resolve lookup, see handleLoginWithMobile). */}
+            {stage === "login" && (
+              <div
+                style={{
+                  display: "flex",
+                  marginBottom: 14,
+                  padding: 3,
+                  borderRadius: T.radiusMd,
+                  background: T.surfaceAlt,
+                  border: `1px solid ${T.line}`,
+                  position: "relative",
+                  zIndex: 1,
+                }}
+              >
+                {(["secureId", "mobile"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => {
+                      setLoginMethod(m);
+                      setLoginError(null);
+                    }}
+                    className="v2-tap"
+                    style={{
+                      border: "none",
+                      borderRadius: T.radiusSm,
+                      padding: "7px 16px",
+                      fontSize: 11.5,
+                      fontWeight: 800,
+                      letterSpacing: 0.2,
+                      cursor: "pointer",
+                      color: loginMethod === m ? "#fff" : T.inkSoft,
+                      background: loginMethod === m ? T.gradButton : "transparent",
+                      transition: "background 0.15s ease, color 0.15s ease",
+                      touchAction: "manipulation",
+                    }}
+                  >
+                    {m === "secureId" ? "Secure ID" : "Mobile Number"}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* The Secure ID / Referral card itself — unmoved, unchanged:
                 same shadows, border radius, corner label, and counter as
                 before. Just the card; the dial and button now live below
@@ -496,7 +608,7 @@ export function RootApp() {
                 </span>
               )}
 
-              {stage === "login" && (
+              {stage === "login" && loginMethod === "secureId" && (
                 <button
                   onClick={() => setLoginRevealed((v) => !v)}
                   aria-label={loginRevealed ? "Hide Secure ID" : "Show Secure ID"}
@@ -521,8 +633,21 @@ export function RootApp() {
                 </button>
               )}
 
-              {stage === "login" && (
+              {stage === "login" && loginMethod === "secureId" && (
                 <SymbolChipRow length={SECURE_ID_LENGTH} value={loginSecureId} masked={!loginRevealed} />
+              )}
+
+              {stage === "login" && loginMethod === "mobile" && (
+                <div style={{ width: "100%", marginTop: 4 }}>
+                  <PhoneConnector
+                    country={dialCountry}
+                    phoneNumber={loginMobileNumber}
+                    onChangePhone={setLoginMobileNumber}
+                    onOpenPicker={() => setShowPicker(true)}
+                    onActivate={handleLoginWithMobile}
+                    verifying={resolvingMobile}
+                  />
+                </div>
               )}
 
               {stage === "secureId" && (
@@ -635,7 +760,7 @@ export function RootApp() {
             {/* Symbol dial pad — same compact grid-button pattern as
                 PinDialPad, sized down so the card, dial, and button all
                 stay fully visible together on one screen. */}
-            {stage === "login" && (
+            {stage === "login" && loginMethod === "secureId" && (
               <div style={{ marginTop: 32, position: "relative", zIndex: 1, width: "100%" }}>
                 <SymbolDialPad value={loginSecureId} onChange={setLoginSecureId} length={SECURE_ID_LENGTH} />
               </div>
@@ -660,7 +785,7 @@ export function RootApp() {
               </div>
             )}
 
-            {stage === "login" && (
+            {stage === "login" && loginMethod === "secureId" && (
               <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "center" }}>
                 {loginError && (
                   <div style={{ marginBottom: 10, fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
@@ -676,6 +801,38 @@ export function RootApp() {
                   onClick={() => flipTo("phone")}
                   style={{
                     marginTop: 10,
+                    border: "none",
+                    background: "none",
+                    color: T.accent2,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    padding: "6px 8px",
+                  }}
+                >
+                  New here? Create a Global ID
+                </button>
+              </div>
+            )}
+
+            {/* Mobile Number mode: PhoneConnector's own circular arrow
+                button (inside the card above) is the submit action, so this
+                footer is just the error + "New here" link. */}
+            {stage === "login" && loginMethod === "mobile" && (
+              <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "center" }}>
+                {resolvingMobile && showSlowHint && !loginError && (
+                  <div style={{ marginBottom: 10, fontSize: 11, color: T.inkFaint, textAlign: "center", maxWidth: 240 }}>
+                    {slowHintText}
+                  </div>
+                )}
+                {loginError && (
+                  <div style={{ marginBottom: 10, fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
+                    {loginError}
+                  </div>
+                )}
+                <button
+                  onClick={() => flipTo("phone")}
+                  style={{
                     border: "none",
                     background: "none",
                     color: T.accent2,
@@ -721,38 +878,64 @@ export function RootApp() {
             {stage === "referral" && (
               <div
                 style={{
-                  marginTop: 20,
+                  marginTop: 26,
                   display: "flex",
                   flexDirection: "column",
                   alignItems: "center",
+                  gap: 12,
+                  width: "100%",
                   position: "relative",
                   zIndex: 2,
                 }}
               >
                 {referralFieldError && (
-                  <div style={{ marginBottom: 8, fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
                     {referralFieldError}
                   </div>
                 )}
-                <SubmitButton
+                <button
+                  type="button"
                   onClick={handleSubmitReferral}
                   disabled={registering}
-                  label={registering ? "Submitting…" : "Submit"}
-                />
+                  className="v2-tap"
+                  style={{
+                    width: "100%",
+                    maxWidth: 230,
+                    border: "none",
+                    borderRadius: T.radiusMd,
+                    padding: "14px 24px",
+                    fontSize: 13.5,
+                    fontWeight: 800,
+                    letterSpacing: 0.2,
+                    color: "#fff",
+                    cursor: registering ? "default" : "pointer",
+                    background: registering ? T.gradButtonDisabled : T.gradButton,
+                    boxShadow: registering ? "none" : "0 10px 24px rgba(124,58,237,0.34)",
+                    transition: "box-shadow 0.15s ease, background 0.15s ease, transform 0.1s ease",
+                    touchAction: "manipulation",
+                  }}
+                >
+                  {registering ? "Submitting…" : "Submit"}
+                </button>
                 <button
                   type="button"
                   onClick={handleSkipReferral}
                   disabled={registering}
                   className="v2-tap"
                   style={{
-                    marginTop: 10,
-                    border: "none",
-                    background: "none",
-                    color: T.accent2,
-                    fontSize: 12,
+                    width: "100%",
+                    maxWidth: 230,
+                    border: `1.5px solid ${T.line}`,
+                    borderRadius: T.radiusMd,
+                    padding: "11px 24px",
+                    fontSize: 12.5,
                     fontWeight: 700,
+                    letterSpacing: 0.2,
+                    color: T.inkSoft,
+                    background: T.surface,
                     cursor: registering ? "not-allowed" : "pointer",
-                    padding: "6px 8px",
+                    boxShadow: T.shadowCard,
+                    transition: "box-shadow 0.15s ease, background 0.15s ease",
                     touchAction: "manipulation",
                   }}
                 >
@@ -786,6 +969,7 @@ export function RootApp() {
           onBack={() => flipTo("login")}
           submitting={verifying}
           error={loginError}
+          hint={showSlowHint ? slowHintText : null}
         />
       )}
 

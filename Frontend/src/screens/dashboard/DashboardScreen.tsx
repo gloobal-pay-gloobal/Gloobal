@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { CardAmbientField, DashboardAmbientBg } from "../../components/ambient/AmbientParticles";
 import { GlobalSearchField } from "../../components/common/GlobalSearchField";
-import { ChevronRightIcon, EyeIcon, FlagEmoji, HomeTabIcon, LogoutIcon, NotificationIcon, ProfileTabIcon, RotatingGlobeIcon } from "../../components/icons/MiscIcons";
+import { ChevronRightIcon, EyeIcon, FlagEmoji, HomeTabIcon, LogoutIcon, NetworkIcon, NotificationIcon, ProfileTabIcon, RotatingGlobeIcon } from "../../components/icons/MiscIcons";
 import { DASHBOARD_ACTIONS, PROFILE_ROWS } from "../../data/dashboardActions";
+import { ReferralNetworkScreen } from "../referral/ReferralNetworkScreen";
 import { T } from "../../styles/theme";
 import { Home, Search } from "lucide-react";
 import { commandBus } from "../../app/commandBus";
@@ -46,6 +47,7 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [activeTab, setActiveTab] = useState<DashboardTab>("home");
   const [showIdTag, setShowIdTag] = useState(false);
+  const [showReferralNetwork, setShowReferralNetwork] = useState(false);
   // No real balance endpoint exists yet (ledger entries are always 0 in
   // this prototype backend) — this stays a static prototype figure, same
   // as the earlier Dashboard.jsx.
@@ -381,6 +383,30 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
 
             <button
               className="v2-tap"
+              onClick={() => setShowReferralNetwork(true)}
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "15px 18px",
+                border: `1px solid ${T.line}`,
+                borderRadius: T.radiusLg,
+                background: T.surface,
+                cursor: "pointer",
+                textAlign: "left",
+                boxShadow: T.shadowCard,
+              }}
+            >
+              <span style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13.5, fontWeight: 700, color: T.ink }}>
+                <NetworkIcon />
+                Referral Network
+              </span>
+              <ChevronRightIcon />
+            </button>
+
+            <button
+              className="v2-tap"
               onClick={() => { setActiveTab("history"); loadHistory(); }}
               style={{
                 width: "100%",
@@ -550,6 +576,10 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
           </span>
         </button>
       </div>
+
+      {showReferralNetwork && (
+        <ReferralNetworkScreen referralCode={referralCode} onClose={() => setShowReferralNetwork(false)} />
+      )}
     </div>
   );
 }
