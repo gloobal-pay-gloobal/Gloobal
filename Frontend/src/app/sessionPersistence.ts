@@ -66,3 +66,35 @@ export function clearSession(): void {
     // see saveSession — best-effort only.
   }
 }
+
+// ---------------------------------------------------------------------------
+// Country preference: deliberately separate from the session above, and in
+// localStorage (not sessionStorage) — it's not a credential, just "which
+// flag was last selected," and it needs to survive a full app close/reopen,
+// not just a refresh. Without this, dialCountry silently reset to India on
+// every fresh PWA open (sessionStorage is gone the moment the tab/app fully
+// closes), and anyone outside India using the Mobile Number login tab
+// without re-picking their flag got their number prefixed +91 instead of
+// their real country code — which then 404s the resolve lookup and reads
+// as "Secure ID not found," even for a genuinely registered account. Never
+// cleared on logout: a person's country doesn't change just because they
+// signed out.
+// ---------------------------------------------------------------------------
+
+const COUNTRY_STORAGE_KEY = "gloobal:country";
+
+export function saveCountryPreference(iso: string): void {
+  try {
+    localStorage.setItem(COUNTRY_STORAGE_KEY, iso);
+  } catch {
+    // best-effort only — see saveSession.
+  }
+}
+
+export function loadCountryPreference(): string | null {
+  try {
+    return localStorage.getItem(COUNTRY_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
