@@ -15,8 +15,9 @@ import { login, register, resolveUser, sendOtp, verifyOtp, setPin as apiSetPin, 
 import { ApiError } from "../services/httpClient";
 import { OtpVerifyScreen } from "../screens/registration/OtpVerifyScreen";
 import { DeviceVerificationScreen } from "../screens/registration/DeviceVerificationScreen";
-import { saveSession, loadSession, clearSession } from "./sessionPersistence";
+import { saveSession, loadSession, clearSession, saveCountryPreference, loadCountryPreference } from "./sessionPersistence";
 import { useSessionLock } from "./useSessionLock";
+import { useBackNavigation } from "./useBackNavigation";
 import { readReferralCodeFromUrl, shareReferralLink } from "./referralLink";
 import { featureRegistry } from "./featureRegistry";
 import globalIdLogo from "../assets/globalid-logo.png";
@@ -129,7 +130,17 @@ export function RootApp() {
   // itself is only reachable while stage === "phone", so once registration
   // is complete this is effectively locked until a future settings screen
   // explicitly offers to change it.
-  const [dialCountry, setDialCountry] = useState<DialCountry>(COUNTRY_BY_ISO.IN || TOP_COUNTRIES[0]);
+  //
+  // Defaults to whatever was last picked (see saveCountryPreference in
+  // sessionPersistence.ts), not always India — otherwise every fresh PWA
+  // open/logout silently reset this to India, and anyone outside India
+  // using the Mobile Number login tab without re-picking their flag got
+  // their number prefixed +91 instead of their real country code, which
+  // then 404s the resolve lookup and reads as "Secure ID not found" even
+  // for a genuinely registered account.
+  const [dialCountry, setDialCountry] = useState<DialCountry>(
+    () => COUNTRY_BY_ISO[loadCountryPreference() || ""] || COUNTRY_BY_ISO.IN || TOP_COUNTRIES[0]
+  );
   // Real form validation via react-hook-form + zod (see phoneSchema.ts)
   // instead of the inline `digits.length < 6` check this replaced.
   // PhoneConnector itself stays a plain controlled component — it doesn't
@@ -275,6 +286,14 @@ export function RootApp() {
       fullName: stage === "dashboard" ? registeredUser?.fullName : undefined,
     });
   }, [stage, dialCountry, phoneNumber, registeredUser]);
+
+  // Long-lived country preference (localStorage, survives logout/app close)
+  // — separate from the sessionStorage save above, which only restores
+  // dialCountry for an already-dashboard session. See the state init above
+  // and sessionPersistence.ts for why this exists.
+  useEffect(() => {
+    saveCountryPreference(dialCountry.iso);
+  }, [dialCountry]);
 
   // App lock: only meaningful once actually authenticated (dashboard) —
   // see useSessionLock.ts for the backgrounding-threshold logic.
@@ -538,6 +557,27 @@ export function RootApp() {
     return commandBus.register("auth/logout", handleStartOver);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Wires each full-screen step/overlay's existing onBack/onClose handler
+  // (unchanged below) to the phone's hardware/gesture back button — see
+  // useBackNavigation.ts. This app has no router-based history for its
+  // internal stage/overlay state, so without this a back gesture would
+  // just leave the PWA instead of stepping back one screen.
+  const backToPhone = () => flipTo("phone");
+  const backToLogin = () => flipTo("login");
+  const backToReferral = () => flipTo("referral");
+  const backToPinOrLoginPin = () => flipTo(registeredMobile ? "pin" : "loginPin");
+  const closeActiveScreen = () => setActiveScreen(null);
+  const closePicker = () => {
+    setShowPicker(false);
+    setCountrySearch("");
+  };
+  useBackNavigation(stage === "otp", backToPhone);
+  useBackNavigation(stage === "loginPin", backToLogin);
+  useBackNavigation(stage === "pin", backToReferral);
+  useBackNavigation(stage === "deviceAuth", backToPinOrLoginPin);
+  useBackNavigation(activeScreen !== null, closeActiveScreen);
+  useBackNavigation(showPicker, closePicker);
 
   return (
     <div
@@ -1119,7 +1159,7 @@ export function RootApp() {
           otp={otp}
           onChangeOtp={setOtp}
           onVerify={handleVerifyOtp}
-          onBack={() => flipTo("phone")}
+          onBack={backToPhone}
           verifying={verifying}
           error={otpError}
           length={OTP_LENGTH}
@@ -1136,7 +1176,7 @@ export function RootApp() {
           length={PIN_LENGTH}
           onChange={setLoginPin}
           onSubmit={handleLoginPin}
-          onBack={() => flipTo("login")}
+          onBack={backToLogin}
           submitting={verifying}
           error={loginError}
           hint={showSlowHint ? slowHintText : null}
@@ -1149,7 +1189,7 @@ export function RootApp() {
           length={PIN_LENGTH}
           onChange={setPin}
           onSubmit={handleSubmitPin}
-          onBack={() => flipTo("referral")}
+          onBack={backToReferral}
           submitting={registering}
           error={registerError}
         />
@@ -1159,7 +1199,7 @@ export function RootApp() {
         <DeviceVerificationScreen
           symbolId={globalIdTag}
           onVerified={() => flipTo("dashboard")}
-          onBack={() => flipTo(registeredMobile ? "pin" : "loginPin")}
+          onBack={backToPinOrLoginPin}
         />
       )}
 
@@ -1186,7 +1226,7 @@ export function RootApp() {
           <ErrorBoundary>
             <Suspense fallback={<ScreenFallback />}>
               <SendMoneyScreen
-                onClose={() => setActiveScreen(null)}
+                onClose={closeActiveScreen}
                 sender={{ ...dialCountry, phoneNumber, symbolId: globalIdTag, fullName: registeredUser?.fullName }}
               />
             </Suspense>
@@ -1197,7 +1237,7 @@ export function RootApp() {
       {activeScreen === "bank" && (
         <ErrorBoundary>
           <Suspense fallback={<ScreenFallback />}>
-            <AddBankScreen onClose={() => setActiveScreen(null)} country={dialCountry} />
+            <AddBankScreen onClose={closeActiveScreen} country={dialCountry} />
           </Suspense>
         </ErrorBoundary>
       )}
@@ -1205,7 +1245,7 @@ export function RootApp() {
       {activeScreen === "coverage" && (
         <ErrorBoundary>
           <Suspense fallback={<ScreenFallback />}>
-            <GlobalCoverageScreen onClose={() => setActiveScreen(null)} dialCountry={dialCountry} />
+            <GlobalCoverageScreen onClose={closeActiveScreen} dialCountry={dialCountry} />
           </Suspense>
         </ErrorBoundary>
       )}
@@ -1214,7 +1254,7 @@ export function RootApp() {
         <ErrorBoundary>
           <Suspense fallback={<ScreenFallback />}>
             <ReceiveScreen
-              onClose={() => setActiveScreen(null)}
+              onClose={closeActiveScreen}
               dialCountry={dialCountry}
               secureId={secureId}
               globalIdTag={globalIdTag}
@@ -1231,13 +1271,9 @@ export function RootApp() {
           onSearch={setCountrySearch}
           onSelect={(c) => {
             setDialCountry(c);
-            setShowPicker(false);
-            setCountrySearch("");
+            closePicker();
           }}
-          onClose={() => {
-            setShowPicker(false);
-            setCountrySearch("");
-          }}
+          onClose={closePicker}
         />
       )}
 

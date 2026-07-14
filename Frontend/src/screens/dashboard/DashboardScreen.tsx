@@ -7,6 +7,7 @@ import { ReferralNetworkScreen } from "../referral/ReferralNetworkScreen";
 import { T } from "../../styles/theme";
 import { Home, Search } from "lucide-react";
 import { commandBus } from "../../app/commandBus";
+import { useBackNavigation } from "../../app/useBackNavigation";
 import { getProfile, getHistory, type BackendUser, type TransactionHistoryEntry } from "../../services/api/authApi";
 import type { DialCountry } from "../../types";
 
@@ -98,6 +99,9 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
     setShowIdTag(true);
     setTimeout(() => setShowIdTag(false), 2500);
   };
+
+  const closeReferralNetwork = () => setShowReferralNetwork(false);
+  useBackNavigation(showReferralNetwork, closeReferralNetwork);
 
   return (
     <div
@@ -601,7 +605,7 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
       </div>
 
       {showReferralNetwork && (
-        <ReferralNetworkScreen referralCode={referralCode} onClose={() => setShowReferralNetwork(false)} />
+        <ReferralNetworkScreen referralCode={referralCode} onClose={closeReferralNetwork} />
       )}
     </div>
   );
