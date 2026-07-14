@@ -5,7 +5,7 @@ import { ChevronRightIcon, EyeIcon, FlagEmoji, HomeTabIcon, LogoutIcon, NetworkI
 import { DASHBOARD_ACTIONS, PROFILE_ROWS } from "../../data/dashboardActions";
 import { ReferralNetworkScreen } from "../referral/ReferralNetworkScreen";
 import { T } from "../../styles/theme";
-import { Home, Search } from "lucide-react";
+import { Home, Search, Share2, Copy } from "lucide-react";
 import { commandBus } from "../../app/commandBus";
 import { useBackNavigation } from "../../app/useBackNavigation";
 import { getProfile, getHistory, type BackendUser, type TransactionHistoryEntry } from "../../services/api/authApi";
@@ -277,7 +277,7 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
               )}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16, maxWidth: 340, margin: "0 auto", width: "100%" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 18, maxWidth: 480, margin: "0 auto", width: "100%" }}>
               {DASHBOARD_ACTIONS.map(({ key, label, Icon }) => {
                 const onClick =
                   key === "send"
@@ -313,12 +313,12 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
                     style={{
                       position: "relative",
                       zIndex: 1,
-                      width: "40%",
-                      height: "40%",
-                      maxWidth: 52,
-                      maxHeight: 52,
+                      width: "44%",
+                      height: "44%",
+                      maxWidth: 64,
+                      maxHeight: 64,
                       flexShrink: 0,
-                      borderRadius: 14,
+                      borderRadius: 16,
                       background: T.accentSoft,
                       display: "flex",
                       alignItems: "center",
@@ -361,6 +361,62 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
               </div>
             </div>
 
+            {/* Prominent, dedicated referral code card — the code itself was
+                previously only visible as small subtext inside the "Invite
+                friends" button below; founder feedback was that the
+                person's own referral code needs to be clearly surfaced on
+                its own, not buried as a caption. */}
+            <div
+              style={{
+                padding: "16px 18px",
+                borderRadius: T.radiusLg,
+                background: T.surface,
+                border: `1px solid ${T.line}`,
+                boxShadow: T.shadowCard,
+              }}
+            >
+              <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: T.inkFaint }}>
+                Your Referral ID
+              </div>
+              <div style={{ marginTop: 8, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    fontSize: 18,
+                    fontWeight: 800,
+                    letterSpacing: 0.5,
+                    color: T.accent,
+                    fontFamily: T.fontDisplay,
+                    overflowX: "auto",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {referralCode}
+                </div>
+                <button
+                  onClick={onShareReferral}
+                  aria-label="Copy or share referral code"
+                  className="v2-tap"
+                  style={{
+                    flexShrink: 0,
+                    width: 38,
+                    height: 38,
+                    borderRadius: "50%",
+                    border: "none",
+                    background: T.accentSoft,
+                    color: T.accent,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                  }}
+                >
+                  <Copy size={16} />
+                </button>
+              </div>
+            </div>
+
             <button
               className="v2-tap"
               onClick={onShareReferral}
@@ -378,10 +434,13 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
                 boxShadow: "0 8px 20px rgba(124,58,237,0.28)",
               }}
             >
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: "#fff" }}>Invite friends</div>
-                <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.75)", marginTop: 2 }}>
-                  Share your link · code {referralCode}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Share2 size={18} color="#fff" />
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "#fff" }}>Invite friends</div>
+                  <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.75)", marginTop: 2 }}>
+                    Share your referral link
+                  </div>
                 </div>
               </div>
               <ChevronRightIcon />
