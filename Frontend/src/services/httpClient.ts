@@ -85,3 +85,17 @@ export const apiClient = {
   put: <T>(path: string, body?: unknown, options?: RequestOptions) => request<T>("PUT", path, body, options),
   delete: <T>(path: string, options?: RequestOptions) => request<T>("DELETE", path, undefined, options),
 };
+
+// Fire-and-forget wake-up call for Render's free-tier cold start. Any HTTP
+// request — even one that 404s, since there's no dedicated healthcheck
+// route — is enough to make Render's proxy spin the sleeping backend back
+// up. Called once as early as possible (RootApp mount), well before the
+// person finishes picking a country/typing their number and hits submit,
+// so by the time the real POST /api/otp/send goes out the backend has
+// already had a head start on waking up instead of eating that 20-50s
+// cold start inside the OTP flow's own timeout window. Never awaited,
+// never surfaces an error — a failed warm-up just means no head start,
+// not a broken app.
+export function warmUpBackend(): void {
+  fetch(apiUrl("/"), { method: "GET" }).catch(() => {});
+}

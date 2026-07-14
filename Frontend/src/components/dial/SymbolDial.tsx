@@ -189,8 +189,8 @@ export function SymbolDialPad({ value, onChange, length }: SymbolDialPadProps) {
   // dial read as mostly dead space with small touch targets — radius/
   // buttonSize are chosen together so adjacent tiles clear each other
   // (chord between neighboring centers must exceed buttonSize).
-  const radius = 82;
-  const buttonSize = 58;
+  const radius = 92;
+  const buttonSize = 64;
   const ringSize = radius * 2 + buttonSize;
   const housingPadding = 10;
   const ringGap = 4; // breathing room between tile edges and the housing's inner boundary
@@ -287,7 +287,7 @@ export function SymbolDialPad({ value, onChange, length }: SymbolDialPadProps) {
                       border: "1px solid rgba(124,58,237,0.18)",
                       background: "linear-gradient(160deg, #ffffff 0%, #f2effb 100%)",
                       color: T.ink,
-                      fontSize: 24,
+                      fontSize: 27,
                       fontWeight: 800,
                       display: "flex",
                       alignItems: "center",

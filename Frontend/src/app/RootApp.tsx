@@ -12,7 +12,7 @@ import { PinScreen } from "../screens/registration/PinScreen";
 import { T } from "../styles/theme";
 import { commandBus } from "./commandBus";
 import { login, register, resolveUser, sendOtp, verifyOtp, setPin as apiSetPin, type BackendUser } from "../services/api/authApi";
-import { ApiError } from "../services/httpClient";
+import { ApiError, warmUpBackend } from "../services/httpClient";
 import { OtpVerifyScreen } from "../screens/registration/OtpVerifyScreen";
 import { DeviceVerificationScreen } from "../screens/registration/DeviceVerificationScreen";
 import { saveSession, loadSession, clearSession, saveCountryPreference, loadCountryPreference } from "./sessionPersistence";
@@ -186,6 +186,15 @@ export function RootApp() {
     const refFromUrl = readReferralCodeFromUrl();
     if (refFromUrl) setReferralCode(refFromUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fire the moment the app opens — well before anyone has picked a
+  // country/typed a number and hit submit — so a cold Render backend has
+  // as much of a head start waking up as possible before the real OTP send
+  // needs it. See warmUpBackend's own comment for why this is safe to fire
+  // and forget.
+  useEffect(() => {
+    warmUpBackend();
   }, []);
 
   // Live Secure ID availability check: the moment a full 12-symbol code is
@@ -572,12 +581,27 @@ export function RootApp() {
     setShowPicker(false);
     setCountrySearch("");
   };
-  useBackNavigation(stage === "otp", backToPhone);
-  useBackNavigation(stage === "loginPin", backToLogin);
-  useBackNavigation(stage === "pin", backToReferral);
-  useBackNavigation(stage === "deviceAuth", backToPinOrLoginPin);
-  useBackNavigation(activeScreen !== null, closeActiveScreen);
-  useBackNavigation(showPicker, closePicker);
+  // A single combined "what's currently topmost" value, not one hook call
+  // per screen — see useBackNavigation.ts for why: keying everything on
+  // one value means a forward hop between two tracked screens (e.g. PIN
+  // succeeding into Device Verification) never touches browser history at
+  // all, only the true open/closed edges do. showPicker takes priority
+  // since it can open as a modal on top of the phone/login stage; the
+  // rest are already mutually exclusive by stage/activeScreen.
+  const activeBackHandler = showPicker
+    ? closePicker
+    : stage === "otp"
+    ? backToPhone
+    : stage === "loginPin"
+    ? backToLogin
+    : stage === "pin"
+    ? backToReferral
+    : stage === "deviceAuth"
+    ? backToPinOrLoginPin
+    : activeScreen !== null
+    ? closeActiveScreen
+    : null;
+  useBackNavigation(activeBackHandler);
 
   return (
     <div

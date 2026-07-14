@@ -188,13 +188,13 @@ export function SymbolChipRow({ length, value, masked }: SymbolChipRowProps) {
             <span
               key={i}
               style={{
-                width: 21,
-                height: 21 * 1.2,
+                width: 25,
+                height: 25 * 1.2,
                 flexShrink: 0,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: 13,
+                fontSize: 15,
                 fontWeight: 800,
                 color: ch && !masked && isKnownSymbol(ch) ? SYMBOL_COLORS[ch] : T.ink,
                 background: ch ? T.accentSoft : T.surfaceAlt,
