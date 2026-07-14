@@ -1,5 +1,6 @@
 import React from "react";
 import { SubmitButton } from "../../components/common/FormPrimitives";
+import { RegistrationScreenHeader } from "../../components/common/RegistrationScreenHeader";
 import { PinDialPad } from "../../components/dial/SymbolDial";
 import { T } from "../../styles/theme";
 
@@ -40,38 +41,7 @@ export function PinScreen({ value, length, onChange, onSubmit, onBack, submittin
         fontFamily: T.fontBody,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "18px 16px 12px",
-          background: T.surface,
-          borderBottom: `1px solid ${T.line}`,
-        }}
-      >
-        <button
-          onClick={onBack}
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: "50%",
-            border: "none",
-            background: T.surfaceAlt,
-            fontSize: 18,
-            color: T.ink,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-          aria-label="Back"
-        >
-          ‹
-        </button>
-        <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>Set your PIN</span>
-      </div>
+      <RegistrationScreenHeader onBack={onBack} title="Set your PIN" />
 
       <div
         style={{
@@ -80,17 +50,18 @@ export function PinScreen({ value, length, onChange, onSubmit, onBack, submittin
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          justifyContent: "flex-start",
-          gap: 24,
-          padding: "32px 24px 40px",
+          justifyContent: "center",
+          gap: 26,
+          padding: "28px 24px 40px",
           overflowY: "auto",
           WebkitOverflowScrolling: "touch",
+          textAlign: "center",
         }}
       >
         <div
           style={{
-            width: 56,
-            height: 56,
+            width: 84,
+            height: 84,
             borderRadius: "50%",
             background: T.gradPrimary,
             boxShadow: T.shadowRaised,
@@ -99,14 +70,21 @@ export function PinScreen({ value, length, onChange, onSubmit, onBack, submittin
             justifyContent: "center",
           }}
         >
-          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#fff" strokeWidth="2">
+          <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="#fff" strokeWidth="2">
             <rect x="4" y="10" width="16" height="10" rx="2" />
             <path d="M8 10V7a4 4 0 118 0v3" strokeLinecap="round" />
           </svg>
         </div>
-        <p style={{ fontSize: 13, color: T.inkSoft, textAlign: "center", maxWidth: 260, margin: 0 }}>
-          Choose a {length}-digit PIN to protect your Global ID
-        </p>
+
+        <div>
+          <h2 style={{ margin: 0, color: T.ink, fontSize: 24, lineHeight: 1.18, fontWeight: 900, fontFamily: T.fontDisplay }}>
+            Choose your PIN
+          </h2>
+          <p style={{ margin: "12px auto 0", maxWidth: 290, color: T.inkSoft, fontSize: 14, lineHeight: 1.5, fontWeight: 600 }}>
+            A {length}-digit PIN protects your Global ID every time you log in.
+          </p>
+        </div>
+
         <PinDialPad value={value} onChange={onChange} length={length} />
         {submitting && hint && !error && (
           <p style={{ fontSize: 11.5, color: T.inkFaint, textAlign: "center", maxWidth: 240, margin: 0 }}>{hint}</p>

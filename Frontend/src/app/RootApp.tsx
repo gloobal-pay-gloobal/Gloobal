@@ -99,9 +99,23 @@ export function RootApp() {
   const [secureIdCheck, setSecureIdCheck] = useState<"idle" | "checking" | "available" | "taken" | "error">("idle");
   const [referralCode, setReferralCode] = useState("");
   const [referralFieldError, setReferralFieldError] = useState<string | null>(null);
+  // Live referral-code check against the real backend, mirroring the Secure
+  // ID availability check below but with the opposite meaning: a referral
+  // code is only valid if it belongs to an *existing* user (unlike Secure
+  // ID, where existing means taken). "checking"/"invalid" block Submit;
+  // "error" (network hiccup / cold backend) does not — this is only a
+  // convenience check, not a real guard (register-symbol itself just
+  // ignores an unrecognized referredBy rather than rejecting it).
+  const [referralCheck, setReferralCheck] = useState<"idle" | "checking" | "valid" | "invalid" | "error">("idle");
   const [pin, setPin] = useState("");
   const [otp, setOtp] = useState("");
   const [otpError, setOtpError] = useState<string | null>(null);
+  // Resend cooldown: a plain epoch-ms deadline rather than a live ticking
+  // countdown here — OtpVerifyScreen owns turning this into "Resend in Ns"
+  // itself so this component doesn't need a per-second re-render.
+  const [otpResendAvailableAt, setOtpResendAvailableAt] = useState<number | null>(null);
+  const [otpResending, setOtpResending] = useState(false);
+  const OTP_RESEND_COOLDOWN_MS = 30_000;
   const [registeredMobile, setRegisteredMobile] = useState("");
   // The account as the real backend knows it, once registration or login
   // has actually succeeded — symbolId here is the source of truth for
@@ -194,6 +208,37 @@ export function RootApp() {
       clearTimeout(timer);
     };
   }, [secureId, stage]);
+
+  // Live referral-code check: the moment a full 12-symbol code is dialed
+  // in on the Referral step, ask the real backend (the same
+  // /api/users/resolve lookup the Secure ID check above already uses)
+  // whether it actually belongs to someone. 404 means nobody has it
+  // (invalid); a resolved user means it's real (valid); anything else
+  // (network hiccup, cold Render backend) is left as "error" and doesn't
+  // block continuing.
+  useEffect(() => {
+    if (stage !== "referral" || referralCode.length !== REFERRAL_LENGTH) {
+      setReferralCheck("idle");
+      return;
+    }
+    let cancelled = false;
+    setReferralCheck("checking");
+    const timer = setTimeout(() => {
+      resolveUser(referralCode)
+        .then(() => {
+          if (!cancelled) setReferralCheck("valid");
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          if (err instanceof ApiError && err.status === 404) setReferralCheck("invalid");
+          else setReferralCheck("error");
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [referralCode, stage]);
 
   // Restores wherever the person left off on the dashboard after a page
   // refresh or PWA relaunch, instead of dropping them back to the login
@@ -320,6 +365,11 @@ export function RootApp() {
       setReferralFieldError(`Enter all ${REFERRAL_LENGTH} symbols, or leave blank to skip.`);
       return;
     }
+    if (referralCheck === "checking") return;
+    if (referralCheck === "invalid") {
+      setReferralFieldError("This referral ID doesn't exist — check it, or leave blank to skip.");
+      return;
+    }
     registerAndAdvance(referralCode);
   };
 
@@ -412,6 +462,7 @@ export function RootApp() {
     try {
       await sendOtp(mobileNumber);
       setRegisteredMobile(mobileNumber);
+      setOtpResendAvailableAt(Date.now() + OTP_RESEND_COOLDOWN_MS);
       setVerifying(false);
       flipTo("otp");
     } catch (err) {
@@ -419,6 +470,24 @@ export function RootApp() {
       setOtpError(err instanceof Error ? err.message : "Couldn't send OTP. Try again.");
     }
   });
+
+  // Re-sends to the same already-validated mobile number — no phone-form
+  // re-submission needed. Kept on its own `otpResending` flag rather than
+  // reusing `verifying`, so a resend in flight can't disable the Verify OTP
+  // button (or vice versa) for an unrelated reason.
+  const handleResendOtp = async () => {
+    if (otpResending || verifying || stage !== "otp") return;
+    setOtpError(null);
+    setOtpResending(true);
+    try {
+      await sendOtp(registeredMobile);
+      setOtpResendAvailableAt(Date.now() + OTP_RESEND_COOLDOWN_MS);
+    } catch (err) {
+      setOtpError(err instanceof Error ? err.message : "Couldn't resend OTP. Try again.");
+    } finally {
+      setOtpResending(false);
+    }
+  };
 
   const handleVerifyOtp = async () => {
     if (verifying || otp.length !== OTP_LENGTH) return;
@@ -447,8 +516,11 @@ export function RootApp() {
     resetPhoneForm();
     setSecureId("");
     setReferralCode("");
+    setReferralCheck("idle");
     setPin("");
     setOtp("");
+    setOtpResendAvailableAt(null);
+    setOtpResending(false);
     setRegisteredMobile("");
     setRegisteredUser(null);
     clearSession();
@@ -955,35 +1027,62 @@ export function RootApp() {
                   zIndex: 2,
                 }}
               >
+                {!referralFieldError && referralCode.length === REFERRAL_LENGTH && referralCheck !== "idle" && (
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      textAlign: "center",
+                      color:
+                        referralCheck === "invalid"
+                          ? "#EF4444"
+                          : referralCheck === "valid"
+                          ? T.positive
+                          : T.inkFaint,
+                    }}
+                  >
+                    {referralCheck === "checking" && "Checking referral ID…"}
+                    {referralCheck === "valid" && "✓ Valid referral ID"}
+                    {referralCheck === "invalid" && "This referral ID doesn't exist — try again or skip"}
+                    {referralCheck === "error" && "Couldn't check right now — you can still continue"}
+                  </div>
+                )}
                 {referralFieldError && (
                   <div style={{ fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
                     {referralFieldError}
                   </div>
                 )}
-                <button
-                  type="button"
-                  onClick={handleSubmitReferral}
-                  disabled={registering}
-                  className="v2-tap"
-                  style={{
-                    width: "100%",
-                    maxWidth: 230,
-                    border: "none",
-                    borderRadius: T.radiusMd,
-                    padding: "14px 24px",
-                    fontSize: 13.5,
-                    fontWeight: 800,
-                    letterSpacing: 0.2,
-                    color: "#fff",
-                    cursor: registering ? "default" : "pointer",
-                    background: registering ? T.gradButtonDisabled : T.gradButton,
-                    boxShadow: registering ? "none" : "0 10px 24px rgba(124,58,237,0.34)",
-                    transition: "box-shadow 0.15s ease, background 0.15s ease, transform 0.1s ease",
-                    touchAction: "manipulation",
-                  }}
-                >
-                  {registering ? "Submitting…" : "Submit"}
-                </button>
+                {(() => {
+                  const referralBlocked =
+                    referralCheck === "checking" || (referralCode.length === REFERRAL_LENGTH && referralCheck === "invalid");
+                  const submitDisabled = registering || referralBlocked;
+                  return (
+                    <button
+                      type="button"
+                      onClick={handleSubmitReferral}
+                      disabled={submitDisabled}
+                      className="v2-tap"
+                      style={{
+                        width: "100%",
+                        maxWidth: 230,
+                        border: "none",
+                        borderRadius: T.radiusMd,
+                        padding: "14px 24px",
+                        fontSize: 13.5,
+                        fontWeight: 800,
+                        letterSpacing: 0.2,
+                        color: "#fff",
+                        cursor: submitDisabled ? "default" : "pointer",
+                        background: submitDisabled ? T.gradButtonDisabled : T.gradButton,
+                        boxShadow: submitDisabled ? "none" : "0 10px 24px rgba(124,58,237,0.34)",
+                        transition: "box-shadow 0.15s ease, background 0.15s ease, transform 0.1s ease",
+                        touchAction: "manipulation",
+                      }}
+                    >
+                      {registering ? "Submitting…" : referralCheck === "checking" ? "Checking…" : "Submit"}
+                    </button>
+                  );
+                })()}
                 <button
                   type="button"
                   onClick={handleSkipReferral}
@@ -1024,6 +1123,10 @@ export function RootApp() {
           verifying={verifying}
           error={otpError}
           length={OTP_LENGTH}
+          hint={showSlowHint ? slowHintText : null}
+          onResend={handleResendOtp}
+          resending={otpResending}
+          resendAvailableAt={otpResendAvailableAt}
         />
       )}
 

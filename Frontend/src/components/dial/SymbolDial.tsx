@@ -185,10 +185,15 @@ export function SymbolDialPad({ value, onChange, length }: SymbolDialPadProps) {
     else if (k && value.length < length) onChange(value + k);
   };
 
-  const radius = 64;
-  const buttonSize = 50;
+  // Larger tiles, tighter to the housing rim, per founder feedback that the
+  // dial read as mostly dead space with small touch targets — radius/
+  // buttonSize are chosen together so adjacent tiles clear each other
+  // (chord between neighboring centers must exceed buttonSize).
+  const radius = 82;
+  const buttonSize = 58;
   const ringSize = radius * 2 + buttonSize;
-  const ringGap = 12; // breathing room between tile edges and the housing's inner boundary — tiles sit closer to the rim than before for easier thumb reach
+  const housingPadding = 10;
+  const ringGap = 4; // breathing room between tile edges and the housing's inner boundary
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, width: "100%" }}>
@@ -233,10 +238,10 @@ export function SymbolDialPad({ value, onChange, length }: SymbolDialPadProps) {
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         style={{
-          width: ringSize + 28 + ringGap * 2,
-          height: ringSize + 28 + ringGap * 2,
+          width: ringSize + housingPadding * 2 + ringGap * 2,
+          height: ringSize + housingPadding * 2 + ringGap * 2,
           borderRadius: "50%",
-          padding: 14,
+          padding: housingPadding,
           boxSizing: "border-box",
           display: "flex",
           alignItems: "center",
@@ -282,7 +287,7 @@ export function SymbolDialPad({ value, onChange, length }: SymbolDialPadProps) {
                       border: "1px solid rgba(124,58,237,0.18)",
                       background: "linear-gradient(160deg, #ffffff 0%, #f2effb 100%)",
                       color: T.ink,
-                      fontSize: 20,
+                      fontSize: 24,
                       fontWeight: 800,
                       display: "flex",
                       alignItems: "center",

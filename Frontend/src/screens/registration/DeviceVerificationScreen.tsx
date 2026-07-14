@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { startRegistration, startAuthentication } from "@simplewebauthn/browser";
 import { SubmitButton } from "../../components/common/FormPrimitives";
+import { RegistrationScreenHeader } from "../../components/common/RegistrationScreenHeader";
 import { T } from "../../styles/theme";
-import { Shield, Fingerprint } from "lucide-react";
+import { Shield, Fingerprint, Check, X } from "lucide-react";
 import {
   passkeyStatus,
   passkeyRegisterOptions,
@@ -28,6 +29,25 @@ export function DeviceVerificationScreen({ symbolId, onVerified, onBack }: Devic
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("Checking device authentication…");
   const [error, setError] = useState<string | null>(null);
+  // Purely presentational: true for the brief moment between a verified
+  // passkey ceremony and onVerified actually firing (see the setTimeouts in
+  // setupDevice/verifyDevice below), so the icon can show a clear success
+  // check instead of just changing status text underneath a still-neutral
+  // icon. Never read by any auth logic.
+  const [justSucceeded, setJustSucceeded] = useState(false);
+
+  // Drives the icon-circle's visual state only — none of the actual
+  // WebAuthn calls below read this; it's derived from the same
+  // checking/busy/error/justSucceeded flags they already set.
+  const phase: "checking" | "busy" | "success" | "error" | "ready" = checking
+    ? "checking"
+    : justSucceeded
+    ? "success"
+    : error
+    ? "error"
+    : busy
+    ? "busy"
+    : "ready";
 
   const checkStatus = useCallback(async () => {
     if (!symbolId) {
@@ -37,6 +57,7 @@ export function DeviceVerificationScreen({ symbolId, onVerified, onBack }: Devic
     }
     setChecking(true);
     setError(null);
+    setJustSucceeded(false);
     try {
       const result = await passkeyStatus(symbolId);
       setHasPasskey(Boolean(result.hasPasskey));
@@ -63,6 +84,7 @@ export function DeviceVerificationScreen({ symbolId, onVerified, onBack }: Devic
   const setupDevice = async () => {
     setBusy(true);
     setError(null);
+    setJustSucceeded(false);
     setStatus("Starting device security prompt…");
     try {
       const options = await passkeyRegisterOptions(symbolId);
@@ -71,6 +93,7 @@ export function DeviceVerificationScreen({ symbolId, onVerified, onBack }: Devic
       const verify = await passkeyRegisterVerify(symbolId, registrationResponse);
       if (verify.verified) {
         setStatus("Device authentication enabled.");
+        setJustSucceeded(true);
         setTimeout(onVerified, 700);
       } else {
         setError("Device authentication setup failed.");
@@ -85,6 +108,7 @@ export function DeviceVerificationScreen({ symbolId, onVerified, onBack }: Devic
   const verifyDevice = async () => {
     setBusy(true);
     setError(null);
+    setJustSucceeded(false);
     setStatus("Requesting device authentication…");
     try {
       const options = await passkeyAuthOptions(symbolId);
@@ -93,6 +117,7 @@ export function DeviceVerificationScreen({ symbolId, onVerified, onBack }: Devic
       const verify = await passkeyAuthVerify(symbolId, authResponse);
       if (verify.verified) {
         setStatus("Device authentication successful.");
+        setJustSucceeded(true);
         setTimeout(onVerified, 600);
       } else {
         setError("Device authentication failed.");
@@ -122,38 +147,7 @@ export function DeviceVerificationScreen({ symbolId, onVerified, onBack }: Devic
         fontFamily: T.fontBody,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "18px 16px 12px",
-          background: T.surface,
-          borderBottom: `1px solid ${T.line}`,
-        }}
-      >
-        <button
-          onClick={onBack}
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: "50%",
-            border: "none",
-            background: T.surfaceAlt,
-            fontSize: 18,
-            color: T.ink,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-          aria-label="Back"
-        >
-          ‹
-        </button>
-        <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>Device Verification</span>
-      </div>
+      <RegistrationScreenHeader onBack={onBack} title="Device Verification" />
 
       <div
         style={{
@@ -170,19 +164,51 @@ export function DeviceVerificationScreen({ symbolId, onVerified, onBack }: Devic
           textAlign: "center",
         }}
       >
-        <div
-          style={{
-            width: 118,
-            height: 118,
-            borderRadius: "50%",
-            background: T.gradPrimary,
-            boxShadow: T.shadowRaised,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Fingerprint size={40} color="#fff" strokeWidth={2} />
+        <style>{`
+          @keyframes deviceAuthSpin { to { transform: rotate(360deg); } }
+          @keyframes deviceAuthPop { 0% { transform: scale(0.7); opacity: 0; } 60% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+          @media (prefers-reduced-motion: reduce) { .device-auth-spinner, .device-auth-pop { animation: none !important; } }
+        `}</style>
+        <div style={{ position: "relative", width: 118, height: 118 }}>
+          <div
+            className={phase === "success" || phase === "error" ? "device-auth-pop" : undefined}
+            style={{
+              width: 118,
+              height: 118,
+              borderRadius: "50%",
+              background:
+                phase === "success" ? T.positive : phase === "error" ? T.negative : T.gradPrimary,
+              boxShadow: T.shadowRaised,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "background 0.2s ease",
+              animation: phase === "success" || phase === "error" ? "deviceAuthPop 0.35s ease" : "none",
+            }}
+          >
+            {phase === "success" ? (
+              <Check size={44} color="#fff" strokeWidth={3} />
+            ) : phase === "error" ? (
+              <X size={44} color="#fff" strokeWidth={3} />
+            ) : (
+              <Fingerprint size={40} color="#fff" strokeWidth={2} />
+            )}
+          </div>
+          {(phase === "checking" || phase === "busy") && (
+            <div
+              className="device-auth-spinner"
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                inset: -6,
+                borderRadius: "50%",
+                border: "3px solid transparent",
+                borderTopColor: T.accent,
+                borderRightColor: T.accent,
+                animation: "deviceAuthSpin 0.9s linear infinite",
+              }}
+            />
+          )}
         </div>
 
         <div>

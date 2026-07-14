@@ -4,9 +4,14 @@ import { checkAndRecordAttempt, clearAttempts } from "../../lib/rateLimiter";
 // Render's free tier spins the backend down after idle and takes 20-50s to
 // wake back up on the next request — the default 15s client timeout was
 // tripping mid-wake-up and reading as "login doesn't work," when the
-// backend was actually just still booting. Login gets a longer timeout to
-// give a cold start room to finish.
-const LOGIN_TIMEOUT_MS = 45_000;
+// backend was actually just still booting. Any call that can plausibly be
+// the very first request of a session (OTP send/verify, login, resolve)
+// gets this longer, cold-start-tolerant timeout instead of the 15s default.
+// OTP send is *the* most exposed case — it's usually the first network call
+// the app makes at all, so it hit this failure mode most often before it
+// got the same timeout login already had.
+const COLD_START_TIMEOUT_MS = 45_000;
+const LOGIN_TIMEOUT_MS = COLD_START_TIMEOUT_MS;
 
 // ---------------------------------------------------------------------------
 // Real Gloobal backend surface (see CLAUDE.md's endpoint table). The
@@ -28,13 +33,31 @@ export interface BackendUser {
 }
 
 export async function sendOtp(mobileNumber: string, purpose: string = "registration"): Promise<void> {
-  await apiClient.post("/api/otp/send", { mobileNumber, purpose });
+  try {
+    await apiClient.post("/api/otp/send", { mobileNumber, purpose }, { timeoutMs: COLD_START_TIMEOUT_MS });
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 0) {
+      throw new Error("Couldn't reach the server — it may still be waking up. Please try again in a few seconds.");
+    }
+    throw err;
+  }
 }
 
 export async function verifyOtp(mobileNumber: string, otp: string, purpose: string = "registration"): Promise<void> {
   checkAndRecordAttempt(`verify-otp:${mobileNumber}`);
-  await apiClient.post("/api/otp/verify", { mobileNumber, otp, purpose });
-  clearAttempts(`verify-otp:${mobileNumber}`);
+  try {
+    await apiClient.post("/api/otp/verify", { mobileNumber, otp, purpose }, { timeoutMs: COLD_START_TIMEOUT_MS });
+    clearAttempts(`verify-otp:${mobileNumber}`);
+  } catch (err) {
+    // A timed-out/never-answered request (status 0) means the backend never
+    // actually judged the OTP — don't burn down the person's real attempts
+    // budget for a cold start that wasn't their mistake.
+    if (err instanceof ApiError && err.status === 0) {
+      clearAttempts(`verify-otp:${mobileNumber}`);
+      throw new Error("Couldn't reach the server — it may still be waking up. Please try again in a few seconds.");
+    }
+    throw err;
+  }
 }
 
 export interface RegisterPayload {

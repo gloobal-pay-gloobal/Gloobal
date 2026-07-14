@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { FlagEmoji } from "../../components/icons/MiscIcons";
+import { RegistrationScreenHeader } from "../../components/common/RegistrationScreenHeader";
 import { countryMatches } from "../../data/countries";
 import { T } from "../../styles/theme";
 import { Search } from "lucide-react";
@@ -38,37 +39,7 @@ export function CountryPickerScreen({ topCountries, countries, search, onSearch,
         fontFamily: T.fontBody,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "18px 16px 12px",
-          background: T.surface,
-          borderBottom: `1px solid ${T.line}`,
-        }}
-      >
-        <button
-          onClick={onClose}
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: "50%",
-            border: "none",
-            background: T.surfaceAlt,
-            fontSize: 18,
-            color: T.ink,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-            transition: "background 0.15s ease, transform 0.1s ease",
-          }}
-          aria-label="Close"
-        >
-          ‹
-        </button>
+      <RegistrationScreenHeader onBack={onClose} backLabel="Close">
         <div
           style={{
             flex: 1,
@@ -101,7 +72,7 @@ export function CountryPickerScreen({ topCountries, countries, search, onSearch,
             }}
           />
         </div>
-      </div>
+      </RegistrationScreenHeader>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "16px 14px 24px" }}>
         {filtered.length === 0 && (
