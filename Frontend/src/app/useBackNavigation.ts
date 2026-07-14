@@ -4,27 +4,43 @@
 // open, instead of leaving the PWA entirely — this app has no router-based
 // history for its internal stage/overlay state (see App.tsx's routing
 // comment), so by default a back gesture just navigates the browser away
-// from the page. Call once per dismissible screen, passing whether it's
-// currently open and the same onBack/onClose handler already wired to its
-// in-app back button — this only adds a browser-history entry around that
-// existing handler, it never changes what closing actually does.
+// from the page.
+//
+// Pass the back-handler for whatever is *currently* topmost, or null if
+// nothing dismissible is open. Critically, this takes ONE combined value
+// for an entire group of mutually-exclusive screens (e.g. RootApp's
+// otp/pin/deviceAuth/etc. stages) rather than one call per screen — an
+// earlier per-screen version pushed a fresh history entry for every screen
+// and popped it in cleanup whenever that screen's own `isOpen` went false,
+// which also fired for a normal *forward* transition into the next tracked
+// screen (e.g. PIN succeeding into Device Verification): that cleanup's
+// own `history.back()` call fires a real popstate event, which the very
+// next screen's brand-new listener immediately caught and treated as "go
+// back," bouncing straight back to the previous screen. Keying everything
+// on a single combined "is anything open" boolean instead means a forward
+// hop between two tracked screens never touches history at all — only the
+// true open/closed edges (nothing open -> something open, or back to
+// nothing open) push or pop the one sentinel entry; popstate always calls
+// whichever handler is current via a ref, so mid-flight handler changes
+// need no extra bookkeeping.
 // ---------------------------------------------------------------------------
 
 import { useEffect, useRef } from "react";
 
-export function useBackNavigation(isOpen: boolean, onBack: () => void) {
-  const closingViaPopStateRef = useRef(false);
-  const onBackRef = useRef(onBack);
-  onBackRef.current = onBack;
+export function useBackNavigation(activeHandler: (() => void) | null) {
+  const handlerRef = useRef(activeHandler);
+  handlerRef.current = activeHandler;
+  const isOpen = activeHandler !== null;
 
   useEffect(() => {
     if (!isOpen) return undefined;
 
     window.history.pushState({ gloobalBackNav: true }, "");
+    let closedViaPopState = false;
 
     function handlePopState() {
-      closingViaPopStateRef.current = true;
-      onBackRef.current();
+      closedViaPopState = true;
+      handlerRef.current?.();
     }
 
     window.addEventListener("popstate", handlePopState);
@@ -33,11 +49,10 @@ export function useBackNavigation(isOpen: boolean, onBack: () => void) {
       // Closed via an in-app action (not the phone's back gesture) — undo
       // the entry pushed above so it doesn't linger as a dead "ghost" step
       // that the next real back-press would silently swallow instead of
-      // actually leaving this screen.
-      if (!closingViaPopStateRef.current) {
+      // actually leaving the app's tracked-screen stack entirely.
+      if (!closedViaPopState) {
         window.history.back();
       }
-      closingViaPopStateRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);

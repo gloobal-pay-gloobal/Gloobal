@@ -581,12 +581,27 @@ export function RootApp() {
     setShowPicker(false);
     setCountrySearch("");
   };
-  useBackNavigation(stage === "otp", backToPhone);
-  useBackNavigation(stage === "loginPin", backToLogin);
-  useBackNavigation(stage === "pin", backToReferral);
-  useBackNavigation(stage === "deviceAuth", backToPinOrLoginPin);
-  useBackNavigation(activeScreen !== null, closeActiveScreen);
-  useBackNavigation(showPicker, closePicker);
+  // A single combined "what's currently topmost" value, not one hook call
+  // per screen — see useBackNavigation.ts for why: keying everything on
+  // one value means a forward hop between two tracked screens (e.g. PIN
+  // succeeding into Device Verification) never touches browser history at
+  // all, only the true open/closed edges do. showPicker takes priority
+  // since it can open as a modal on top of the phone/login stage; the
+  // rest are already mutually exclusive by stage/activeScreen.
+  const activeBackHandler = showPicker
+    ? closePicker
+    : stage === "otp"
+    ? backToPhone
+    : stage === "loginPin"
+    ? backToLogin
+    : stage === "pin"
+    ? backToReferral
+    : stage === "deviceAuth"
+    ? backToPinOrLoginPin
+    : activeScreen !== null
+    ? closeActiveScreen
+    : null;
+  useBackNavigation(activeBackHandler);
 
   return (
     <div

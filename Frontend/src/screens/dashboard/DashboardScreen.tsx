@@ -101,7 +101,7 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
   };
 
   const closeReferralNetwork = () => setShowReferralNetwork(false);
-  useBackNavigation(showReferralNetwork, closeReferralNetwork);
+  useBackNavigation(showReferralNetwork ? closeReferralNetwork : null);
 
   return (
     <div
