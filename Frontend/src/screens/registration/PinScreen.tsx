@@ -22,13 +22,22 @@ interface PinScreenProps {
    * for a while — e.g. a note that a cold Render backend can take up to
    * 30s to wake up on its first request in a while. */
   hint?: string | null;
+  /** "register" (default): setting a brand-new PIN after Referral.
+   * "login": entering an existing PIN to sign in with an already-created
+   * Secure ID. Same dial pad and submit logic either way — this only
+   * changes the copy, which previously said "Confirm PIN" / "Creating
+   * your Global ID…" even on the login path and read as if it were about
+   * to create a second account. */
+  mode?: "register" | "login";
 }
 
-// The dedicated, full-screen PIN step: shown after the Referral step,
-// overlaying the whole stage the same way the country picker does. Gives
-// the person a dial pad to type their PIN rather than a keyboard.
-export function PinScreen({ value, length, onChange, onSubmit, onBack, submitting = false, error = null, hint = null }: PinScreenProps) {
+// The dedicated, full-screen PIN step: shown after the Referral step
+// (register mode) or after picking a Secure ID to sign in with (login
+// mode), overlaying the whole stage the same way the country picker does.
+// Gives the person a dial pad to type their PIN rather than a keyboard.
+export function PinScreen({ value, length, onChange, onSubmit, onBack, submitting = false, error = null, hint = null, mode = "register" }: PinScreenProps) {
   const complete = value.length === length;
+  const isLogin = mode === "login";
   return (
     <div
       style={{
@@ -41,7 +50,7 @@ export function PinScreen({ value, length, onChange, onSubmit, onBack, submittin
         fontFamily: T.fontBody,
       }}
     >
-      <RegistrationScreenHeader onBack={onBack} title="Set your PIN" />
+      <RegistrationScreenHeader onBack={onBack} title={isLogin ? "Enter your PIN" : "Set your PIN"} />
 
       <div
         style={{
@@ -78,10 +87,12 @@ export function PinScreen({ value, length, onChange, onSubmit, onBack, submittin
 
         <div>
           <h2 style={{ margin: 0, color: T.ink, fontSize: 24, lineHeight: 1.18, fontWeight: 900, fontFamily: T.fontDisplay }}>
-            Choose your PIN
+            {isLogin ? "Enter your PIN" : "Choose your PIN"}
           </h2>
           <p style={{ margin: "12px auto 0", maxWidth: 290, color: T.inkSoft, fontSize: 14, lineHeight: 1.5, fontWeight: 600 }}>
-            A {length}-digit PIN protects your Global ID every time you log in.
+            {isLogin
+              ? "Enter the PIN for this Secure ID to log in."
+              : `A ${length}-digit PIN protects your Global ID every time you log in.`}
           </p>
         </div>
 
@@ -95,7 +106,11 @@ export function PinScreen({ value, length, onChange, onSubmit, onBack, submittin
         <SubmitButton
           onClick={onSubmit}
           disabled={!complete || submitting}
-          label={submitting ? "Creating your Global ID…" : "Confirm PIN"}
+          label={
+            isLogin
+              ? submitting ? "Logging in…" : "Log In"
+              : submitting ? "Creating your Global ID…" : "Confirm PIN"
+          }
         />
       </div>
     </div>

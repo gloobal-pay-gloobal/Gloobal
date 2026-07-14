@@ -1180,6 +1180,7 @@ export function RootApp() {
           submitting={verifying}
           error={loginError}
           hint={showSlowHint ? slowHintText : null}
+          mode="login"
         />
       )}
 
