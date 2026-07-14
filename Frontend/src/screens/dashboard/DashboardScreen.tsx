@@ -273,7 +273,7 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
               )}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, maxWidth: 220, margin: "0 auto", width: "100%" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16, maxWidth: 340, margin: "0 auto", width: "100%" }}>
               {DASHBOARD_ACTIONS.map(({ key, label, Icon }) => {
                 const onClick =
                   key === "send"
@@ -309,12 +309,12 @@ export function DashboardScreen({ dialCountry, symbolId, fullName, referralCode,
                     style={{
                       position: "relative",
                       zIndex: 1,
-                      width: "48%",
-                      height: "48%",
-                      maxWidth: 34,
-                      maxHeight: 34,
+                      width: "40%",
+                      height: "40%",
+                      maxWidth: 52,
+                      maxHeight: 52,
                       flexShrink: 0,
-                      borderRadius: 11,
+                      borderRadius: 14,
                       background: T.accentSoft,
                       display: "flex",
                       alignItems: "center",

@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { CodeBoxes, SubmitButton } from "../../components/common/FormPrimitives";
+import { RegistrationScreenHeader } from "../../components/common/RegistrationScreenHeader";
 import { T } from "../../styles/theme";
 import { Phone } from "lucide-react";
 
@@ -12,6 +13,21 @@ interface OtpVerifyScreenProps {
   verifying: boolean;
   error?: string | null;
   length: number;
+  /** Optional soft, non-error status shown while `verifying` has been true
+   * for a while — mirrors PinScreen's `hint`: a note that a cold Render
+   * backend can take up to 30s to wake up on its first request in a while. */
+  hint?: string | null;
+  /** Re-sends the OTP to the same mobile number (POST /api/otp/send again).
+   * Optional so this stays a drop-in without it. */
+  onResend?: () => void;
+  /** True while a resend request is in flight — kept separate from
+   * `verifying` so "Resend" and "Verify OTP" never fight over one loading
+   * flag. */
+  resending?: boolean;
+  /** Epoch ms after which Resend becomes tappable again; before that the
+   * button shows a countdown instead, so it's never a dead re-tap target
+   * right after a send. */
+  resendAvailableAt?: number | null;
 }
 
 // Prototype registration OTP screen — same full-screen layout family as
@@ -19,8 +35,34 @@ interface OtpVerifyScreenProps {
 // component (the same one behind Secure ID / Referral entry) sized up for
 // a 4-digit prototype code. Real backend calls (POST /api/otp/send,
 // POST /api/otp/verify) live in RootApp / services/api/authApi.ts.
-export function OtpVerifyScreen({ mobile, otp, onChangeOtp, onVerify, onBack, verifying, error, length }: OtpVerifyScreenProps) {
+export function OtpVerifyScreen({
+  mobile,
+  otp,
+  onChangeOtp,
+  onVerify,
+  onBack,
+  verifying,
+  error,
+  length,
+  hint,
+  onResend,
+  resending = false,
+  resendAvailableAt = null,
+}: OtpVerifyScreenProps) {
   const complete = otp.length === length;
+
+  // Ticks a plain "Resend in Ns" countdown off resendAvailableAt — recomputed
+  // once a second rather than scheduled precisely, since this is only ever
+  // off by under a second and that's invisible at this granularity.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!resendAvailableAt) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [resendAvailableAt]);
+  const secondsLeft = resendAvailableAt ? Math.max(0, Math.ceil((resendAvailableAt - now) / 1000)) : 0;
+  const canResend = !!onResend && !resending && !verifying && secondsLeft === 0;
+
   return (
     <div
       style={{
@@ -33,38 +75,7 @@ export function OtpVerifyScreen({ mobile, otp, onChangeOtp, onVerify, onBack, ve
         fontFamily: T.fontBody,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "18px 16px 12px",
-          background: T.surface,
-          borderBottom: `1px solid ${T.line}`,
-        }}
-      >
-        <button
-          onClick={onBack}
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: "50%",
-            border: "none",
-            background: T.surfaceAlt,
-            fontSize: 18,
-            color: T.ink,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-          aria-label="Back"
-        >
-          ‹
-        </button>
-        <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>Verify Mobile</span>
-      </div>
+      <RegistrationScreenHeader onBack={onBack} title="Verify Mobile" />
 
       <div
         style={{
@@ -107,11 +118,34 @@ export function OtpVerifyScreen({ mobile, otp, onChangeOtp, onVerify, onBack, ve
 
         <CodeBoxes length={length} value={otp} onChange={onChangeOtp} boxSize={44} autoFocusFirst />
 
+        {verifying && hint && !error && (
+          <p style={{ margin: 0, fontSize: 11.5, color: T.inkFaint, maxWidth: 240 }}>{hint}</p>
+        )}
+
         {error && (
           <p style={{ margin: 0, color: "#dc2626", fontSize: 13, fontWeight: 700 }}>{error}</p>
         )}
 
         <SubmitButton onClick={onVerify} disabled={!complete || verifying} label={verifying ? "Verifying…" : "Verify OTP"} />
+
+        {onResend && (
+          <button
+            type="button"
+            onClick={onResend}
+            disabled={!canResend}
+            style={{
+              border: "none",
+              background: "none",
+              fontSize: 12.5,
+              fontWeight: 700,
+              color: canResend ? T.accent2 : T.inkFaint,
+              cursor: canResend ? "pointer" : "default",
+              padding: "6px 8px",
+            }}
+          >
+            {resending ? "Resending…" : secondsLeft > 0 ? `Resend OTP in ${secondsLeft}s` : "Resend OTP"}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -145,7 +145,7 @@ export function EyeIcon({ open }: { open: boolean }) {
 
 export function ScannerIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#7c3aed" strokeWidth="2">
+    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#7c3aed" strokeWidth="2">
       <path d="M4 8V6a2 2 0 012-2h2M20 8V6a2 2 0 00-2-2h-2M4 16v2a2 2 0 002 2h2M20 16v2a2 2 0 01-2 2h-2" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M4 12h16" strokeLinecap="round" />
     </svg>
@@ -154,7 +154,7 @@ export function ScannerIcon() {
 
 export function AddBankIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#7c3aed" strokeWidth="2">
+    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#7c3aed" strokeWidth="2">
       <path d="M3 10l9-6 9 6M4 10v8M20 10v8M9 10v8M15 10v8M2 19h20" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
@@ -162,7 +162,7 @@ export function AddBankIcon() {
 
 export function ReceiveIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#7c3aed" strokeWidth="2">
+    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#7c3aed" strokeWidth="2">
       <path d="M12 4v13M7 12l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M5 20h14" strokeLinecap="round" />
     </svg>
@@ -171,7 +171,7 @@ export function ReceiveIcon() {
 
 export function SendIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#7c3aed" strokeWidth="2">
+    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#7c3aed" strokeWidth="2">
       <path d="M22 2L11 13" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M22 2l-7 20-4-9-9-4 20-7z" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
