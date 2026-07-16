@@ -266,6 +266,33 @@ export function DeviceVerificationScreen({ symbolId, onVerified, onBack }: Devic
           disabled={checking || busy || !symbolId}
           label={primaryLabel}
         />
+
+        {/* Guarantees this step is never a dead end — a device/browser that
+            can't complete WebAuthn (no platform authenticator, unsupported
+            browser, cold Render backend) previously left the person stuck
+            here with no way into the Dashboard. Always available, not just
+            after an error: some devices fail the passkey ceremony silently
+            rather than raising a catchable error. */}
+        {!checking && (
+          <button
+            type="button"
+            onClick={onVerified}
+            className="v2-tap"
+            disabled={busy}
+            style={{
+              border: "none",
+              background: "none",
+              color: T.inkFaint,
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: busy ? "default" : "pointer",
+              padding: "6px 8px",
+              textDecoration: "underline",
+            }}
+          >
+            Skip for now
+          </button>
+        )}
       </div>
     </div>
   );

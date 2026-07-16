@@ -191,16 +191,17 @@ export function SymbolDialPad({ value, onChange, length, scale = 1 }: SymbolDial
     else if (k && value.length < length) onChange(value + k);
   };
 
-  // Larger tiles, tighter to the housing rim, per founder feedback that the
-  // dial read as mostly dead space with small touch targets — radius/
-  // buttonSize are chosen together so adjacent tiles clear each other
-  // (chord between neighboring centers must exceed buttonSize).
-  const radius = 92 * scale;
-  const buttonSize = Math.max(48, 64 * scale); // never below a ~48px touch target
+  // Base size trimmed ~20% per founder feedback that the enlarged dial from
+  // the previous round now reads as oversized — radius/buttonSize are still
+  // chosen together so adjacent tiles clear each other (chord between
+  // neighboring centers must exceed buttonSize), just off a smaller base.
+  const SIZE_FACTOR = 0.8;
+  const radius = 92 * SIZE_FACTOR * scale;
+  const buttonSize = Math.max(48, 64 * SIZE_FACTOR * scale); // never below a ~48px touch target
   const ringSize = radius * 2 + buttonSize;
   const housingPadding = 10;
   const ringGap = 4; // breathing room between tile edges and the housing's inner boundary
-  const tileFontSize = Math.max(18, 27 * scale);
+  const tileFontSize = Math.max(18, 27 * SIZE_FACTOR * scale);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, width: "100%" }}>

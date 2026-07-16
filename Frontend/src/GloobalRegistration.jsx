@@ -1,14 +1,11 @@
-import React, { useState } from 'react';
-import { ethers } from 'ethers';
-import contractData from './contracts/GloobalReferral.json';
+import { useState } from 'react';
 import axios from 'axios';
-const CONTRACT_ADDRESS = "0x937Be82736b0DAbC106dAA6A3D49567FFeED8065";
 
 export default function GloobalRegistration() {
   const [documentedName, setDocumentedName] = useState("");
   const [secureId, setSecureId] = useState("");
   const [referrer, setReferrer] = useState("");
-  const [status, setStatus] = useState("");
+  const [status] = useState("");
   
   const [showSymbols, setShowSymbols] = useState(false);
 

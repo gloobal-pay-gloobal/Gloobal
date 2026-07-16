@@ -958,8 +958,36 @@ export function RootApp() {
             )}
 
             {stage === "secureId" && (
-              <div style={{ marginTop: 32, position: "relative", zIndex: 1, width: "100%" }}>
-                <SymbolDialPad value={secureId} onChange={setSecureId} length={SECURE_ID_LENGTH} />
+              <div style={{ marginTop: 32, position: "relative", zIndex: 1, width: "100%", display: "flex", justifyContent: "center" }}>
+                {/* Premium watermark, per founder feedback — 2x the corner
+                    logo, centered behind the dial at low opacity so it fills
+                    the surrounding empty space without competing with the
+                    tiles for attention. Sized wider than the dial housing
+                    (~226px at its current scale) so the logo's glyph actually
+                    peeks past the housing's opaque circle instead of being
+                    fully hidden behind it — confirmed via screenshot that an
+                    equal-or-smaller watermark was invisible. Sized off the
+                    dial column's own width (%), not vw, so it can't blow out
+                    past the phone-frame column on a wide desktop viewport. */}
+                <img
+                  src={globalIdLogo}
+                  alt=""
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    top: "50%",
+                    left: "50%",
+                    transform: "translate(-50%, -50%)",
+                    width: "clamp(240px, 84%, 300px)",
+                    height: "auto",
+                    opacity: 0.1,
+                    pointerEvents: "none",
+                    zIndex: 0,
+                  }}
+                />
+                <div style={{ position: "relative", zIndex: 1, width: "100%" }}>
+                  <SymbolDialPad value={secureId} onChange={setSecureId} length={SECURE_ID_LENGTH} />
+                </div>
               </div>
             )}
 
