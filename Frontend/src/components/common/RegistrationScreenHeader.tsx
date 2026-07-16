@@ -24,7 +24,7 @@ export function RegistrationScreenHeader({ onBack, backLabel = "Back", title, ch
         display: "flex",
         alignItems: "center",
         gap: 10,
-        padding: "18px 16px 12px",
+        padding: "calc(18px + env(safe-area-inset-top, 0px)) 16px 12px",
         background: T.surface,
         borderBottom: `1px solid ${T.line}`,
       }}
