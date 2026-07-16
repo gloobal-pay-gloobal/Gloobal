@@ -155,6 +155,10 @@ interface SymbolChipRowProps {
   length: number;
   value: string;
   masked?: boolean;
+  /** Shrinks chip size/gap (e.g. 0.8 for the Referral step, per founder
+   * feedback to reduce that screen's visual bulk ~20%) without changing
+   * layout logic — defaults to 1 (Secure ID / Login, unchanged). */
+  scale?: number;
 }
 
 // A read-only display of the symbols entered so far for Secure ID /
@@ -165,8 +169,17 @@ interface SymbolChipRowProps {
 // paired with the eye button next to it. No inline label here — that
 // lives on the card's boundary (the "Secure ID" / "Referral ID" corner
 // badge) instead, so the full row width goes to chips + the eye button.
-export function SymbolChipRow({ length, value, masked }: SymbolChipRowProps) {
+//
+// Chips are flexible (flex + maxWidth), not fixed-width — at 12 symbols
+// (Referral ID) a fixed 25px width overflowed the card on narrow phones
+// (320-390px), spilling chips outside the mobile frame with a scrollbar
+// track underneath that read as a stray dark line. Letting flexbox shrink
+// each chip to fit the row's real width means all 12 always stay fully
+// visible inside the frame, on any width, with no scrolling needed.
+export function SymbolChipRow({ length, value, masked, scale = 1 }: SymbolChipRowProps) {
   const chars = value.split("");
+  const maxChipWidth = 25 * scale;
+  const gap = Math.max(2, 3 * scale);
   return (
     <div
       aria-label={`${chars.length} of ${length} entered`}
@@ -177,7 +190,7 @@ export function SymbolChipRow({ length, value, masked }: SymbolChipRowProps) {
         width: "100%",
       }}
     >
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexWrap: "nowrap", gap: 3, overflowX: "auto" }}>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexWrap: "nowrap", gap, overflow: "hidden" }}>
         {Array.from({ length }).map((_, i) => {
           // Entered chars always come from the 8-symbol dial, but the type
           // system can't know that from a plain string — narrow it here,
@@ -188,13 +201,14 @@ export function SymbolChipRow({ length, value, masked }: SymbolChipRowProps) {
             <span
               key={i}
               style={{
-                width: 25,
-                height: 25 * 1.2,
-                flexShrink: 0,
+                flex: "1 1 0",
+                minWidth: 0,
+                maxWidth: maxChipWidth,
+                aspectRatio: "1 / 1.2",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: 15,
+                fontSize: Math.max(10, 15 * scale),
                 fontWeight: 800,
                 color: ch && !masked && isKnownSymbol(ch) ? SYMBOL_COLORS[ch] : T.ink,
                 background: ch ? T.accentSoft : T.surfaceAlt,

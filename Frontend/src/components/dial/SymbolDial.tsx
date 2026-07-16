@@ -7,6 +7,12 @@ interface SymbolDialPadProps {
   value: string;
   onChange: (next: string) => void;
   length: number;
+  /** Shrinks the whole dial (ring, tiles, housing) around its center —
+   * e.g. 0.8 for the Referral step, per founder feedback to reduce that
+   * screen's visual bulk ~20% so it comfortably fits short viewports.
+   * Defaults to 1 (Secure ID / Login dial, unchanged). Tiles never drop
+   * below a ~48px touch target even at 0.8, keeping them tappable. */
+  scale?: number;
 }
 
 interface RingDragState {
@@ -25,7 +31,7 @@ interface RingDragState {
 // flips over to show the Gloobal logo for a brief 1-2s glimpse (randomized)
 // before flipping itself back to the dial pad — and it flips back
 // immediately the moment it's tapped, so the logo is never a resting state.
-export function SymbolDialPad({ value, onChange, length }: SymbolDialPadProps) {
+export function SymbolDialPad({ value, onChange, length, scale = 1 }: SymbolDialPadProps) {
   const symbolKeys = ["−", "+", "×", "=", "○", "□", "●", "■"];
   const [idle, setIdle] = useState(false);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -189,11 +195,12 @@ export function SymbolDialPad({ value, onChange, length }: SymbolDialPadProps) {
   // dial read as mostly dead space with small touch targets — radius/
   // buttonSize are chosen together so adjacent tiles clear each other
   // (chord between neighboring centers must exceed buttonSize).
-  const radius = 92;
-  const buttonSize = 64;
+  const radius = 92 * scale;
+  const buttonSize = Math.max(48, 64 * scale); // never below a ~48px touch target
   const ringSize = radius * 2 + buttonSize;
   const housingPadding = 10;
   const ringGap = 4; // breathing room between tile edges and the housing's inner boundary
+  const tileFontSize = Math.max(18, 27 * scale);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, width: "100%" }}>
@@ -287,7 +294,7 @@ export function SymbolDialPad({ value, onChange, length }: SymbolDialPadProps) {
                       border: "1px solid rgba(124,58,237,0.18)",
                       background: "linear-gradient(160deg, #ffffff 0%, #f2effb 100%)",
                       color: T.ink,
-                      fontSize: 27,
+                      fontSize: tileFontSize,
                       fontWeight: 800,
                       display: "flex",
                       alignItems: "center",
@@ -348,12 +355,15 @@ export function SymbolDialPad({ value, onChange, length }: SymbolDialPadProps) {
                 gap: 8,
               }}
             >
+              {/* Enlarged per founder feedback — the dial's idle face read as
+                  mostly empty housing around a small logo; sized to actually
+                  use that space instead of floating in it. */}
               <img
                 src={globalIdLogo}
                 alt="Gloobal ID"
-                style={{ height: 40, width: "auto", objectFit: "contain" }}
+                style={{ height: Math.round(68 * scale), width: "auto", objectFit: "contain" }}
               />
-              <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 0.4, color: T.ink, fontFamily: T.fontDisplay }}>
+              <div style={{ fontSize: Math.round(16 * scale), fontWeight: 800, letterSpacing: 0.4, color: T.ink, fontFamily: T.fontDisplay }}>
                 Gloobal ID
               </div>
             </div>

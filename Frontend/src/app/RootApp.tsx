@@ -665,6 +665,15 @@ export function RootApp() {
           width: "92%",
           maxWidth: 340,
           zIndex: 20,
+          // Safety net so this stack (card + dial + buttons) always stays
+          // inside the frame instead of escaping past the top logo/title on
+          // short viewports — a no-op whenever the content already fits,
+          // but scrolls instead of overflowing when it doesn't (e.g. the
+          // Referral step's extra button on a small phone).
+          maxHeight: "calc(100dvh - 120px)",
+          overflowY: "auto",
+          overflowX: "hidden",
+          WebkitOverflowScrolling: "touch",
         }}
       >
         <div style={{ perspective: 800, position: "relative" }}>
@@ -935,7 +944,7 @@ export function RootApp() {
               )}
 
               {stage === "referral" && (
-                <SymbolChipRow length={REFERRAL_LENGTH} value={referralCode} masked={!referralRevealed} />
+                <SymbolChipRow length={REFERRAL_LENGTH} value={referralCode} masked={!referralRevealed} scale={0.8} />
               )}
             </div>
 
@@ -955,7 +964,7 @@ export function RootApp() {
             )}
 
             {stage === "referral" && (
-              <div style={{ marginTop: 32, position: "relative", zIndex: 1, width: "100%" }}>
+              <div style={{ marginTop: 22, position: "relative", zIndex: 1, width: "100%" }}>
                 <SymbolDialPad
                   value={referralCode}
                   onChange={(v) => {
@@ -963,6 +972,7 @@ export function RootApp() {
                     setReferralFieldError(null);
                   }}
                   length={REFERRAL_LENGTH}
+                  scale={0.8}
                 />
               </div>
             )}
@@ -1078,14 +1088,20 @@ export function RootApp() {
               </div>
             )}
 
+            {/* Single primary action, per founder feedback — a separate
+                Skip + Submit read as two competing buttons. Blank code
+                continues as "Skip for now"; a filled code validates and
+                submits; a partial/invalid one surfaces a clear message
+                instead of silently doing nothing (handleSubmitReferral
+                already covers that case). */}
             {stage === "referral" && (
               <div
                 style={{
-                  marginTop: 26,
+                  marginTop: 18,
                   display: "flex",
                   flexDirection: "column",
                   alignItems: "center",
-                  gap: 12,
+                  gap: 10,
                   width: "100%",
                   position: "relative",
                   zIndex: 2,
@@ -1117,60 +1133,47 @@ export function RootApp() {
                   </div>
                 )}
                 {(() => {
+                  const isBlank = referralCode.length === 0;
                   const referralBlocked =
-                    referralCheck === "checking" || (referralCode.length === REFERRAL_LENGTH && referralCheck === "invalid");
-                  const submitDisabled = registering || referralBlocked;
+                    !isBlank &&
+                    (referralCheck === "checking" || (referralCode.length === REFERRAL_LENGTH && referralCheck === "invalid"));
+                  const actionDisabled = registering || referralBlocked;
+                  const label = registering
+                    ? isBlank
+                      ? "Continuing…"
+                      : "Submitting…"
+                    : !isBlank && referralCheck === "checking"
+                    ? "Checking…"
+                    : isBlank
+                    ? "Skip for now"
+                    : "Submit";
                   return (
                     <button
                       type="button"
-                      onClick={handleSubmitReferral}
-                      disabled={submitDisabled}
+                      onClick={isBlank ? handleSkipReferral : handleSubmitReferral}
+                      disabled={actionDisabled}
                       className="v2-tap"
                       style={{
                         width: "100%",
                         maxWidth: 230,
                         border: "none",
                         borderRadius: T.radiusMd,
-                        padding: "14px 24px",
+                        padding: "13px 24px",
                         fontSize: 13.5,
                         fontWeight: 800,
                         letterSpacing: 0.2,
                         color: "#fff",
-                        cursor: submitDisabled ? "default" : "pointer",
-                        background: submitDisabled ? T.gradButtonDisabled : T.gradButton,
-                        boxShadow: submitDisabled ? "none" : "0 10px 24px rgba(124,58,237,0.34)",
+                        cursor: actionDisabled ? "default" : "pointer",
+                        background: actionDisabled ? T.gradButtonDisabled : T.gradButton,
+                        boxShadow: actionDisabled ? "none" : "0 10px 24px rgba(124,58,237,0.34)",
                         transition: "box-shadow 0.15s ease, background 0.15s ease, transform 0.1s ease",
                         touchAction: "manipulation",
                       }}
                     >
-                      {registering ? "Submitting…" : referralCheck === "checking" ? "Checking…" : "Submit"}
+                      {label}
                     </button>
                   );
                 })()}
-                <button
-                  type="button"
-                  onClick={handleSkipReferral}
-                  disabled={registering}
-                  className="v2-tap"
-                  style={{
-                    width: "100%",
-                    maxWidth: 230,
-                    border: `1.5px solid ${T.line}`,
-                    borderRadius: T.radiusMd,
-                    padding: "11px 24px",
-                    fontSize: 12.5,
-                    fontWeight: 700,
-                    letterSpacing: 0.2,
-                    color: T.inkSoft,
-                    background: T.surface,
-                    cursor: registering ? "not-allowed" : "pointer",
-                    boxShadow: T.shadowCard,
-                    transition: "box-shadow 0.15s ease, background 0.15s ease",
-                    touchAction: "manipulation",
-                  }}
-                >
-                  Skip for now
-                </button>
               </div>
             )}
           </div>
