@@ -43,6 +43,7 @@ body {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes badgePop { from { transform: translateY(-3px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
 /* Ambient dashboard motion — floating financial symbols, drifting dots,
    and slow geometric outlines. Transform/opacity only, so these stay on
