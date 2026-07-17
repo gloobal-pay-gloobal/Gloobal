@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { phoneSchema } from "../screens/registration/phoneSchema";
 import { FloatingFlagBackground } from "../components/ambient/FloatingFlagBackground";
+import { CyclingBadge } from "../components/common/CyclingBadge";
 import { MaskEyeIcon, SubmitButton, SymbolChipRow } from "../components/common/FormPrimitives";
 import { PinDialPad, SymbolDialPad } from "../components/dial/SymbolDial";
 import { ALL_COUNTRIES, TOP_COUNTRIES, COUNTRY_BY_ISO } from "../data/countries";
@@ -25,6 +26,14 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { ScreenFallback } from "../components/common/ScreenFallback";
 import type { RegistrationStage, ActiveScreen, DialCountry } from "../types";
 import "./featureManifest";
+
+// Hoisted to module scope (not recreated inline at each call site) so these
+// stay the same array reference across RootApp re-renders — CyclingBadge is
+// React.memo'd, and passing a new inline array literal each render would
+// defeat that memoization (its own effect would tear down and restart the
+// cycling interval every time).
+const LOGIN_BADGE_WORDS = ["Login", "Global", "Id"];
+const CREATE_BADGE_WORDS = ["Create", "Secure", "Global", "Id"];
 
 // Combines the chosen country's dial code with the typed national number
 // into the string the backend's normalizeMobileNumber helper expects.
@@ -793,9 +802,11 @@ export function RootApp() {
                     textTransform: "uppercase",
                     color: T.accent,
                     boxShadow: T.shadowCard,
+                    minWidth: 44,
+                    textAlign: "center",
                   }}
                 >
-                  Log In
+                  <CyclingBadge words={LOGIN_BADGE_WORDS} />
                 </span>
               )}
 
@@ -857,9 +868,11 @@ export function RootApp() {
                     textTransform: "uppercase",
                     color: T.accent,
                     boxShadow: T.shadowCard,
+                    minWidth: 44,
+                    textAlign: "center",
                   }}
                 >
-                  Secure ID
+                  <CyclingBadge words={CREATE_BADGE_WORDS} />
                 </span>
               )}
 
