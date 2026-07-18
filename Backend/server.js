@@ -110,7 +110,7 @@ app.post('/api/otp/send', async (req, res) => {
       });
     }
 
-    const prototypeOtp = process.env.PROTOTYPE_OTP || '0000';
+    const prototypeOtp = process.env.PROTOTYPE_OTP || '123456';
     const otpHash = await bcrypt.hash(prototypeOtp, 10);
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
