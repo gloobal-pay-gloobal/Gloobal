@@ -1,98 +1,87 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap');
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Minimal, framework-free reset. The app's actual visual design lives in
+   its components as inline styles (ported as-is from the original build),
+   so this file only normalizes the handful of browser defaults that would
+   otherwise fight with that: margins, box-sizing, tap highlight color,
+   font smoothing — plus the native-app gesture/scroll behavior below. */
 
 * {
   box-sizing: border-box;
 }
-html, body, #root {
+
+html {
+  /* iOS/Android "safe area" (notches, status bar, gesture bar) as CSS
+     variables so any component can opt in without hardcoding device-
+     specific numbers. Resolves to 0 on devices without insets, so this
+     has no effect outside standalone/fullscreen installs. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+html, body {
   margin: 0;
   padding: 0;
   height: 100%;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* No pull-to-refresh, no rubber-band/elastic overscroll, no glow —
+     the app handles its own scroll containers; the outer document should
+     never visibly bounce or refresh the way a browser tab does. */
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+  /* No native double-tap-to-zoom gesture fighting the UI's own taps. */
+  touch-action: manipulation;
 }
-html, body {
-  overflow-x: hidden;
-}
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: #F6F5FC;
+  color: #14122B;
+  /* No accidental text selection / iOS callout menu on taps and long-
+     presses — inputs and anything explicitly opted in below still work
+     normally. This is what makes taps feel like app buttons instead of
+     webpage text. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
-/* Every screen in this app renders with `position: fixed; inset: 0`,
-   which normally sizes against the browser viewport — fine on an actual
-   phone, but on a desktop browser it stretches into a giant full-width
-   canvas with the real UI pinned to a narrow center column and empty
-   whitespace on both sides. `transform` on an ancestor establishes a new
-   containing block for `position: fixed` descendants (CSS Transforms
-   spec), so giving #root a transform + max-width turns it into a real
-   phone-width frame that every fixed-position screen sizes against
-   instead of the true viewport — no changes needed to any screen itself. */
+input, textarea, [contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
 #root {
-  max-width: 430px;
+  min-height: 100%;
   min-height: 100dvh;
-  margin: 0 auto;
-  position: relative;
-  overflow-x: hidden;
-  overflow-y: hidden;
-  background: #ffffff;
-  transform: translateZ(0);
 }
 
-@media (min-width: 431px) {
-  body {
-    background: #e8e9ee;
-  }
+button {
+  font-family: inherit;
+  touch-action: manipulation;
 }
 
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes badgePop { from { transform: translateY(-3px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-
-/* Ambient dashboard motion — floating financial symbols, drifting dots,
-   and slow geometric outlines. Transform/opacity only, so these stay on
-   the compositor thread. */
-@keyframes finDrift {
-  0% { transform: translate3d(0, 0, 0) rotate(var(--r0)); opacity: 0; }
-  12% { opacity: var(--peak-op); }
-  88% { opacity: var(--peak-op); }
-  100% { transform: translate3d(var(--dx), var(--dy), 0) rotate(var(--r1)); opacity: 0; }
-}
-@keyframes finDotPulse {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(0.7); opacity: 0; }
-  50% { transform: translate3d(0, -6px, 0) scale(1); opacity: var(--peak-op); }
-}
-@keyframes finGlow {
-  0%, 100% { filter: none; }
-  50% { filter: drop-shadow(0 0 6px currentColor) brightness(1.5); }
-}
-@keyframes finGeoSpin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-@keyframes signalWave {
-  0%, 100% { transform: scale(0.6); opacity: 0.3; box-shadow: none; }
-  50% { transform: scale(1.35); opacity: 1; box-shadow: 0 0 6px 2px rgba(124,58,237,0.55); }
-}
-@keyframes successPop {
-  0% { transform: scale(0.5); opacity: 0; }
-  60% { transform: scale(1.08); opacity: 1; }
-  100% { transform: scale(1); opacity: 1; }
+img {
+  -webkit-user-drag: none;
+  user-select: none;
 }
 
-button:focus-visible {
-  outline: 2px solid #3b6ef5;
-  outline-offset: 2px;
+/* Hide scrollbars on the app's internal scroll containers without
+   disabling scrolling itself — matches the chrome-less look of a native
+   list/screen. Scoped to elements that opt in, not applied globally, so
+   it never silently changes a container's scroll behavior. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
-/* Shared "Version 2" tap/row feedback — used across registration,
-   dashboard, country picker, and PIN screens for a consistent,
-   lightweight "premium" press feel. Purely visual, no logic. */
-.v2-tap { transition: transform 0.1s ease, box-shadow 0.15s ease, background 0.15s ease; }
-.v2-tap:active { transform: scale(0.94); }
-.v2-row { transition: background 0.15s ease; }
-.v2-row:hover { background: rgba(124,58,237,0.05); }
-.v2-row:active { background: rgba(124,58,237,0.09); }
-.v2-success-pop { animation: successPop 0.35s cubic-bezier(.34,1.56,.64,1); }
-
-@media (prefers-reduced-motion: reduce) {
-  [aria-hidden="true"] span, [aria-hidden="true"] div { animation: none !important; opacity: 0 !important; }
-  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
-  .v2-tap:active { transform: none; }
-}

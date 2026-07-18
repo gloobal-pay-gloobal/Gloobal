@@ -2,14 +2,140 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>gloobal-frontend</title>
+    <!-- viewport-fit=cover for edge-to-edge layout. Pinch-zoom is
+         intentionally left enabled (no maximum-scale/user-scalable lock)
+         — blocking it fails WCAG 1.4.4 (Resize Text) for low-vision
+         users, and it isn't necessary here anyway: touch-action:
+         manipulation (see src/styles/global.css) already removes the
+         double-tap-to-zoom gesture and the ~300ms tap delay without
+         disabling intentional pinch-zoom. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Gloobal ID</title>
+    <meta name="description" content="Cashless. Textless. Borderless. Limitless. Register with a Secure ID, send money worldwide, link banks, and track global coverage." />
+
+    <!-- Don't let Android auto-link phone numbers / addresses / dates it
+         detects in the DOM — this app already renders a lot of
+         phone-number-shaped text, and auto-linking makes it look like a
+         web page instead of an app. -->
+    <meta name="format-detection" content="telephone=no, date=no, address=no, email=no" />
+
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#7C3AED" />
+    <meta name="background-color" content="#F6F5FC" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Gloobal ID" />
+    <meta name="application-name" content="Gloobal ID" />
+    <meta name="color-scheme" content="light" />
+
+    <!-- Baseline CSP for a static SPA: self-hosted script/style, the app's
+         own base64 brand asset + the Clearbit bank-logo images, and the
+         service worker's same-origin fetches. Tighten further (e.g. nonces)
+         if you add a real backend. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https://logo.clearbit.com; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://logo.clearbit.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+    />
+
+    <link rel="preconnect" href="https://logo.clearbit.com" crossorigin />
+
+    <!-- The design's display typeface (headings, balance amounts, screen
+         titles — T.fontDisplay in styles/theme.js) is Space Grotesk. Load
+         only the two weights actually used (700/800) rather than the
+         full family. Falls back to the system font stack immediately if
+         this request fails (offline on a first-ever visit, before the
+         service worker has anything cached) or is blocked — the CSS
+         `font-family` list already has that fallback built in. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700;800&display=swap" rel="stylesheet" />
+
+    <!-- Icons -->
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+
+    <style>
+      /* Inlined so the very first paint — before the app's own stylesheet
+         and JS bundle arrive — already matches the app's background and
+         shows a branded splash instead of a blank white flash. This is
+         the same trick native app shells use (a placeholder launch
+         screen) rather than anything React-specific. */
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #F6F5FC;
+        overscroll-behavior: none;
+      }
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: #F6F5FC;
+        transition: opacity 0.25s ease;
+      }
+      #splash.hide {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #splash .mark {
+        width: 64px;
+        height: 64px;
+        border-radius: 20px;
+        background: linear-gradient(160deg, #7C3AED 0%, #5B21B6 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-weight: 800;
+        font-size: 28px;
+        box-shadow: 0 12px 28px rgba(124, 58, 237, 0.28);
+        animation: splash-pop 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      #splash .dots {
+        display: flex;
+        gap: 6px;
+      }
+      #splash .dots span {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #7C3AED;
+        opacity: 0.35;
+        animation: splash-blink 1.1s ease-in-out infinite;
+      }
+      #splash .dots span:nth-child(2) { animation-delay: 0.15s; }
+      #splash .dots span:nth-child(3) { animation-delay: 0.3s; }
+      @keyframes splash-pop {
+        from { opacity: 0; transform: scale(0.85); }
+        to { opacity: 1; transform: scale(1); }
+      }
+      @keyframes splash-blink {
+        0%, 100% { opacity: 0.25; }
+        50% { opacity: 0.9; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #splash .mark { animation: none; }
+        #splash .dots span { animation: none; opacity: 0.6; }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <div id="splash" aria-hidden="true">
+      <div class="mark">G</div>
+      <div class="dots"><span></span><span></span><span></span></div>
+    </div>
+    <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
-
 
