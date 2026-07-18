@@ -32,11 +32,15 @@
 
     <!-- Baseline CSP for a static SPA: self-hosted script/style, the app's
          own base64 brand asset + the Clearbit bank-logo images, and the
-         service worker's same-origin fetches. Tighten further (e.g. nonces)
-         if you add a real backend. -->
+         service worker's same-origin fetches. connect-src includes the
+         real Gloobal backend (gloobal-pay.onrender.com) — every
+         OTP/register/login/PIN/passkey/send-money/history call goes
+         through fetch() to that origin, and without it here the browser
+         silently blocks every one of those requests via CSP, which reads
+         exactly like the backend being unreachable. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https://logo.clearbit.com; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://logo.clearbit.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https://logo.clearbit.com; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://logo.clearbit.com https://gloobal-pay.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
     />
 
     <link rel="preconnect" href="https://logo.clearbit.com" crossorigin />
