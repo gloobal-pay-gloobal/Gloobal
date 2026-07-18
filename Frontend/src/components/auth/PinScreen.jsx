@@ -6,7 +6,7 @@ import { PinScreenHeader, PinChipCard } from "./PinScreenShell";
 // The dedicated, full-screen PIN step: shown after the Referral step,
 // overlaying the whole stage the same way the country picker does. Gives
 // the person a dial pad to type their PIN rather than a keyboard.
-export function PinScreen({ value, length, onChange, onSubmit, onBack, revealed, onToggleReveal }) {
+export function PinScreen({ value, length, onChange, onSubmit, onBack, revealed, onToggleReveal, error, submitting }) {
   return (
     <div
       style={{
@@ -37,6 +37,12 @@ export function PinScreen({ value, length, onChange, onSubmit, onBack, revealed,
       >
         <PinChipCard length={length} value={value} revealed={revealed} onToggleReveal={onToggleReveal} />
         <PhoneDialPad value={value} onChange={onChange} minLength={length} maxLength={length} onSubmit={onSubmit} />
+        {submitting && (
+          <p style={{ margin: 0, color: T.inkSoft, fontSize: 12, fontWeight: 700 }}>Please wait…</p>
+        )}
+        {error && (
+          <p style={{ margin: 0, color: "#dc2626", fontSize: 12, fontWeight: 700, textAlign: "center" }}>{error}</p>
+        )}
       </div>
     </div>
   );

@@ -19,6 +19,33 @@ import { ScreenFallback } from "./pwa/ScreenFallback";
 import { ALL_COUNTRIES, TOP_COUNTRIES, mobileDigitRange } from "./constants/countries";
 import { T } from "./styles/theme";
 import globalIdLogo from "./assets/globalid-logo.png";
+import { startRegistration, startAuthentication } from "@simplewebauthn/browser";
+import { warmUpBackend } from "./services/httpClient";
+import {
+  sendOtp,
+  verifyOtp,
+  register as registerUser,
+  setPin as apiSetPin,
+  login as apiLogin,
+  resolveUser,
+  passkeyRegisterOptions,
+  passkeyRegisterVerify,
+  passkeyAuthOptions,
+  passkeyAuthVerify,
+} from "./services/api/authApi";
+
+// Combines the chosen country's dial code with the typed national number
+// into the string the backend's normalizeMobileNumber helper expects.
+// India gets the explicit 10-digit -> +91XXXXXXXXXX shortcut since that's
+// the backend's primary documented case; everything else falls back to
+// dialCode + digits.
+function normalizeMobileForApi(dialCountry, phoneNumber) {
+  const raw = String(phoneNumber || "").trim();
+  if (raw.startsWith("+")) return raw.replace(/[\s-]/g, "");
+  const digits = raw.replace(/\D/g, "");
+  if (dialCountry.iso === "IN" && digits.length === 10) return `+91${digits}`;
+  return `${dialCountry.dialCode}${digits}`;
+}
 
 // Hoisted to module scope (not recreated inline at each call site) so
 // these stay the same array reference across renders — required for
@@ -41,10 +68,40 @@ function GloobalId() {
   const [flipping, setFlipping] = useState(false);
   const [secureId, setSecureId] = useState("");
   const [referralCode, setReferralCode] = useState("");
-  const [pin, setPin] = useState("123456");
-  // The 6-digit code sent to the phone number just entered. Pre-filled with
-  // a stand-in demo value (123456) since there's no real SMS backend here.
-  const [otp, setOtp] = useState("123456");
+  const [pin, setPin] = useState("");
+  // The 6-digit code sent to the phone number just entered — real
+  // POST /api/otp/send fires in handleVerify, so this starts empty and is
+  // actually typed in by whoever received the code, not pre-filled.
+  const [otp, setOtp] = useState("");
+  const [otpError, setOtpError] = useState(null);
+  // The mobile number OTP was actually sent to (normalized to the
+  // backend's +91XXXXXXXXXX-style format) — kept separate from the raw
+  // `phoneNumber` dial-pad buffer so a later edit to that buffer can't
+  // silently change what verifyOtp checks against.
+  const [registeredMobile, setRegisteredMobile] = useState("");
+  // The account as the real backend knows it, once registration or login
+  // has actually succeeded — symbolId here is the source of truth for
+  // every downstream screen (Dashboard, Send Money), not just whatever's
+  // currently typed into the dial pad.
+  const [registeredUser, setRegisteredUser] = useState(null);
+  const [registering, setRegistering] = useState(false);
+  const [registerError, setRegisterError] = useState(null);
+  const [loginError, setLoginError] = useState(null);
+  // Mobile-number login has its own in-flight flag, separate from
+  // `verifying` — switching back to the Secure ID tab while a mobile
+  // lookup is still in flight shouldn't leave that tab stuck disabled.
+  const [resolvingMobile, setResolvingMobile] = useState(false);
+  // Real WebAuthn device-setup step, shown once right after registration
+  // sets a PIN (see the "deviceSetup" stage below) — separate busy/status
+  // state from loginAuthScanning since setup and login-time verify are two
+  // different ceremonies that never run at the same time, but keeping
+  // separate flags avoids one screen's leftover state bleeding into the
+  // other if someone navigates back and forth quickly.
+  const [deviceSetupBusy, setDeviceSetupBusy] = useState(false);
+  const [deviceSetupStatus, setDeviceSetupStatus] = useState(null);
+  const [deviceSetupError, setDeviceSetupError] = useState(null);
+  const [loginAuthError, setLoginAuthError] = useState(null);
+  const [loginAuthStatus, setLoginAuthStatus] = useState(null);
   // The single source of truth for the user's country, chosen once via the
   // country picker during registration (the "phone" stage below). Every
   // other screen — dashboard, Gloobal ID, Send Money, Add Bank, Gloobal
@@ -108,47 +165,178 @@ function GloobalId() {
   const [loginMinLen, loginMaxLen] = mobileDigitRange(effectiveLoginCountry.iso);
   const loginMobileComplete = loginMobileBuffer.length >= loginMinLen;
 
-  const handleSubmitSecureId = () => {
+  // Real GET /api/users/resolve for mobile-number login — finds the
+  // Secure ID behind the typed mobile number before continuing into the
+  // same PIN/biometric step the direct-Secure-ID path uses. The resolved
+  // symbolId is stored in `secureId` (the same field the ID-entry path
+  // fills in) so handleSubmitLoginAuth/handleBiometricVerify below don't
+  // need to know which path got them there.
+  const handleSubmitSecureId = async () => {
     if (isLoginAttempt && loginEntryMode === "mobile") {
-      if (!loginMobileComplete) return;
-      flipTo("loginAuth");
+      if (!loginMobileComplete || resolvingMobile) return;
+      setLoginError(null);
+      setResolvingMobile(true);
+      try {
+        const identifier = normalizeMobileForApi(effectiveLoginCountry, loginMobileBuffer);
+        const resolved = await resolveUser(identifier);
+        setSecureId(resolved.symbolId);
+        setResolvingMobile(false);
+        flipTo("loginAuth");
+      } catch (err) {
+        setResolvingMobile(false);
+        setLoginError(err instanceof Error ? err.message : "No Gloobal ID found for that mobile number.");
+      }
       return;
     }
     if (secureId.length !== SECURE_ID_LENGTH) return;
     if (isLoginAttempt) {
+      setLoginError(null);
       flipTo("loginAuth");
       return;
     }
     flipTo("referral");
   };
 
+  // Shared by the Referral submit button and "Skip for now" — real
+  // POST /api/register-symbol call, once, right after the referral step
+  // either way (referredBy just ends up empty on skip).
+  const registerAndAdvance = async (referredByValue) => {
+    if (registering) return;
+    setRegisterError(null);
+    setRegistering(true);
+    try {
+      const result = await registerUser({
+        fullName: "Gloobal User",
+        mobileNumber: registeredMobile,
+        symbolId: secureId,
+        referredBy: referredByValue || undefined,
+      });
+      setRegisteredUser(result.user);
+      setRegistering(false);
+      flipTo("pin");
+    } catch (err) {
+      setRegistering(false);
+      setRegisterError(err instanceof Error ? err.message : "Couldn't create your Gloobal ID. Try again.");
+    }
+  };
+
   const handleSubmitReferral = () => {
-    if (referralCode.length === REFERRAL_LENGTH) flipTo("pin");
+    if (referralCode.length === REFERRAL_LENGTH) registerAndAdvance(referralCode);
   };
 
-  const handleSubmitPin = () => {
-    if (pin.length === PIN_LENGTH) flipTo("dashboard");
+  const handleSkipReferral = () => {
+    registerAndAdvance("");
   };
 
-  // Confirms the login PIN — in this demo any complete code is accepted,
-  // same as the OTP step, since there's no real backend to check against.
-  const handleSubmitLoginAuth = () => {
-    if (loginAuthPin.length !== PIN_LENGTH) return;
-    setLoginAuthPin("");
-    flipTo("dashboard");
+  // Real POST /api/pin/set, then on to the one-time real passkey setup
+  // step (see the "deviceSetup" stage) rather than straight to the
+  // dashboard — a passkey has to actually be registered here for the
+  // login screen's Face/Fingerprint buttons to ever have anything real to
+  // verify against later.
+  const handleSubmitPin = async () => {
+    if (pin.length !== PIN_LENGTH || registering) return;
+    setRegisterError(null);
+    setRegistering(true);
+    try {
+      const symbolIdForPin = registeredUser?.symbolId || secureId;
+      await apiSetPin(symbolIdForPin, pin);
+      setRegistering(false);
+      setDeviceSetupError(null);
+      setDeviceSetupStatus(null);
+      flipTo("deviceSetup");
+    } catch (err) {
+      setRegistering(false);
+      setRegisterError(err instanceof Error ? err.message : "Couldn't set your PIN. Try again.");
+    }
   };
 
-  // Face / Fingerprint — a brief "scanning" beat on the tapped icon, then
-  // straight through to the dashboard, same destination the PIN reaches.
-  const handleBiometricAuth = () => {
-    if (loginAuthScanning) return;
-    setLoginAuthScanning(true);
-    setTimeout(() => {
-      setLoginAuthScanning(false);
+  // Real POST /api/login — verifies Secure ID + PIN against the backend.
+  const handleSubmitLoginAuth = async () => {
+    if (loginAuthPin.length !== PIN_LENGTH || verifying) return;
+    setLoginAuthError(null);
+    setVerifying(true);
+    try {
+      const result = await apiLogin(secureId, loginAuthPin);
+      setRegisteredUser(result.user);
+      setVerifying(false);
       setLoginAuthPin("");
       flipTo("dashboard");
-    }, 700);
+    } catch (err) {
+      setVerifying(false);
+      setLoginAuthError(err instanceof Error ? err.message : "That Secure ID or PIN wasn't recognized.");
+    }
   };
+
+  const friendlyPasskeyMessage = (raw) => {
+    const lower = String(raw || "").toLowerCase();
+    return lower.includes("not allowed") || lower.includes("timed out") || lower.includes("device")
+      ? "This browser or device can't complete a passkey check here. Try live HTTPS or another device."
+      : raw;
+  };
+
+  // Real WebAuthn verify — tapping Face ID or Fingerprint on the login
+  // screen runs an actual passkey authentication ceremony against
+  // whichever Secure ID is currently in the card (typed directly, or
+  // resolved from a mobile-number lookup above).
+  const handleBiometricVerify = async () => {
+    if (loginAuthScanning || !secureId) return;
+    setLoginAuthError(null);
+    setLoginAuthScanning(true);
+    setLoginAuthStatus("Requesting device authentication…");
+    try {
+      const options = await passkeyAuthOptions(secureId);
+      const authResponse = await startAuthentication({ optionsJSON: options });
+      setLoginAuthStatus("Verifying device response…");
+      const verify = await passkeyAuthVerify(secureId, authResponse);
+      if (!verify.verified) throw new Error("Device authentication failed.");
+      const profile = await resolveUser(secureId);
+      setRegisteredUser(profile);
+      setLoginAuthScanning(false);
+      setLoginAuthStatus(null);
+      setLoginAuthPin("");
+      flipTo("dashboard");
+    } catch (err) {
+      setLoginAuthScanning(false);
+      setLoginAuthStatus(null);
+      setLoginAuthError(friendlyPasskeyMessage(err instanceof Error ? err.message : "Device authentication failed."));
+    }
+  };
+
+  // Real WebAuthn setup — shown once right after registration sets a PIN.
+  // A passkey is optional (Skip for now is always available), but if the
+  // person does set one up here, this is a real
+  // POST /api/passkey/register/options + verify ceremony, not a fake
+  // timeout.
+  const handleBiometricSetup = async () => {
+    if (deviceSetupBusy) return;
+    const symbolId = registeredUser?.symbolId || secureId;
+    if (!symbolId) return;
+    setDeviceSetupError(null);
+    setDeviceSetupBusy(true);
+    setDeviceSetupStatus("Starting device security prompt…");
+    try {
+      const options = await passkeyRegisterOptions(symbolId);
+      const registrationResponse = await startRegistration({ optionsJSON: options });
+      setDeviceSetupStatus("Finalizing device authentication…");
+      const verify = await passkeyRegisterVerify(symbolId, registrationResponse);
+      if (!verify.verified) throw new Error("Device authentication setup failed.");
+      setDeviceSetupBusy(false);
+      setDeviceSetupStatus("Device authentication enabled.");
+      setTimeout(() => flipTo("dashboard"), 500);
+    } catch (err) {
+      setDeviceSetupBusy(false);
+      setDeviceSetupStatus(null);
+      setDeviceSetupError(friendlyPasskeyMessage(err instanceof Error ? err.message : "Device authentication setup failed."));
+    }
+  };
+
+  // Fire the moment the app opens, well before anyone has typed a phone
+  // number and hit submit — so a cold Render backend has a head start
+  // waking up before the real OTP send needs it. Fire-and-forget, never
+  // surfaces an error.
+  useEffect(() => {
+    warmUpBackend();
+  }, []);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -268,21 +456,40 @@ function GloobalId() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleVerify = () => {
+  // Real POST /api/otp/send — registration is OTP-gated, so this has to
+  // succeed before the Secure ID step is reachable at all.
+  const handleVerify = async () => {
     if (verifying || stage !== "phone") return;
     const digits = phoneNumber.replace(/\D/g, "");
     const [minLen, maxLen] = mobileDigitRange(dialCountry.iso);
     if (digits.length < minLen || digits.length > maxLen) return;
+    const mobileNumber = normalizeMobileForApi(dialCountry, phoneNumber);
+    setOtpError(null);
     setVerifying(true);
-    setTimeout(() => {
+    try {
+      await sendOtp(mobileNumber);
+      setRegisteredMobile(mobileNumber);
       setVerifying(false);
       flipTo("otp");
-    }, 900);
+    } catch (err) {
+      setVerifying(false);
+      setOtpError(err instanceof Error ? err.message : "Couldn't send OTP. Try again.");
+    }
   };
 
-  const handleSubmitOtp = () => {
-    if (otp.length !== OTP_LENGTH) return;
-    flipTo("secureId");
+  // Real POST /api/otp/verify.
+  const handleSubmitOtp = async () => {
+    if (otp.length !== OTP_LENGTH || verifying) return;
+    setOtpError(null);
+    setVerifying(true);
+    try {
+      await verifyOtp(registeredMobile, otp);
+      setVerifying(false);
+      flipTo("secureId");
+    } catch (err) {
+      setVerifying(false);
+      setOtpError(err instanceof Error ? err.message : "Incorrect OTP. Try again.");
+    }
   };
 
   const handleStartOver = () => {
@@ -299,7 +506,16 @@ function GloobalId() {
     setSecureId("");
     setReferralCode("");
     setPin("");
-    setOtp("123456");
+    setOtp("");
+    setOtpError(null);
+    setRegisteredMobile("");
+    setRegisteredUser(null);
+    setRegisterError(null);
+    setLoginError(null);
+    setLoginAuthError(null);
+    setLoginAuthStatus(null);
+    setDeviceSetupError(null);
+    setDeviceSetupStatus(null);
     setLoginAuthPin("");
     setLoginAuthScanning(false);
     flipTo("phone");
@@ -453,6 +669,12 @@ function GloobalId() {
                     flipTo("secureId");
                   }}
                 />
+              )}
+
+              {stage === "phone" && otpError && (
+                <div style={{ marginTop: 8, fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
+                  {otpError}
+                </div>
               )}
 
               {/* Flip to log in — on the card's own boundary now, not on
@@ -811,6 +1033,11 @@ function GloobalId() {
                   maxLength={loginMaxLen}
                   onSubmit={handleSubmitSecureId}
                 />
+                {loginError && (
+                  <div style={{ marginTop: 10, fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
+                    {loginError}
+                  </div>
+                )}
               </div>
             )}
 
@@ -859,12 +1086,19 @@ function GloobalId() {
 
             {stage === "referral" && (
               <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "center" }}>
+                {registerError && (
+                  <div style={{ marginBottom: 8, fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
+                    {registerError}
+                  </div>
+                )}
                 <SubmitButton
                   onClick={handleSubmitReferral}
-                  disabled={referralCode.length !== REFERRAL_LENGTH}
+                  disabled={referralCode.length !== REFERRAL_LENGTH || registering}
+                  label={registering ? "Submitting…" : undefined}
                 />
                 <button
-                  onClick={() => flipTo("pin")}
+                  onClick={handleSkipReferral}
+                  disabled={registering}
                   style={{
                     marginTop: 10,
                     border: "none",
@@ -872,26 +1106,44 @@ function GloobalId() {
                     color: T.accent2,
                     fontSize: 12,
                     fontWeight: 700,
-                    cursor: "pointer",
+                    cursor: registering ? "default" : "pointer",
                     padding: "6px 8px",
                   }}
                 >
-                  Skip for now
+                  {registering ? "Continuing…" : "Skip for now"}
                 </button>
               </div>
             )}
 
             {stage === "otp" && (
               <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "center" }}>
+                {otpError && (
+                  <div style={{ marginBottom: 8, fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
+                    {otpError}
+                  </div>
+                )}
                 <button
-                  onClick={() => setOtp("")}
+                  onClick={async () => {
+                    if (verifying) return;
+                    setOtp("");
+                    setOtpError(null);
+                    setVerifying(true);
+                    try {
+                      await sendOtp(registeredMobile);
+                    } catch (err) {
+                      setOtpError(err instanceof Error ? err.message : "Couldn't resend OTP. Try again.");
+                    } finally {
+                      setVerifying(false);
+                    }
+                  }}
+                  disabled={verifying}
                   style={{
                     border: "none",
                     background: "none",
                     color: T.accent2,
                     fontSize: 12,
                     fontWeight: 700,
-                    cursor: "pointer",
+                    cursor: verifying ? "default" : "pointer",
                     padding: "6px 8px",
                   }}
                 >
@@ -932,23 +1184,47 @@ function GloobalId() {
           onBack={() => flipTo("referral")}
           revealed={pinRevealed}
           onToggleReveal={() => setPinRevealed((v) => !v)}
+          error={registerError}
+          submitting={registering}
         />
       )}
 
       {stage === "loginAuth" && (
         <LoginAuthScreen
+          mode="login"
           value={loginAuthPin}
           length={PIN_LENGTH}
           onChange={setLoginAuthPin}
           onSubmit={handleSubmitLoginAuth}
           onBack={() => {
             setLoginAuthPin("");
+            setLoginAuthError(null);
             flipTo("secureId");
           }}
           revealed={loginAuthRevealed}
           onToggleReveal={() => setLoginAuthRevealed((v) => !v)}
-          onBiometric={handleBiometricAuth}
-          scanning={loginAuthScanning}
+          onBiometric={handleBiometricVerify}
+          scanning={loginAuthScanning || verifying}
+          error={loginAuthError}
+          status={loginAuthStatus}
+        />
+      )}
+
+      {stage === "deviceSetup" && (
+        <LoginAuthScreen
+          mode="setup"
+          value=""
+          length={PIN_LENGTH}
+          onChange={() => {}}
+          onSubmit={() => {}}
+          onBack={() => flipTo("dashboard")}
+          revealed={false}
+          onToggleReveal={() => {}}
+          onBiometric={handleBiometricSetup}
+          scanning={deviceSetupBusy}
+          error={deviceSetupError}
+          status={deviceSetupStatus}
+          onSkip={() => flipTo("dashboard")}
         />
       )}
 
@@ -961,7 +1237,8 @@ function GloobalId() {
               onOpenSend={() => setActiveScreen("send")}
               onOpenBank={() => setActiveScreen("bank")}
               onOpenCoverage={() => setActiveScreen("coverage")}
-              myGloobalId={secureId}
+              myGloobalId={registeredUser?.symbolId || secureId}
+              referralCount={registeredUser?.referralCount}
             />
           </Suspense>
         </ErrorBoundary>
@@ -971,7 +1248,10 @@ function GloobalId() {
         <div style={{ position: "fixed", inset: 0, zIndex: 190, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
           <ErrorBoundary>
             <Suspense fallback={<ScreenFallback />}>
-              <SendMoneyScreen onClose={() => setActiveScreen(null)} sender={{ ...dialCountry, phoneNumber }} />
+              <SendMoneyScreen
+                onClose={() => setActiveScreen(null)}
+                sender={{ ...dialCountry, phoneNumber, symbolId: registeredUser?.symbolId || secureId }}
+              />
             </Suspense>
           </ErrorBoundary>
         </div>
