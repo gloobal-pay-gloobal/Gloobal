@@ -20,7 +20,7 @@ import { ChevronRightIcon, EyeIcon, HomeTabIcon, LogoutIcon, ProfileTabIcon, Rot
 import { BILL_ACTIONS, DASHBOARD_ACTIONS, PROFILE_ROWS, generateReferralNetwork } from "../../constants/dashboardData";
 import { T } from "../../styles/theme";
 
-function DashboardScreenBase({ dialCountry, onLogout, onOpenSend, onOpenBank, onOpenCoverage, myGloobalId }) {
+function DashboardScreenBase({ dialCountry, onLogout, onOpenSend, onOpenBank, onOpenCoverage, myGloobalId, referralCount }) {
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [activeTab, setActiveTab] = useState("home"); // home | profile
   const [showIdTag, setShowIdTag] = useState(false);
@@ -800,12 +800,17 @@ function DashboardScreenBase({ dialCountry, onLogout, onOpenSend, onOpenBank, on
               <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.7)", letterSpacing: 0.3, textTransform: "uppercase" }}>
                 Total earned from referrals
               </span>
+              {/* No backend endpoint exists yet for real per-referral
+                  earnings — this figure (and the individual member rows
+                  below) stays illustrative. "Invited" is the one real
+                  number here: the account's actual referralCount from the
+                  backend. */}
               <span style={{ fontSize: 30, fontWeight: 800, color: "#fff", fontFamily: T.fontDisplay }}>
                 ${referralNetwork.reduce((sum, m) => sum + m.earned, 0).toFixed(2)}
               </span>
               <div style={{ display: "flex", gap: 18, marginTop: 10 }}>
                 <div>
-                  <div style={{ fontSize: 17, fontWeight: 800, color: "#fff" }}>{referralNetwork.length}</div>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: "#fff" }}>{referralCount ?? referralNetwork.length}</div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", fontWeight: 600 }}>Invited</div>
                 </div>
                 <div>

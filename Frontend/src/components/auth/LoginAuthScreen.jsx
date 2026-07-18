@@ -11,7 +11,31 @@ import { PinScreenHeader, PinChipCard } from "./PinScreenShell";
 // the dashboard — the same full-screen overlay treatment as PinScreen, but
 // with Face / Fingerprint offered as a one-tap alternative to typing the
 // PIN. Either path lands on the dashboard.
-export function LoginAuthScreen({ value, length, onChange, onSubmit, onBack, revealed, onToggleReveal, onBiometric, scanning }) {
+//
+// mode="login" (default): real POST /api/login fires on PIN submit, real
+// passkey auth fires on a biometric tap — either one alone is enough.
+// mode="setup": shown once, right after registration sets a PIN, so a real
+// passkey actually exists to verify against later. The PIN dial pad and
+// "or" divider are hidden (the PIN was just set on the previous screen —
+// re-typing it here would be redundant), leaving only the two biometric
+// buttons (real POST /api/passkey/register/*) plus a "Skip for now" link,
+// since a passkey is a nice-to-have, not a requirement to reach the
+// dashboard.
+export function LoginAuthScreen({
+  value,
+  length,
+  onChange,
+  onSubmit,
+  onBack,
+  revealed,
+  onToggleReveal,
+  onBiometric,
+  scanning,
+  mode = "login",
+  error,
+  status,
+  onSkip,
+}) {
   return (
     <div
       style={{
@@ -24,7 +48,7 @@ export function LoginAuthScreen({ value, length, onChange, onSubmit, onBack, rev
         fontFamily: T.fontBody,
       }}
     >
-      <PinScreenHeader onBack={onBack} title="Verify it's you" />
+      <PinScreenHeader onBack={onBack} title={mode === "setup" ? "Set up device security" : "Verify it's you"} />
 
       <div
         style={{
@@ -40,16 +64,23 @@ export function LoginAuthScreen({ value, length, onChange, onSubmit, onBack, rev
           WebkitOverflowScrolling: "touch",
         }}
       >
-        <PinChipCard length={length} value={value} revealed={revealed} onToggleReveal={onToggleReveal} />
+        {mode === "setup" ? (
+          <p style={{ margin: 0, textAlign: "center", color: T.inkSoft, fontSize: 13, fontWeight: 600, maxWidth: 280 }}>
+            Add Face ID or a fingerprint so you can skip typing your PIN next time you log in.
+          </p>
+        ) : (
+          <>
+            <PinChipCard length={length} value={value} revealed={revealed} onToggleReveal={onToggleReveal} />
+            <PhoneDialPad value={value} onChange={onChange} minLength={length} maxLength={length} onSubmit={onSubmit} />
 
-        <PhoneDialPad value={value} onChange={onChange} minLength={length} maxLength={length} onSubmit={onSubmit} />
-
-        {/* Divider */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", maxWidth: 260 }}>
-          <span style={{ flex: 1, height: 1, background: T.line }} />
-          <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, color: T.inkFaint, textTransform: "uppercase" }}>or</span>
-          <span style={{ flex: 1, height: 1, background: T.line }} />
-        </div>
+            {/* Divider */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", maxWidth: 260 }}>
+              <span style={{ flex: 1, height: 1, background: T.line }} />
+              <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, color: T.inkFaint, textTransform: "uppercase" }}>or</span>
+              <span style={{ flex: 1, height: 1, background: T.line }} />
+            </div>
+          </>
+        )}
 
         {/* Face / Fingerprint — either one is a one-tap shortcut past the
             PIN, landing on the dashboard the same way a completed PIN
@@ -125,6 +156,34 @@ export function LoginAuthScreen({ value, length, onChange, onSubmit, onBack, rev
             <span style={{ fontSize: 10.5, fontWeight: 700, color: T.inkFaint }}>Fingerprint</span>
           </button>
         </div>
+
+        {status && !error && (
+          <p style={{ margin: 0, textAlign: "center", color: T.inkFaint, fontSize: 12, fontWeight: 600 }}>{status}</p>
+        )}
+        {error && (
+          <p style={{ margin: 0, textAlign: "center", color: "#dc2626", fontSize: 12, fontWeight: 700 }}>{error}</p>
+        )}
+
+        {mode === "setup" && onSkip && (
+          <button
+            type="button"
+            onClick={onSkip}
+            disabled={scanning}
+            className="v2-tap"
+            style={{
+              border: "none",
+              background: "none",
+              color: T.inkFaint,
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: scanning ? "default" : "pointer",
+              padding: "6px 8px",
+              textDecoration: "underline",
+            }}
+          >
+            Skip for now
+          </button>
+        )}
       </div>
     </div>
   );

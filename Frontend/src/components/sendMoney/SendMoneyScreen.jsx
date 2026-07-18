@@ -20,25 +20,36 @@ import { SendMoneyAmbientBg } from "../backgrounds/FinancialAmbient";
 import { SubmitButton, SymbolChipRow } from "../common/CodeEntry";
 import { PhoneDialPad, SymbolDialPad } from "../common/DialPads";
 import { Flag, FlagEmoji, countryGlowStyle } from "../common/FlagComponents";
-import { ALL_COUNTRIES, mobileDigitRange, randomName } from "../../constants/countries";
+import { ALL_COUNTRIES, mobileDigitRange } from "../../constants/countries";
 import { ACTIVE_ISO_SET } from "../../constants/coverage";
-import { CORRECT_PIN, COUNTRY_CURRENCY, CURRENCIES, convert, fmt } from "../../constants/finance";
+import { COUNTRY_CURRENCY, CURRENCIES, convert, fmt } from "../../constants/finance";
+import { resolveUser, sendTransaction } from "../../services/api/authApi";
 
-// Builds the "sending from" side of the screen out of the country the
-// person actually verified with during onboarding, instead of a fixed
-// placeholder — so the flag/currency here always matches their Gloobal ID.
+// Combines a country's dial code with typed digits into the string the
+// backend's normalizeMobileNumber helper expects — same rule App.jsx uses
+// for the sender's own number.
+function normalizeMobileForApi(country, digits) {
+  if (country.iso === "IN" && digits.length === 10) return `+91${digits}`;
+  return `${country.dialCode}${digits}`;
+}
+
+// Builds the "sending from" side of the screen out of the country/account
+// the person actually verified with during onboarding, instead of a fixed
+// placeholder — so the flag/currency/ID here always match their real
+// Gloobal ID, not a randomized stand-in.
 export function buildSenderProfile(sender) {
-  const s = sender || { name: "United States", iso: "US", dialCode: "+1", flag: "🇺🇸", phoneNumber: "" };
+  const s = sender || { name: "United States", iso: "US", dialCode: "+1", flag: "🇺🇸", phoneNumber: "", symbolId: "" };
   const digits = (s.phoneNumber || "").trim();
   return {
     country: s.name,
     flag: s.flag,
     phone: digits ? `${s.dialCode} ${digits}` : `${s.dialCode} •••• •• ••`,
-    id: `${s.iso}${s.dialCode.replace("+", "")}••••••`,
+    id: s.symbolId || `${s.iso}${s.dialCode.replace("+", "")}••••••`,
+    symbolId: s.symbolId || "",
     currency: COUNTRY_CURRENCY[s.iso] || "USD",
     dialCode: s.dialCode,
     iso: s.iso,
-    name: randomName(),
+    name: s.fullName || "Gloobal User",
   };
 }
 // Most transfers on this screen are domestic, so before anyone's searched
@@ -51,6 +62,7 @@ export function buildLocalReceiverPlaceholder(senderProfile) {
     flag: senderProfile.flag,
     phone: "",
     id: "",
+    symbolId: "",
     name: "",
     currency: senderProfile.currency,
   };
@@ -81,9 +93,14 @@ function SendMoneyScreenBase({ onClose, sender }) {
   const [pinOpen, setPinOpen] = useState(false);
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState(false);
+  const [pinErrorMessage, setPinErrorMessage] = useState(null);
+  const [sending, setSending] = useState(false);
+  const [searchError, setSearchError] = useState(null);
+  const [searching, setSearching] = useState(false);
   const toastTimer = useRef(null);
   const copyTimer = useRef(null);
   const pinErrorTimer = useRef(null);
+  const PIN_LENGTH = 6;
 
   // --- Receiver search flow ----------------------------------------------
   // 'closed'  → landing state: just the header + search bar, no cards.
@@ -120,25 +137,49 @@ function SendMoneyScreenBase({ onClose, sender }) {
     };
   }, []);
 
+  // Real POST /api/transactions/send — PIN-verified server-side. There is
+  // no local "correct PIN" to check against here; a wrong PIN, a locked
+  // account, or any other failure all come back as a real error from the
+  // backend.
   useEffect(() => {
-    if (pin.length < 4) return;
-    if (pin === CORRECT_PIN) {
-      pinErrorTimer.current = setTimeout(() => {
-        setPinOpen(false);
-        setPin("");
-        showToast(
-          `Sending ${CURRENCIES[top.currency].label} ${fmt(
-            parseFloat(amount) || 0
-          )} to ${bottom.country} · ${bottom.phone}`
-        );
-      }, 280);
-    } else {
-      setPinError(true);
-      pinErrorTimer.current = setTimeout(() => {
-        setPin("");
-        setPinError(false);
-      }, 550);
-    }
+    if (pin.length < PIN_LENGTH) return;
+    if (!top.symbolId || !bottom.symbolId) return;
+    let cancelled = false;
+    setSending(true);
+    (async () => {
+      try {
+        const amountNumber = parseFloat(amount) || 0;
+        const idempotencyKey = `gloobal-${top.symbolId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        await sendTransaction({
+          senderSymbolId: top.symbolId,
+          receiverSymbolId: bottom.symbolId,
+          amount: amountNumber,
+          pin,
+          idempotencyKey,
+        });
+        if (cancelled) return;
+        pinErrorTimer.current = setTimeout(() => {
+          setPinOpen(false);
+          setPin("");
+          setSending(false);
+          showToast(
+            `Sending ${CURRENCIES[top.currency].label} ${fmt(amountNumber)} to ${bottom.country} · ${bottom.phone}`
+          );
+        }, 280);
+      } catch (err) {
+        if (cancelled) return;
+        setSending(false);
+        setPinError(true);
+        setPinErrorMessage(err instanceof Error ? err.message : "Payment failed.");
+        pinErrorTimer.current = setTimeout(() => {
+          setPin("");
+          setPinError(false);
+        }, 550);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pin]);
 
@@ -230,35 +271,43 @@ function SendMoneyScreenBase({ onClose, sender }) {
     setBottom((b) => ({ ...b, country: c.name, flag: c.flag }));
   }
 
-  // Called once the active dial pad has enough entered and the person taps
-  // Search — "resolves" the receiver (demo data stands in for a real
-  // lookup). Gloobal ID search defaults to the sender's own
-  // country/currency, since most transfers here are local; a mobile
-  // search uses whichever country is currently selected for it (the
-  // sender's own, unless changed).
-  function resolveSearch() {
-    if (searchMode === "id") {
-      setBottom({
-        ...buildLocalReceiverPlaceholder(top),
-        id: idBuffer,
-        phone: `${top.dialCode} ${randomLocalPhone(top.iso)}`,
-        name: randomName(),
-      });
-    } else {
-      const c = effectiveMobileCountry;
-      const grouped = mobileBuffer.replace(/(\d{3})(?=\d)/g, "$1 ");
-      setBottom({
-        country: c.name,
-        flag: c.flag,
-        phone: `${c.dialCode} ${grouped}`,
-        id: `${c.iso}${c.dialCode.replace("+", "")}••••••`,
-        currency: COUNTRY_CURRENCY[c.iso] || "USD",
-        name: randomName(),
-      });
+  // Real GET /api/users/resolve — called once the active dial pad has
+  // enough entered and the person taps Search. Gloobal ID search looks up
+  // the typed ID directly; mobile search normalizes the typed digits with
+  // whichever country is currently selected (the sender's own, unless
+  // changed) before resolving.
+  async function resolveSearch() {
+    if (searching) return;
+    setSearchError(null);
+    const identifier =
+      searchMode === "id" ? idBuffer : normalizeMobileForApi(effectiveMobileCountry, mobileBuffer);
+    if (identifier === top.symbolId) {
+      setSearchError("You can't send money to yourself.");
+      return;
     }
-    setSearchStage("found");
-    setTopOpen(true);
-    setBottomOpen(true);
+    setSearching(true);
+    try {
+      const user = await resolveUser(identifier);
+      setBottom({
+        country: user.fullName || "Gloobal User",
+        flag: searchMode === "mobile" ? effectiveMobileCountry.flag : bottom.flag || top.flag,
+        phone: user.mobileNumber || "",
+        id: user.symbolId,
+        symbolId: user.symbolId,
+        name: user.fullName || "Gloobal User",
+        currency:
+          searchMode === "mobile"
+            ? COUNTRY_CURRENCY[effectiveMobileCountry.iso] || "USD"
+            : bottom.currency || top.currency,
+      });
+      setSearching(false);
+      setSearchStage("found");
+      setTopOpen(true);
+      setBottomOpen(true);
+    } catch (err) {
+      setSearching(false);
+      setSearchError(err instanceof Error ? err.message : "No Gloobal user found.");
+    }
   }
 
   function handleAmountChange(e) {
@@ -281,16 +330,17 @@ function SendMoneyScreenBase({ onClose, sender }) {
   function handleSend() {
     setPin("");
     setPinError(false);
+    setPinErrorMessage(null);
     setPinOpen(true);
   }
 
   function handlePinDigit(d) {
-    if (pinError || pin.length >= 4) return;
+    if (pinError || sending || pin.length >= PIN_LENGTH) return;
     setPin((p) => p + d);
   }
 
   function handlePinBackspace() {
-    if (pinError) return;
+    if (pinError || sending) return;
     setPin((p) => p.slice(0, -1));
   }
 
@@ -299,6 +349,7 @@ function SendMoneyScreenBase({ onClose, sender }) {
     setPinOpen(false);
     setPin("");
     setPinError(false);
+    setPinErrorMessage(null);
   }
 
   return (
@@ -870,14 +921,20 @@ function SendMoneyScreenBase({ onClose, sender }) {
                     maxLength={maxMobileDigits}
                   />
                 )}
+                {searchError && (
+                  <div style={{ marginBottom: 8, fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
+                    {searchError}
+                  </div>
+                )}
                 <SubmitButton
                   onClick={resolveSearch}
                   disabled={
-                    searchMode === "id"
+                    searching ||
+                    (searchMode === "id"
                       ? idBuffer.length < ID_SEARCH_LENGTH
-                      : mobileBuffer.length < minMobileDigits
+                      : mobileBuffer.length < minMobileDigits)
                   }
-                  label="Search"
+                  label={searching ? "Searching…" : "Search"}
                 />
               </div>
             )}
@@ -950,7 +1007,7 @@ function SendMoneyScreenBase({ onClose, sender }) {
 
           {/* SEND BUTTON */}
           {searchStage === "found" && (
-            <button className="send-btn" onClick={handleSend}>
+            <button className="send-btn" onClick={handleSend} disabled={!top.symbolId || !bottom.symbolId}>
               <SendMoneyLucideIcon size={18} />
               Send
             </button>
@@ -972,13 +1029,23 @@ function SendMoneyScreenBase({ onClose, sender }) {
               Confirm sending {CURRENCIES[top.currency].label} {fmt(parseFloat(amount) || 0)} to {bottom.phone}
             </p>
             <div className={`pin-dots ${pinError ? "shake" : ""}`}>
-              {[0, 1, 2, 3].map((i) => (
+              {Array.from({ length: PIN_LENGTH }).map((_, i) => (
                 <span
                   key={i}
                   className={`pin-dot ${i < pin.length ? "filled" : ""} ${pinError ? "error" : ""}`}
                 />
               ))}
             </div>
+            {pinErrorMessage && (
+              <p style={{ margin: "-18px 0 22px", textAlign: "center", fontSize: 12.5, fontWeight: 600, color: "#EF4444" }}>
+                {pinErrorMessage}
+              </p>
+            )}
+            {sending && !pinError && (
+              <p style={{ margin: "-18px 0 22px", textAlign: "center", fontSize: 12.5, fontWeight: 600, color: "#8B899E" }}>
+                Sending…
+              </p>
+            )}
             <div className="pin-keypad">
               {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "back"].map((k, i) =>
                 k === "" ? (
