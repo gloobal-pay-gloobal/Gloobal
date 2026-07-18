@@ -11,7 +11,7 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(self)
   Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https://logo.clearbit.com; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://logo.clearbit.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self';
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https://logo.clearbit.com; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://logo.clearbit.com https://gloobal-pay.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self';
 
 # The service worker itself must never be cached by an intermediate cache
 # or the browser's own HTTP cache — the browser needs to re-check it on
