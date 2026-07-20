@@ -3,9 +3,10 @@ import {
   Users2,
 } from "lucide-react";
 import { FlagEmoji, countryGlowStyle } from "../common/FlagComponents";
-import { countryMatches } from "../../constants/countries";
+import { ALL_COUNTRIES, countryMatches } from "../../constants/countries";
 import { COVERAGE_COUNTRIES_RAW, fmtUsers } from "../../constants/coverage";
 import { T } from "../../styles/theme";
+import { Globe2 } from "lucide-react";
 
 // Full-screen "new screen" overlay: a search bar up top and a scrollable
 // list below it. With no search typed, it shows the curated top 50 plus a
@@ -20,7 +21,9 @@ export function CountryPickerScreen({ topCountries, countries, search, onSearch,
     : topCountries;
   // India is the only country with real coverage/user data behind it right
   // now, so it's the only one that gets a real number under its flag.
-  const indiaUsers = COVERAGE_COUNTRIES_RAW.find((x) => x.code === "IN")?.baseUsers || 0;
+  // Total user count across every live coverage country — shown on the
+  // expand button alongside the total country count.
+  const totalUsers = COVERAGE_COUNTRIES_RAW.reduce((sum, c) => sum + (c.baseUsers || 0), 0);
 
   return (
     <div
@@ -117,16 +120,17 @@ export function CountryPickerScreen({ topCountries, countries, search, onSearch,
             >
               {filtered.map((c) => {
                 // Only India has real coverage/user data behind it right
-                // now, so it's the only flag that glows green with a real
-                // user count; every other country glows red with a null
-                // placeholder instead of a made-up number.
+                // now, so its flag is the only one that glows green;
+                // every other country glows red. Status is shown purely
+                // by the glow — no user-count or live text under the
+                // flags; the totals live on the button below.
                 const isActive = c.iso === "IN";
                 return (
                   <button
                     key={c.iso}
                     onClick={() => onSelect(c)}
                     title={`${c.name} (${c.dialCode})`}
-                    aria-label={`${c.name}, ${c.dialCode}${isActive ? `, ${fmtUsers(indiaUsers)} users` : ""}`}
+                    aria-label={`${c.name}, ${c.dialCode}`}
                     className="v2-tap"
                     style={{
                       display: "flex",
@@ -144,10 +148,6 @@ export function CountryPickerScreen({ topCountries, countries, search, onSearch,
                         <FlagEmoji flag={c.flag} size={42} background={T.surface} />
                       </div>
                     </div>
-                    <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 9.5, fontWeight: 700, color: isActive ? T.ink : T.inkFaint }}>
-                      <Users2 size={9} color={isActive ? T.accent : T.inkFaint} />
-                      {isActive ? fmtUsers(indiaUsers) : "—"}
-                    </span>
                   </button>
                 );
               })}
@@ -156,23 +156,32 @@ export function CountryPickerScreen({ topCountries, countries, search, onSearch,
             {!expanded && (
               <button
                 onClick={() => setExpanded(true)}
+                aria-label="See all countries"
                 className="v2-tap"
                 style={{
-                  display: "block",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 14,
                   width: "100%",
                   marginTop: 18,
                   border: `1px solid ${T.line}`,
                   background: T.surface,
                   borderRadius: T.radiusMd,
                   padding: "13px 0",
-                  color: T.accent,
-                  fontSize: 13,
-                  fontWeight: 700,
                   cursor: "pointer",
                   boxShadow: T.shadowCard,
                 }}
               >
-                See all countries
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <Users2 size={14} color={T.accent} />
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: T.ink }}>{fmtUsers(totalUsers)}</span>
+                </span>
+                <span aria-hidden="true" style={{ width: 1, height: 16, background: T.line }} />
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <Globe2 size={14} color={T.accent} />
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: T.ink }}>{ALL_COUNTRIES.length}</span>
+                </span>
               </button>
             )}
           </>

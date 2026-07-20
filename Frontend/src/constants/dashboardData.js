@@ -4,9 +4,10 @@ import {
   Home,
 } from "lucide-react";
 import { AddBankIcon, ReceiveIcon, ScannerIcon, SendIcon } from "../components/common/Icons";
+import { MoreHorizontal } from "lucide-react";
 
 export const DASHBOARD_ACTIONS = [
-  { key: "send", label: "Send", Icon: SendIcon },
+  { key: "send", label: "Pay", Icon: SendIcon },
   { key: "bank", label: "Add Bank", Icon: AddBankIcon },
   { key: "scan", label: "Scanner", Icon: ScannerIcon },
   { key: "receive", label: "Receive", Icon: ReceiveIcon },
@@ -17,17 +18,10 @@ export const BILL_ACTIONS = [
   { key: "recharge", label: "Recharge", Icon: Smartphone },
   { key: "electricity", label: "Electricity", Icon: Zap },
   { key: "rent", label: "Rent", Icon: Home },
+  { key: "more", label: "More", Icon: MoreHorizontal },
 ];
 
-// ---------------------------------------------------------------------------
-// Ambient dashboard motion: floating financial symbols, drifting dots, and
-// slow-turning geometric outlines. Everything here is decorative (aria-hidden,
-// pointer-events: none) and driven entirely by CSS keyframes + custom
-// properties rather than a JS animation loop, so it stays GPU-composited
-// (transform/opacity only) and cheap on battery. Randomized per-particle
-// parameters are generated once via useMemo on mount, never per frame.
-// ---------------------------------------------------------------------------
-export const PROFILE_ROWS = ["Security", "Notifications", "Help & Support"];
+export const PROFILE_ROWS = ["Personal Details", "Paid", "Received", "Subscriptions", "Language", "Currency", "Security", "Notifications", "Help & Support", "About"];
 // A pool of illustrative referred members — bigger than the 5 shown at
 // once, so "My Referral Network" can be filled with a different random
 // set of 5 people (name, country, status, today's + all-time earnings)

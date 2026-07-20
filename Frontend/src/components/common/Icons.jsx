@@ -1,5 +1,31 @@
 import React from "react";
-import { C } from "../../styles/theme";
+import { C, T } from "../../styles/theme";
+import { Lock } from "lucide-react";
+
+// Uniform locked/unlocked indicator reused everywhere a service (telecom
+// recharge, electricity, bank linking, ...) isn't wired to a live backend
+// yet: red = locked (every service today), green = live once real APIs are
+// connected. Flip the `locked` prop per row/service when that happens —
+// nothing else about the row needs to change.
+export function ServiceLock({ locked = true, size = 15 }) {
+  return (
+    <Lock
+      size={size}
+      color={locked ? T.negative : T.positive}
+      style={{ flexShrink: 0 }}
+      aria-hidden="true"
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Ambient dashboard motion: floating financial symbols, drifting dots, and
+// slow-turning geometric outlines. Everything here is decorative (aria-hidden,
+// pointer-events: none) and driven entirely by CSS keyframes + custom
+// properties rather than a JS animation loop, so it stays GPU-composited
+// (transform/opacity only) and cheap on battery. Randomized per-particle
+// parameters are generated once via useMemo on mount, never per frame.
+// ---------------------------------------------------------------------------
 
 // A small globe mark, spun continuously — the same "connected / global"
 // motif from the header, reused as the left-hand icon on the dashboard's
@@ -39,32 +65,32 @@ export function EyeIcon({ open }) {
     </svg>
   );
 }
-export function ScannerIcon() {
+export function ScannerIcon({ size = 20 }) {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#7c3aed" strokeWidth="2">
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="#7c3aed" strokeWidth="2">
       <path d="M4 8V6a2 2 0 012-2h2M20 8V6a2 2 0 00-2-2h-2M4 16v2a2 2 0 002 2h2M20 16v2a2 2 0 01-2 2h-2" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M4 12h16" strokeLinecap="round" />
     </svg>
   );
 }
-export function AddBankIcon() {
+export function AddBankIcon({ size = 20 }) {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#7c3aed" strokeWidth="2">
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="#7c3aed" strokeWidth="2">
       <path d="M3 10l9-6 9 6M4 10v8M20 10v8M9 10v8M15 10v8M2 19h20" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
-export function ReceiveIcon() {
+export function ReceiveIcon({ size = 20 }) {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#7c3aed" strokeWidth="2">
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="#7c3aed" strokeWidth="2">
       <path d="M12 4v13M7 12l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M5 20h14" strokeLinecap="round" />
     </svg>
   );
 }
-export function SendIcon() {
+export function SendIcon({ size = 20 }) {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#7c3aed" strokeWidth="2">
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="#7c3aed" strokeWidth="2">
       <path d="M22 2L11 13" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M22 2l-7 20-4-9-9-4 20-7z" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
