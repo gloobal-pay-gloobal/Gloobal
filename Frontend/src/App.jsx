@@ -2,7 +2,10 @@ import React, { Suspense, useEffect, useRef, useState } from "react";
 import {
   RefreshCw,
   Fingerprint,
+  Info,
+  Gift,
 } from "lucide-react";
+import { ExplainSheet } from "./components/common/ExplainSheet";
 import { CircularInButton } from "./components/auth/CircularInButton";
 import { CountryPickerScreen } from "./components/auth/CountryPickerScreen";
 import { LoginAuthScreen } from "./components/auth/LoginAuthScreen";
@@ -134,6 +137,11 @@ function GloobalId() {
   // clear or masked as dots — toggled by the eye button next to each.
   const [secureIdRevealed, setSecureIdRevealed] = useState(false);
   const [referralRevealed, setReferralRevealed] = useState(false);
+  // The two info-corner explanation overlays — what the Gloobal symbols
+  // are, and what a referral is worth. Purely informational, so they carry
+  // no backend state of their own.
+  const [showIdExplain, setShowIdExplain] = useState(false);
+  const [showReferralExplain, setShowReferralExplain] = useState(false);
   const [otpRevealed, setOtpRevealed] = useState(false);
   const [pinRevealed, setPinRevealed] = useState(false);
   const [loginMobileRevealed, setLoginMobileRevealed] = useState(false);
@@ -774,6 +782,67 @@ function GloobalId() {
                 </span>
               )}
 
+              {/* Info corner — same spot the phone step's flip-to-login
+                  icon uses, but opens an explanation overlay instead:
+                  what the symbol characters are called plus two worked
+                  examples, only during actual creation (not while
+                  logging in with an existing Gloobal ID). */}
+              {stage === "secureId" && !isLoginAttempt && (
+                <button
+                  onClick={() => setShowIdExplain(true)}
+                  aria-label="What is a Gloobal ID?"
+                  className="v2-tap"
+                  style={{
+                    position: "absolute",
+                    top: -18,
+                    right: -16,
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    border: `1.5px solid ${T.line}`,
+                    background: T.surface,
+                    color: T.accent,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    boxShadow: T.shadowRaised,
+                    zIndex: 3,
+                  }}
+                >
+                  <Info size={17} />
+                </button>
+              )}
+
+              {/* Same info-corner pattern on the Referral card — explains
+                  what a referral is and what it's worth. */}
+              {stage === "referral" && (
+                <button
+                  onClick={() => setShowReferralExplain(true)}
+                  aria-label="What is a referral?"
+                  className="v2-tap"
+                  style={{
+                    position: "absolute",
+                    top: -18,
+                    right: -16,
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    border: `1.5px solid ${T.line}`,
+                    background: T.surface,
+                    color: T.accent,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    boxShadow: T.shadowRaised,
+                    zIndex: 3,
+                  }}
+                >
+                  <Info size={17} />
+                </button>
+              )}
+
               {stage === "otp" && (
                 <span
                   style={{
@@ -1239,6 +1308,8 @@ function GloobalId() {
               onOpenCoverage={() => setActiveScreen("coverage")}
               myGloobalId={registeredUser?.symbolId || secureId}
               referralCount={registeredUser?.referralCount}
+              phoneNumber={phoneNumber}
+              fullName={registeredUser?.fullName}
             />
           </Suspense>
         </ErrorBoundary>
@@ -1250,7 +1321,12 @@ function GloobalId() {
             <Suspense fallback={<ScreenFallback />}>
               <SendMoneyScreen
                 onClose={() => setActiveScreen(null)}
-                sender={{ ...dialCountry, phoneNumber, symbolId: registeredUser?.symbolId || secureId }}
+                sender={{
+                  ...dialCountry,
+                  phoneNumber,
+                  symbolId: registeredUser?.symbolId || secureId,
+                  fullName: registeredUser?.fullName,
+                }}
               />
             </Suspense>
           </ErrorBoundary>
@@ -1308,6 +1384,83 @@ function GloobalId() {
             setLoginCountrySearch("");
           }}
         />
+      )}
+
+      {showIdExplain && (
+        <ExplainSheet title="What is a Gloobal ID?" onClose={() => setShowIdExplain(false)}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ borderRadius: T.radiusLg, background: T.surfaceAlt, border: `1px solid ${T.line}`, padding: "16px" }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink, marginBottom: 4 }}>Gloobal Symbols</div>
+              <div style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.6 }}>
+                Instead of ordinary digits or letters, a Gloobal ID is built from eight shapes we call Gloobal
+                Symbols — four math signs and four hollow/filled shapes:
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                {["−", "+", "×", "=", "○", "□", "●", "■"].map((s) => (
+                  <span
+                    key={s}
+                    style={{
+                      width: 34, height: 34, borderRadius: 10, background: T.surface, border: `1px solid ${T.line}`,
+                      display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 800, color: T.accent,
+                    }}
+                  >
+                    {s}
+                  </span>
+                ))}
+              </div>
+              <div style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.6, marginTop: 10 }}>
+                Twelve of these symbols, picked and ordered however you like, make up your own Gloobal ID —
+                yours to remember and share, in place of a phone number or account number.
+              </div>
+            </div>
+
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: 0.4 }}>
+              Two examples
+            </div>
+            {[
+              { label: "Example 1", code: "+−×=○□●■+−×=" },
+              { label: "Example 2", code: "●■○□+−×=●■○□" },
+            ].map((ex) => (
+              <div key={ex.label} style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: "14px 16px" }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: T.inkFaint, marginBottom: 6 }}>{ex.label}</div>
+                <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, letterSpacing: 2, fontFamily: T.fontDisplay }}>{ex.code}</div>
+              </div>
+            ))}
+          </div>
+        </ExplainSheet>
+      )}
+
+      {showReferralExplain && (
+        <ExplainSheet title="What is a referral?" onClose={() => setShowReferralExplain(false)}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ borderRadius: T.radiusLg, background: T.surfaceAlt, border: `1px solid ${T.line}`, padding: "16px" }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink, marginBottom: 4 }}>Your referral code</div>
+              <div style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.6 }}>
+                Your Gloobal ID also works as a referral code. Share it with a friend — when they register
+                using it, you&apos;re both connected inside your Referral Network in Profile.
+              </div>
+            </div>
+
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: 0.4 }}>
+              Benefits
+            </div>
+            {[
+              { title: "Earn together", body: "You and the friend you invite both get a welcome reward once they complete registration." },
+              { title: "Grow your network", body: "Everyone you refer shows up in My Referral Network, so you can track who's joined and what you've earned." },
+              { title: "No limit", body: "There's no cap on how many people you can refer — the more you invite, the more it adds up." },
+            ].map((b) => (
+              <div key={b.title} style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: "14px 16px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                <span style={{ width: 30, height: 30, borderRadius: 9, flexShrink: 0, background: T.positiveSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Gift size={15} color={T.positive} />
+                </span>
+                <span>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: T.ink }}>{b.title}</div>
+                  <div style={{ fontSize: 12, color: T.inkFaint, marginTop: 2, lineHeight: 1.5 }}>{b.body}</div>
+                </span>
+              </div>
+            ))}
+          </div>
+        </ExplainSheet>
       )}
 
       <style>{`

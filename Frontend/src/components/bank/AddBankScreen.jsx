@@ -15,6 +15,7 @@ import { FlagEmoji } from "../common/FlagComponents";
 import { GlobeHero } from "../common/GlobeHero";
 import { BANKS_BY_COUNTRY } from "../../constants/banks";
 import { ALL_COUNTRIES, COUNTRY_BY_ISO } from "../../constants/countries";
+import { ServiceLock } from "../common/Icons";
 
 // Add Bank is scoped to the user's registered country — the same country
 // they picked during registration (dialCountry). There is no country
@@ -42,14 +43,17 @@ export function buildGloobalBank(country) {
 // body makes React treat it as a brand-new component type on every
 // render, forcing every row to unmount/remount and replay its entrance
 // animation, which is what caused rows to "blink" while typing.
-export function BankRow({ bank, index, accent, isLinked, onSelect }) {
+// Every bank — Gloobal Bank included — is locked (red ServiceLock) until
+// real backend/live banking APIs are connected, the same pattern used for
+// telecom recharge and electricity operators. Nothing here can be linked
+// yet; tapping a row just surfaces the locked toast via onLockedTap.
+export function BankRow({ bank, index, accent, onLockedTap }) {
   return (
     <button
-      onClick={() => !isLinked && onSelect(bank)}
+      onClick={() => onLockedTap(bank)}
+      aria-label={`${bank.name} — locked`}
       className={`ab-bank-row relative w-full flex items-center gap-4 px-4 py-4 rounded-3xl border text-left transition-all ${
-        isLinked
-          ? "border-green-200 bg-green-50/50"
-          : accent
+        accent
           ? "border-violet-100 bg-gradient-to-r from-blue-50/70 to-violet-50/70 shadow-sm hover:shadow-md active:scale-[0.99]"
           : "border-slate-100 bg-white shadow-sm hover:shadow-md active:scale-[0.99]"
       }`}
@@ -59,20 +63,12 @@ export function BankRow({ bank, index, accent, isLinked, onSelect }) {
       <span className="flex-1 min-w-0 text-slate-800 text-[15.5px] font-semibold truncate">
         {bank.name}
       </span>
-      {isLinked ? (
-        <span className="w-7 h-7 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
-          <Check size={14} className="text-white" strokeWidth={3} />
-        </span>
-      ) : (
-        <ChevronRight size={20} className="text-slate-300 flex-shrink-0" />
-      )}
+      <ServiceLock size={18} />
     </button>
   );
 }
 function AddBankScreenBase({ onClose, country }) {
   const [query, setQuery] = useState("");
-  const [activeBank, setActiveBank] = useState(null);
-  const [linkedBanks, setLinkedBanks] = useState([]);
   const [toast, setToast] = useState(null);
 
   // Banks only ever come from the person's own registered country — there
@@ -89,10 +85,11 @@ function AddBankScreenBase({ onClose, country }) {
 
   const searching = query.trim().length > 0;
 
-  const handleLinked = (bank) => {
-    setLinkedBanks((prev) => (prev.includes(bank.id) ? prev : [...prev, bank.id]));
-    setActiveBank(null);
-    setToast(`${bank.name} linked ✓`);
+  // Every bank — Gloobal Bank, the country's top 5, and "Other bank" —
+  // is locked (red ServiceLock) until real backend/live banking APIs are
+  // connected. Tapping any of them just surfaces this toast.
+  const onLockedTap = () => {
+    setToast("Locked until live APIs connect");
     setTimeout(() => setToast(null), 2200);
   };
 
@@ -167,7 +164,7 @@ function AddBankScreenBase({ onClose, country }) {
 
         <div key={country.iso} className="px-5 flex flex-col gap-3">
           {/* Gloobal Bank — always first, regardless of country or search */}
-          <BankRow bank={gloobalBank} index={0} accent isLinked={linkedBanks.includes(gloobalBank.id)} onSelect={setActiveBank} />
+          <BankRow bank={gloobalBank} index={0} accent onLockedTap={onLockedTap} />
 
           {/* Country-specific top 5 */}
           <div className="flex items-center gap-2 mt-1 mb-0.5">
@@ -186,16 +183,17 @@ function AddBankScreenBase({ onClose, country }) {
           )}
 
           {filteredCountryBanks.map((bank, i) => (
-            <BankRow key={bank.id} bank={bank} index={i + 1} isLinked={linkedBanks.includes(bank.id)} onSelect={setActiveBank} />
+            <BankRow key={bank.id} bank={bank} index={i + 1} onLockedTap={onLockedTap} />
           ))}
 
           {searching && countryBanks.length > 0 && filteredCountryBanks.length === 0 && (
-            <p className="text-slate-400 text-[13.5px] py-1">No banks found for "{query}".</p>
+            <p className="text-slate-400 text-[13.5px] py-1">No banks found for &quot;{query}&quot;.</p>
           )}
 
           {!searching && (
             <button
-              onClick={() => setActiveBank({ id: "other", name: "Other bank", color: "#64748B", initials: "?", phone: `${country.dialCode} •••• •• 00` })}
+              onClick={onLockedTap}
+              aria-label="Other bank — locked"
               className="ab-bank-row relative w-full flex items-center gap-4 px-4 py-4 rounded-3xl border border-dashed border-slate-200 hover:border-violet-300 hover:bg-violet-50/30 active:scale-[0.99] transition-all text-left"
               style={{ animationDelay: `${(filteredCountryBanks.length + 1) * 45}ms` }}
             >
@@ -203,7 +201,7 @@ function AddBankScreenBase({ onClose, country }) {
                 <Landmark size={22} className="text-slate-400" />
               </div>
               <span className="flex-1 text-slate-500 text-[15.5px] font-semibold">Other bank</span>
-              <ChevronRight size={20} className="text-slate-300 flex-shrink-0" />
+              <ServiceLock size={18} />
             </button>
           )}
         </div>
@@ -224,14 +222,6 @@ function AddBankScreenBase({ onClose, country }) {
           </div>
         )}
       </div>
-
-      {activeBank && (
-        <LinkAccountFlow
-          bank={activeBank}
-          onClose={() => setActiveBank(null)}
-          onLinked={handleLinked}
-        />
-      )}
 
       {toast && (
         <div className="absolute bottom-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[13.5px] font-medium px-4 py-2.5 rounded-full shadow-lg z-50 whitespace-nowrap">

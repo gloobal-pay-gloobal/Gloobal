@@ -1,6 +1,16 @@
 import React, { useMemo } from "react";
 import { T } from "../../styles/theme";
 
+// The Send Money empty states leaned on DashboardAmbientBg before, but at
+// its normal low opacity a mostly-empty screen still read as blank. This
+// swaps in the same characters the dial pads themselves use — digits and
+// the Gloobal ID symbol set — each drawn from a vivid multi-color palette
+// (rather than the neutral/brand split) and in a wider range of sizes, so
+// the send money screen visibly echoes "you're dialing in a transfer".
+const DIAL_PAD_SYMBOLS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "−", "+", "×", "=", "○", "□", "●", "■"];
+
+const DIAL_PAD_COLORS = ["#7C3AED", "#3B6EF5", "#C026D3", "#F59E0B", "#10B981", "#EF4444", "#EC4899", "#0EA5E9"];
+
 export const FIN_SYMBOLS = ["+", "−", "×", "÷", "=", "₹", "$", "€", "£", "¥", "%", "#"];
 // Mostly dark neutrals per the brief, with a small chance of a brand hue.
 export const FIN_NEUTRAL_COLORS = ["#2A2A38", "#1F2333", "#14131F", "#3A3A48", "#20263D"];
@@ -16,7 +26,7 @@ export function finPick(arr) {
 // that trajectory and fades it in/out, so particles feel like they spawn
 // from an edge and dissolve rather than popping in place.
 export function makeFinSymbolParticle(i, opts) {
-  const { brandChance, glowChance, sizeMin, sizeMax, driftMin, driftMax, symbols = FIN_SYMBOLS, opacityMin = 0.06, opacityMax = 0.2 } = opts;
+  const { brandChance, glowChance, sizeMin, sizeMax, driftMin, driftMax, symbols = FIN_SYMBOLS, opacityMin = 0.06, opacityMax = 0.2, colors } = opts;
   const edge = finPick(["top", "bottom", "left", "right"]);
   const along = finRand(4, 96);
   const isBrand = Math.random() < brandChance;
@@ -29,7 +39,7 @@ export function makeFinSymbolParticle(i, opts) {
     edge,
     along,
     size: finRand(sizeMin, sizeMax),
-    color: isBrand ? finPick(FIN_BRAND_COLORS) : finPick(FIN_NEUTRAL_COLORS),
+    color: colors ? finPick(colors) : isBrand ? finPick(FIN_BRAND_COLORS) : finPick(FIN_NEUTRAL_COLORS),
     duration: finRand(10, 24),
     delay: finRand(-22, 0),
     rotateStart: finRand(-24, 24),
@@ -58,13 +68,14 @@ export function FinSymbolField({
   symbols = FIN_SYMBOLS,
   opacityMin = 0.06,
   opacityMax = 0.2,
+  colors,
 }) {
   const particles = useMemo(
     () =>
       Array.from({ length: count }, (_, i) =>
-        makeFinSymbolParticle(i, { brandChance, glowChance, sizeMin, sizeMax, driftMin, driftMax, symbols, opacityMin, opacityMax })
+        makeFinSymbolParticle(i, { brandChance, glowChance, sizeMin, sizeMax, driftMin, driftMax, symbols, opacityMin, opacityMax, colors })
       ),
-    [count, sizeMin, sizeMax, driftMin, driftMax, brandChance, glowChance, symbols, opacityMin, opacityMax]
+    [count, sizeMin, sizeMax, driftMin, driftMax, brandChance, glowChance, symbols, opacityMin, opacityMax, colors]
   );
 
   return (
@@ -210,16 +221,16 @@ export function SendMoneyAmbientBg() {
     <div aria-hidden="true" style={{ position: "absolute", inset: 0, overflow: "hidden", zIndex: 0, pointerEvents: "none" }}>
       <FinGeoField />
       <FinSymbolField
-        count={16}
-        sizeMin={18}
-        sizeMax={34}
-        driftMin={50}
-        driftMax={130}
-        brandChance={0.3}
-        glowChance={0.24}
-        symbols={CURRENCY_SYMBOLS}
-        opacityMin={0.35}
-        opacityMax={0.7}
+        count={20}
+        sizeMin={13}
+        sizeMax={38}
+        driftMin={45}
+        driftMax={140}
+        glowChance={0.22}
+        symbols={DIAL_PAD_SYMBOLS}
+        colors={DIAL_PAD_COLORS}
+        opacityMin={0.16}
+        opacityMax={0.4}
       />
     </div>
   );

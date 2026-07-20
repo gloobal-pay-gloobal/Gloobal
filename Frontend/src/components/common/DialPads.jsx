@@ -39,7 +39,7 @@ export function SymbolDialPad({ value, onChange, length, showLogo = true }) {
   const backTimerRef = useRef(null);
 
   const randomIdleDelay = () => 6000 + Math.random() * 14000; // 6s–20s, never fixed
-  const LOGO_SHOW_MS = 650; // logo face shows for under a second, then auto-flips back
+  const LOGO_SHOW_MS = 2000; // logo face shows for up to 2s, then auto-flips back
 
   const scheduleIdleFlip = () => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
@@ -54,7 +54,7 @@ export function SymbolDialPad({ value, onChange, length, showLogo = true }) {
   };
 
   useEffect(() => {
-    if (!showLogo) return; // ID-type dial pad: no idle flip, no logo, ever
+    if (!showLogo) return; // showLogo={false} opts a specific instance out, but every dial pad in the app uses the default (true) today
     scheduleIdleFlip();
     return () => {
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
@@ -118,19 +118,13 @@ export function SymbolDialPad({ value, onChange, length, showLogo = true }) {
     }
     stopMomentum();
     registerActivity();
-    // Pointer capture is deliberately NOT taken here. Capturing on the
-    // housing at pointerdown — before we know whether this is a tap or a
-    // drag — can retarget the eventual click event to the housing instead
-    // of the individual symbol button. Browsers disagree on this (see
-    // w3c/pointerevents#356): some touch engines still deliver the click
-    // to the real button, but desktop Chrome/Firefox redirect it to the
-    // capturing ancestor, which has no onClick — so taps silently do
-    // nothing on desktop while still working on phone. Deferring capture
-    // until real dragging is confirmed (see handlePointerMove) means a
-    // plain tap never captures the pointer, so its click always lands on
-    // the real button, on every device.
     const angle = angleFromCenter(e.clientX, e.clientY);
-    dragRef.current = { lastAngle: angle, lastTime: performance.now(), velocity: 0, moved: 0, captured: false };
+    // Note: the pointer is NOT captured here. Capturing on pointerdown
+    // retargets the follow-up click to the housing, which silently
+    // swallows tile taps on mouse input (touch synthesizes its click at
+    // the touch point, so phones worked while laptops didn't). Capture
+    // is taken in pointermove instead, only once a real drag begins.
+    dragRef.current = { pointerId: e.pointerId, captured: false, lastAngle: angle, lastTime: performance.now(), velocity: 0, moved: 0 };
     suppressClickRef.current = false;
   }
 
@@ -151,12 +145,9 @@ export function SymbolDialPad({ value, onChange, length, showLogo = true }) {
     setRotation(rotationRef.current);
     if (d.moved > 4) {
       suppressClickRef.current = true;
-      // Only now — once movement has actually crossed the drag threshold
-      // — do we take pointer capture, so the ring keeps following the
-      // finger/cursor even if it slides outside the housing's bounds.
       if (!d.captured) {
         d.captured = true;
-        housingRef.current?.setPointerCapture?.(e.pointerId);
+        housingRef.current?.setPointerCapture?.(d.pointerId);
       }
     }
   }
@@ -182,12 +173,18 @@ export function SymbolDialPad({ value, onChange, length, showLogo = true }) {
     else if (k && value.length < length) onChange(value + k);
   };
 
-  const radius = 58;
-  const buttonSize = 42;
+  // buttonSize was bumped up from 42 → 48 for easier tapping. radius was
+  // increased from 58 → 64 (larger buttons need more room around the
+  // circle or they'd overlap each other), and ringGap — the breathing
+  // room between the tile ring and the housing's inner boundary — was
+  // trimmed from 18 → 9 to absorb that difference, so ringSize/housingSize
+  // (the outer ring/coin) stays pixel-for-pixel identical to before.
+  const radius = 64;
+  const buttonSize = 48;
   const ringSize = radius * 2 + buttonSize;
-  const ringGap = 18; // breathing room between tile edges and the housing's inner boundary
+  const ringGap = 9; // breathing room between tile edges and the housing's inner boundary — trimmed to offset the bigger buttons above
   const housingSize = ringSize + 28 + ringGap * 2;
-  const logoSize = housingSize * 0.82; // fills nearly the whole back face
+  const logoSize = housingSize * 0.74; // a bit bigger than the quiet watermark, still short of filling the face
   const isBackShowing = showLogo && logoFlips % 2 === 1;
 
   return (
@@ -299,7 +296,7 @@ export function SymbolDialPad({ value, onChange, length, showLogo = true }) {
                         border: "1px solid rgba(124,58,237,0.18)",
                         background: "linear-gradient(160deg, #ffffff 0%, #f2effb 100%)",
                         color: T.ink,
-                        fontSize: 17,
+                        fontSize: 19,
                         fontWeight: 800,
                         display: "flex",
                         alignItems: "center",
@@ -486,8 +483,10 @@ export function CircularSymbolDial({ onPick }) {
 
   function handlePointerDown(e) {
     stopMomentum();
-    drumRef.current?.setPointerCapture?.(e.pointerId);
-    dragRef.current = { lastY: e.clientY, lastTime: performance.now(), velocity: 0, moved: 0 };
+    // Same capture-on-drag-only rule as the ring pad above: capturing
+    // here would retarget the follow-up click away from the tiles and
+    // break taps for mouse input.
+    dragRef.current = { pointerId: e.pointerId, captured: false, lastY: e.clientY, lastTime: performance.now(), velocity: 0, moved: 0 };
     setDragging(true);
   }
 
@@ -500,6 +499,10 @@ export function CircularSymbolDial({ onPick }) {
     const stepDelta = dy * DIAL_ROTATE_SENSITIVITY;
     d.velocity = (stepDelta / dt) * 16.6; // normalize to "degrees per ~frame"
     d.moved += Math.abs(dy);
+    if (d.moved > 4 && !d.captured) {
+      d.captured = true;
+      drumRef.current?.setPointerCapture?.(d.pointerId);
+    }
     d.lastY = e.clientY;
     d.lastTime = now;
     const newAngle = angleRef.current + stepDelta;
