@@ -24,6 +24,7 @@ import { T } from "./styles/theme";
 import globalIdLogo from "./assets/globalid-logo.png";
 import { startRegistration, startAuthentication } from "@simplewebauthn/browser";
 import { warmUpBackend } from "./services/httpClient";
+import { loadSession, saveSession, clearSession } from "./services/session";
 import {
   sendOtp,
   verifyOtp,
@@ -65,9 +66,16 @@ function GloobalId() {
   const dimsRef = useRef({ w: 0, h: 0 });
   const frameRef = useRef(0);
 
+  // Restore a persisted session once, at first render. If someone was
+  // signed in last time, this puts them straight back on the dashboard
+  // instead of the phone screen — the fix for "refresh / relaunch logs me
+  // out." The function-reference initializer makes React read localStorage
+  // exactly once (lazy init), not on every render.
+  const [restoredSession] = useState(loadSession);
+
   const [, forceRender] = useState(0);
   const [verifying, setVerifying] = useState(false);
-  const [stage, setStage] = useState("phone"); // phone -> otp -> secureId -> referral -> pin -> dashboard (registration); secureId -> loginAuth -> dashboard (login)
+  const [stage, setStage] = useState(restoredSession ? "dashboard" : "phone"); // phone -> otp -> secureId -> referral -> pin -> dashboard (registration); secureId -> loginAuth -> dashboard (login)
   const [flipping, setFlipping] = useState(false);
   const [secureId, setSecureId] = useState("");
   const [referralCode, setReferralCode] = useState("");
@@ -86,7 +94,7 @@ function GloobalId() {
   // has actually succeeded — symbolId here is the source of truth for
   // every downstream screen (Dashboard, Send Money), not just whatever's
   // currently typed into the dial pad.
-  const [registeredUser, setRegisteredUser] = useState(null);
+  const [registeredUser, setRegisteredUser] = useState(restoredSession?.user || null);
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState(null);
   const [loginError, setLoginError] = useState(null);
@@ -113,7 +121,7 @@ function GloobalId() {
   // is complete this is effectively locked until a future settings screen
   // explicitly offers to change it.
   const [dialCountry, setDialCountry] = useState(() => TOP_COUNTRIES.find((c) => c.iso === "IN") || TOP_COUNTRIES[0]);
-  const [phoneNumber, setPhoneNumber] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState(restoredSession?.phoneNumber || "");
   const [showPicker, setShowPicker] = useState(false);
   const [phoneDialOpen, setPhoneDialOpen] = useState(false);
   const [showLoginFace, setShowLoginFace] = useState(false);
@@ -346,6 +354,19 @@ function GloobalId() {
     warmUpBackend();
   }, []);
 
+  // Persist the session whenever the person is on the dashboard with a
+  // known account, so the next remount (refresh, PWA relaunch, SW update
+  // reload) lands them straight back here instead of the phone screen.
+  // Keyed on the dashboard being the live stage — every path that reaches
+  // it (registration, PIN login, biometric login) flows through here, so
+  // there's no need to sprinkle saveSession into each handler. Logout
+  // clears the stored session in handleStartOver.
+  useEffect(() => {
+    if (stage === "dashboard" && registeredUser?.symbolId) {
+      saveSession(registeredUser, phoneNumber);
+    }
+  }, [stage, registeredUser, phoneNumber]);
+
   useEffect(() => {
     const stage = stageRef.current;
     dimsRef.current = { w: stage.clientWidth, h: stage.clientHeight };
@@ -501,6 +522,10 @@ function GloobalId() {
   };
 
   const handleStartOver = () => {
+    // Explicit logout — drop the persisted session so a later reload does
+    // NOT silently sign back in. Everything below returns in-memory state
+    // to its first-run defaults.
+    clearSession();
     setVerifying(false);
     setPhoneNumber("");
     setPhoneDialOpen(false);
