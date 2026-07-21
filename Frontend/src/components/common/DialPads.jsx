@@ -184,7 +184,10 @@ export function SymbolDialPad({ value, onChange, length, showLogo = true }) {
   const ringSize = radius * 2 + buttonSize;
   const ringGap = 9; // breathing room between tile edges and the housing's inner boundary — trimmed to offset the bigger buttons above
   const housingSize = ringSize + 28 + ringGap * 2;
-  const logoSize = housingSize * 0.74; // a bit bigger than the quiet watermark, still short of filling the face
+  // Dialled back from 0.74 → 0.40 (a ~46% reduction): at the old size the
+  // mark filled most of the coin face and competed with the dial itself.
+  // It now reads as a quiet watermark, which is what this face is for.
+  const logoSize = housingSize * 0.4;
   const isBackShowing = showLogo && logoFlips % 2 === 1;
 
   return (
