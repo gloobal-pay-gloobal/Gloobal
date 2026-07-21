@@ -575,11 +575,29 @@ function GloobalId() {
             zIndex: 20,
           }}
         >
-          <img
-            src={globalIdLogo}
-            alt="Gloobal ID"
-            style={{ display: "block", width: "clamp(46px, 12vw, 52px)", height: "auto", objectFit: "contain" }}
-          />
+          {/* The mark sits in its own card rather than floating loose on
+              the background — same surface/border/radius/shadow language
+              as every other container in the app, so it reads as a
+              deliberate brand lockup instead of a stray image. */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 10,
+              borderRadius: T.radiusMd,
+              background: T.surface,
+              border: `1px solid ${T.line}`,
+              boxShadow: T.shadowCard,
+              boxSizing: "border-box",
+            }}
+          >
+            <img
+              src={globalIdLogo}
+              alt="Gloobal ID"
+              style={{ display: "block", width: "clamp(46px, 12vw, 52px)", height: "auto", objectFit: "contain" }}
+            />
+          </div>
         </div>
       )}
 
@@ -596,9 +614,11 @@ function GloobalId() {
             left: "50%",
             transform: "translateX(-50%)",
             zIndex: 20,
-            fontSize: 22,
+            fontSize: "clamp(26px, 8vw, 32px)",
             fontWeight: 800,
             letterSpacing: 0.5,
+            lineHeight: 1.1,
+            whiteSpace: "nowrap",
             color: T.ink,
             fontFamily: T.fontDisplay,
           }}
@@ -606,6 +626,112 @@ function GloobalId() {
           Gl<span style={{ color: T.accent2 }}>o</span>
           <span style={{ color: "#C026D3" }}>o</span>bal ID
         </div>
+      )}
+
+      {/* The same "Gloobal ID" wordmark carried onto the Secure ID and
+          Referral steps, so the brand heading reads identically on every
+          screen of the flow instead of only on the landing page. Same
+          type scale as the phone step's wordmark above. */}
+      {(stage === "secureId" || stage === "referral") && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(22px + env(safe-area-inset-top, 0px))",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 20,
+            fontSize: "clamp(26px, 8vw, 32px)",
+            fontWeight: 800,
+            letterSpacing: 0.5,
+            lineHeight: 1.1,
+            whiteSpace: "nowrap",
+            color: T.ink,
+            fontFamily: T.fontDisplay,
+          }}
+        >
+          Gl<span style={{ color: T.accent2 }}>o</span>
+          <span style={{ color: "#C026D3" }}>o</span>bal ID
+        </div>
+      )}
+
+      {/* Screen-level info corner — pinned to the top-right of the stage
+          rather than to the card's own corner, where it used to collide
+          with the eye toggle and the flip button. Same explanation
+          overlays as before; only the anchor moved. */}
+      {((stage === "secureId" && !isLoginAttempt) || stage === "referral") && (
+        <button
+          onClick={() => (stage === "referral" ? setShowReferralExplain(true) : setShowIdExplain(true))}
+          aria-label={stage === "referral" ? "What is a referral?" : "What is a Gloobal ID?"}
+          className="v2-tap"
+          style={{
+            position: "absolute",
+            top: "calc(18px + env(safe-area-inset-top, 0px))",
+            right: "calc(18px + env(safe-area-inset-right, 0px))",
+            width: 36,
+            height: 36,
+            borderRadius: "50%",
+            border: `1.5px solid ${T.line}`,
+            background: T.surface,
+            color: T.accent,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            boxShadow: T.shadowRaised,
+            zIndex: 30,
+          }}
+        >
+          <Info size={17} />
+        </button>
+      )}
+
+      {/* Back navigation for the two steps that previously had none:
+          Secure ID goes back to the OTP step it came from, and Referral
+          goes back to the Secure ID step. Both sit opposite the info
+          corner so neither control crowds the other. */}
+      {(stage === "secureId" || stage === "referral") && (
+        <button
+          onClick={() => {
+            if (stage === "referral") return flipTo("secureId");
+            // Registration reached this card from the OTP step, so that's
+            // where back belongs. A login attempt never passed through
+            // OTP — it flipped straight here from the phone card — so it
+            // has to unwind to "phone" instead, and drop the login flag
+            // so the card comes back in its registration face.
+            if (isLoginAttempt) {
+              setIsLoginAttempt(false);
+              setShowLoginFace(false);
+              setLoginEntryMode("id");
+              setLoginMobileBuffer("");
+              setLoginError(null);
+              return flipTo("phone");
+            }
+            return flipTo("otp");
+          }}
+          aria-label="Back"
+          className="v2-tap"
+          style={{
+            position: "absolute",
+            top: "calc(18px + env(safe-area-inset-top, 0px))",
+            left: "calc(18px + env(safe-area-inset-left, 0px))",
+            width: 36,
+            height: 36,
+            borderRadius: "50%",
+            border: `1.5px solid ${T.line}`,
+            background: T.surface,
+            color: T.ink,
+            fontSize: 19,
+            lineHeight: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            boxShadow: T.shadowRaised,
+            zIndex: 30,
+          }}
+        >
+          ‹
+        </button>
       )}
 
       <div
@@ -782,66 +908,10 @@ function GloobalId() {
                 </span>
               )}
 
-              {/* Info corner — same spot the phone step's flip-to-login
-                  icon uses, but opens an explanation overlay instead:
-                  what the symbol characters are called plus two worked
-                  examples, only during actual creation (not while
-                  logging in with an existing Gloobal ID). */}
-              {stage === "secureId" && !isLoginAttempt && (
-                <button
-                  onClick={() => setShowIdExplain(true)}
-                  aria-label="What is a Gloobal ID?"
-                  className="v2-tap"
-                  style={{
-                    position: "absolute",
-                    top: -18,
-                    right: -16,
-                    width: 36,
-                    height: 36,
-                    borderRadius: "50%",
-                    border: `1.5px solid ${T.line}`,
-                    background: T.surface,
-                    color: T.accent,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    cursor: "pointer",
-                    boxShadow: T.shadowRaised,
-                    zIndex: 3,
-                  }}
-                >
-                  <Info size={17} />
-                </button>
-              )}
-
-              {/* Same info-corner pattern on the Referral card — explains
-                  what a referral is and what it's worth. */}
-              {stage === "referral" && (
-                <button
-                  onClick={() => setShowReferralExplain(true)}
-                  aria-label="What is a referral?"
-                  className="v2-tap"
-                  style={{
-                    position: "absolute",
-                    top: -18,
-                    right: -16,
-                    width: 36,
-                    height: 36,
-                    borderRadius: "50%",
-                    border: `1.5px solid ${T.line}`,
-                    background: T.surface,
-                    color: T.accent,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    cursor: "pointer",
-                    boxShadow: T.shadowRaised,
-                    zIndex: 3,
-                  }}
-                >
-                  <Info size={17} />
-                </button>
-              )}
+              {/* The info button that used to sit on this card's top-right
+                  corner now lives at the screen's own top-right instead
+                  (see the screen-level info corner above), so it can't
+                  crowd the card's eye/flip controls. */}
 
               {stage === "otp" && (
                 <span
@@ -1142,7 +1212,7 @@ function GloobalId() {
                 <SubmitButton
                   onClick={handleSubmitSecureId}
                   disabled={secureId.length !== SECURE_ID_LENGTH}
-                  label="Submit"
+                  label="IN"
                 />
               </div>
             )}
@@ -1163,7 +1233,7 @@ function GloobalId() {
                 <SubmitButton
                   onClick={handleSubmitReferral}
                   disabled={referralCode.length !== REFERRAL_LENGTH || registering}
-                  label={registering ? "Submitting…" : undefined}
+                  label={registering ? "Submitting…" : "IN"}
                 />
                 <button
                   onClick={handleSkipReferral}

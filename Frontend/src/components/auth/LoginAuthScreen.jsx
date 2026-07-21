@@ -36,6 +36,15 @@ export function LoginAuthScreen({
   status,
   onSkip,
 }) {
+  // The device-security setup screen leads with these two buttons — they
+  // are the whole screen, not an alternative to a dial pad — so they get
+  // a noticeably larger target there. In login mode they stay at their
+  // original size, where they sit *below* a PIN pad and shouldn't
+  // outweigh it.
+  const isSetup = mode === "setup";
+  const bioCircleSize = isSetup ? 88 : 56;
+  const bioIconSize = isSetup ? 44 : 26;
+
   return (
     <div
       style={{
@@ -70,6 +79,23 @@ export function LoginAuthScreen({
           </p>
         ) : (
           <>
+            {/* Same "Gloobal ID" heading the landing, Secure ID, and
+                Referral steps carry, so this screen is recognisably part
+                of the same flow rather than an unlabelled PIN prompt. */}
+            <span
+              style={{
+                fontSize: "clamp(22px, 7vw, 28px)",
+                fontWeight: 800,
+                letterSpacing: 0.5,
+                lineHeight: 1.1,
+                whiteSpace: "nowrap",
+                color: T.ink,
+                fontFamily: T.fontDisplay,
+              }}
+            >
+              Gl<span style={{ color: T.accent2 }}>o</span>
+              <span style={{ color: "#C026D3" }}>o</span>bal ID
+            </span>
             <PinChipCard length={length} value={value} revealed={revealed} onToggleReveal={onToggleReveal} />
             <PhoneDialPad value={value} onChange={onChange} minLength={length} maxLength={length} onSubmit={onSubmit} />
 
@@ -103,8 +129,8 @@ export function LoginAuthScreen({
           >
             <span
               style={{
-                width: 56,
-                height: 56,
+                width: bioCircleSize,
+                height: bioCircleSize,
                 borderRadius: "50%",
                 border: `1.5px solid ${T.line}`,
                 background: T.surface,
@@ -116,9 +142,9 @@ export function LoginAuthScreen({
                 animation: scanning ? "iconAttention 0.7s ease-in-out infinite" : "none",
               }}
             >
-              <ScanFace size={26} />
+              <ScanFace size={bioIconSize} />
             </span>
-            <span style={{ fontSize: 10.5, fontWeight: 700, color: T.inkFaint }}>Face ID</span>
+            <span style={{ fontSize: isSetup ? 12.5 : 10.5, fontWeight: 700, color: T.inkFaint }}>Face ID</span>
           </button>
 
           <button
@@ -138,8 +164,8 @@ export function LoginAuthScreen({
           >
             <span
               style={{
-                width: 56,
-                height: 56,
+                width: bioCircleSize,
+                height: bioCircleSize,
                 borderRadius: "50%",
                 border: `1.5px solid ${T.line}`,
                 background: T.surface,
@@ -151,9 +177,9 @@ export function LoginAuthScreen({
                 animation: scanning ? "iconAttention 0.7s ease-in-out infinite" : "none",
               }}
             >
-              <Fingerprint size={26} />
+              <Fingerprint size={bioIconSize} />
             </span>
-            <span style={{ fontSize: 10.5, fontWeight: 700, color: T.inkFaint }}>Fingerprint</span>
+            <span style={{ fontSize: isSetup ? 12.5 : 10.5, fontWeight: 700, color: T.inkFaint }}>Fingerprint</span>
           </button>
         </div>
 

@@ -77,7 +77,10 @@ async function registerAccount(page) {
   await expect(page.getByRole("button", { name: "Symbol −", exact: true })).toBeVisible({ timeout: 60_000 });
 
   await tapSymbols(page, secureId);
-  await page.getByRole("button", { name: "Submit", exact: true }).click();
+  // The Secure ID step's pill button reads "IN" (was "Submit") — founder
+  // UI pass. Its accessible name comes from that text, so it stays
+  // distinct from the dial pad's own IN key, which is labelled "Log in".
+  await page.getByRole("button", { name: "IN", exact: true }).click();
 
   // Referral stage — skipping fires POST /api/register-symbol.
   await expect(page.getByRole("button", { name: /Skip for now/i })).toBeVisible({ timeout: 30_000 });
