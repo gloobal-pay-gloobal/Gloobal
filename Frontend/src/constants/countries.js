@@ -219,6 +219,27 @@ export const ALL_COUNTRIES = [...TOP_COUNTRIES, ...REST_COUNTRIES];
 // global coverage) looks a country up here instead of keeping its own copy
 // of names/flags, so the data is always identical everywhere.
 export const COUNTRY_BY_ISO = Object.fromEntries(ALL_COUNTRIES.map((c) => [c.iso, c]));
+// Reads the country calling code back off a stored mobile number
+// ("+918114491364" -> "+91"). The longest matching dial code wins, so
+// +1868 (Trinidad) is preferred over +1 when both prefix the same number.
+// Used at login to check which country an account is actually registered
+// under, instead of trusting whichever flag happens to be selected.
+export function dialCodeFromNumber(mobileNumber) {
+  const raw = String(mobileNumber || "").replace(/[\s-]/g, "");
+  if (!raw.startsWith("+")) return null;
+  let best = null;
+  for (const c of ALL_COUNTRIES) {
+    if (raw.startsWith(c.dialCode) && (!best || c.dialCode.length > best.length)) best = c.dialCode;
+  }
+  return best;
+}
+// The country record behind a stored mobile number, or null if its dial
+// code doesn't match any country we know.
+export function countryFromNumber(mobileNumber) {
+  const code = dialCodeFromNumber(mobileNumber);
+  if (!code) return null;
+  return ALL_COUNTRIES.find((c) => c.dialCode === code) || null;
+}
 // The one search predicate used by every country search box in the app
 // (registration's country picker, and the Gloobal Coverage search) so
 // ordering/matching behavior is identical everywhere a country is searched.

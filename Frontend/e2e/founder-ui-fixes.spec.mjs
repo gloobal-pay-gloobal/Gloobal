@@ -43,7 +43,16 @@ async function mockBackend(page) {
     if (url.includes("/api/register-symbol")) return route.fulfill(json({ user: FAKE_USER }, 201));
     if (url.includes("/api/pin/set")) return route.fulfill(json({ user: FAKE_USER }));
     if (url.includes("/api/login")) return route.fulfill(json({ user: FAKE_USER }));
-    if (url.includes("/api/users/resolve")) return route.fulfill(json({ success: true, user: FAKE_USER }));
+    // Resolve answers by identifier. A mobile number belongs to the fake
+    // account; the Secure ID being *created* must come back unclaimed —
+    // the ID-creation step now checks availability through this same
+    // endpoint, and an ID that resolves to someone is by definition one
+    // you cannot register.
+    if (url.includes("/api/users/resolve")) {
+      const identifier = decodeURIComponent(new URL(url).searchParams.get("identifier") || "");
+      const isMobile = /^\+?\d+$/.test(identifier);
+      return route.fulfill(isMobile ? json({ success: true, user: FAKE_USER }) : json({ user: null }, 404));
+    }
     if (url.includes("/api/profile/")) return route.fulfill(json({ user: FAKE_USER }));
     if (url.includes("/api/transactions/history/"))
       return route.fulfill(json({ success: true, transactions: [], count: 0 }));

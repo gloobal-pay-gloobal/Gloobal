@@ -109,6 +109,27 @@ export async function resolveUser(identifier) {
   }
 }
 
+/** Is this Gloobal ID still free to claim?
+ *
+ * Built on the resolve endpoint that already exists rather than a new
+ * backend route: a symbolId that resolves to somebody is, by definition,
+ * already taken. Anything that isn't a clear "this belongs to someone"
+ * answer — a 404, a cold-start timeout, a malformed response — counts as
+ * available, because POST /api/register-symbol remains the real
+ * uniqueness authority. A flaky lookup must never lock someone out of
+ * registering an ID that is genuinely free.
+ */
+export async function checkSymbolAvailability(symbolId) {
+  try {
+    const result = await apiClient.get(`/api/users/resolve?identifier=${encodeURIComponent(symbolId)}`, {
+      timeoutMs: LOGIN_TIMEOUT_MS,
+    });
+    return { available: !result.user, user: result.user || null };
+  } catch {
+    return { available: true, user: null };
+  }
+}
+
 /** POST /api/transactions/send — PIN-verified server-side; this is the
  * one real money-moving call in the app. */
 export async function sendTransaction(payload) {
