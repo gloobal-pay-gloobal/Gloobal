@@ -16,15 +16,18 @@ import { OTP_LENGTH } from "./components/bank/LinkAccountFlow";
 import { CyclingBadge, MaskEyeIcon, SubmitButton, SymbolChipRow } from "./components/common/CodeEntry";
 import { PhoneDialPad, SymbolDialPad } from "./components/common/DialPads";
 import { FlagEmoji, FlagSignShape } from "./components/common/FlagComponents";
+import { IdSuggestionsPanel, LastLoginBar } from "./components/common/GapPanels";
 import { AddBankScreen, DashboardScreen, GloobalCoverageScreen, SendMoneyScreen } from "./lazyScreens";
 import { ErrorBoundary } from "./pwa/ErrorBoundary";
 import { ScreenFallback } from "./pwa/ScreenFallback";
-import { ALL_COUNTRIES, TOP_COUNTRIES, mobileDigitRange } from "./constants/countries";
+import { ALL_COUNTRIES, TOP_COUNTRIES, dialCodeFromNumber, mobileDigitRange } from "./constants/countries";
 import { T } from "./styles/theme";
 import globalIdLogo from "./assets/globalid-logo.png";
 import { startRegistration, startAuthentication } from "@simplewebauthn/browser";
 import { warmUpBackend } from "./services/httpClient";
 import { loadSession, saveSession, clearSession } from "./services/session";
+import { generateIdSuggestions } from "./lib/idSuggestions";
+import { formatLastLogin, readLastLogin, recordLastLogin } from "./lib/lastLogin";
 import {
   sendOtp,
   verifyOtp,
@@ -32,6 +35,8 @@ import {
   setPin as apiSetPin,
   login as apiLogin,
   resolveUser,
+  getProfile,
+  checkSymbolAvailability,
   passkeyRegisterOptions,
   passkeyRegisterVerify,
   passkeyAuthOptions,
@@ -57,6 +62,12 @@ function normalizeMobileForApi(dialCountry, phoneNumber) {
 // a "new" words array every time.
 const LOGIN_BADGE_WORDS = ["Login", "Gloobal", "Id"];
 const CREATE_BADGE_WORDS = ["Create", "Secure", "Gloobal", "Id"];
+
+// Shown when a mobile-number login can't be matched to a registered
+// account under the selected flag. Deliberately names the country code:
+// the common cause is the right digits behind the wrong country, not a
+// typo in the number.
+const NO_ACCOUNT_FOR_NUMBER = "No account found for this number. Check your country code.";
 
 function GloobalId() {
   const stageRef = useRef(null);
@@ -159,6 +170,27 @@ function GloobalId() {
   const [loginAuthPin, setLoginAuthPin] = useState("");
   const [loginAuthRevealed, setLoginAuthRevealed] = useState(false);
   const [loginAuthScanning, setLoginAuthScanning] = useState(false);
+  // --- Gloobal ID availability + suggestions (registration only) --------
+  // null while nothing is worth checking, then "checking" | "available" |
+  // "taken" once a full 12-symbol ID has been entered. A taken ID gets two
+  // tappable near-misses instead of a dead end.
+  const [idAvailability, setIdAvailability] = useState(null);
+  const [idSuggestions, setIdSuggestions] = useState([]);
+  // --- Last-login bar (login by Gloobal ID only) ------------------------
+  // null = hidden. { at: null } = the ID is recognized but has never been
+  // signed into on this device, which reads as "First time logging in".
+  const [lastLoginInfo, setLastLoginInfo] = useState(null);
+  // --- Country lock (login by mobile number only) -----------------------
+  // Once a typed number has been matched to a registered account, the flag
+  // chip is frozen on the country that account actually belongs to, so the
+  // same digits can't be replayed under a different country code.
+  const [loginCountryLocked, setLoginCountryLocked] = useState(false);
+  const [loginMobileResolved, setLoginMobileResolved] = useState(null);
+  // Mirrors the two above outside React state so the resolve can be
+  // awaited inline by the IN key without racing the re-render, and so the
+  // same (country, number) pair is never looked up twice.
+  const loginResolveKeyRef = useRef(null);
+  const loginMobileResolvedRef = useRef(null);
 
   const SECURE_ID_LENGTH = 12;
   const REFERRAL_LENGTH = 12;
@@ -181,27 +213,82 @@ function GloobalId() {
   const [loginMinLen, loginMaxLen] = mobileDigitRange(effectiveLoginCountry.iso);
   const loginMobileComplete = loginMobileBuffer.length >= loginMinLen;
 
+  // Forgets whatever the last mobile-number lookup concluded, so a
+  // different number (or a different country for the same digits) is
+  // looked up fresh and the flag chip becomes editable again.
+  const resetLoginMobileResolution = () => {
+    loginResolveKeyRef.current = null;
+    loginMobileResolvedRef.current = null;
+    setLoginMobileResolved(null);
+    setLoginCountryLocked(false);
+    setLoginError(null);
+  };
+
   // Real GET /api/users/resolve for mobile-number login — finds the
-  // Secure ID behind the typed mobile number before continuing into the
-  // same PIN/biometric step the direct-Secure-ID path uses. The resolved
-  // symbolId is stored in `secureId` (the same field the ID-entry path
-  // fills in) so handleSubmitLoginAuth/handleBiometricVerify below don't
-  // need to know which path got them there.
+  // Secure ID behind the typed mobile number, and settles which country
+  // the account is actually registered under.
+  //
+  // The account's stored mobileNumber is the authority here, not the flag
+  // the person happened to pick: registering with India +91 8114491364 and
+  // then logging in as UK +44 8114491364 has to fail, which it does in two
+  // independent ways — the lookup for +448114491364 finds nobody, and even
+  // if a lookup did answer, the calling code read back off the stored
+  // number wouldn't match the selected one.
+  //
+  // Runs at most once per (country, number) pair; the answer is cached in
+  // refs so the IN key can await it without a second round trip.
+  const resolveLoginMobile = async () => {
+    const key = `${effectiveLoginCountry.dialCode}:${loginMobileBuffer}`;
+    if (loginResolveKeyRef.current === key) return loginMobileResolvedRef.current;
+    loginResolveKeyRef.current = key;
+
+    setResolvingMobile(true);
+    setLoginError(null);
+    try {
+      const identifier = normalizeMobileForApi(effectiveLoginCountry, loginMobileBuffer);
+      const user = await resolveUser(identifier);
+      const registeredDial = dialCodeFromNumber(user.mobileNumber);
+      if (registeredDial && registeredDial !== effectiveLoginCountry.dialCode) {
+        // Right digits, wrong flag. Left unlocked on purpose — locking the
+        // picker here would trap the person on the very country they need
+        // to change.
+        loginMobileResolvedRef.current = null;
+        setLoginMobileResolved(null);
+        setLoginCountryLocked(false);
+        setLoginError(NO_ACCOUNT_FOR_NUMBER);
+        return null;
+      }
+      const resolved = { symbolId: user.symbolId, dialCode: registeredDial || effectiveLoginCountry.dialCode };
+      loginMobileResolvedRef.current = resolved;
+      setLoginMobileResolved(resolved);
+      setLoginCountryLocked(true);
+      return resolved;
+    } catch {
+      loginMobileResolvedRef.current = null;
+      setLoginMobileResolved(null);
+      setLoginCountryLocked(false);
+      setLoginError(NO_ACCOUNT_FOR_NUMBER);
+      return null;
+    } finally {
+      setResolvingMobile(false);
+    }
+  };
+
+  // The resolved symbolId is stored in `secureId` (the same field the
+  // ID-entry path fills in) so handleSubmitLoginAuth/handleBiometricVerify
+  // below don't need to know which path got them there.
   const handleSubmitSecureId = async () => {
     if (isLoginAttempt && loginEntryMode === "mobile") {
       if (!loginMobileComplete || resolvingMobile) return;
-      setLoginError(null);
-      setResolvingMobile(true);
-      try {
-        const identifier = normalizeMobileForApi(effectiveLoginCountry, loginMobileBuffer);
-        const resolved = await resolveUser(identifier);
-        setSecureId(resolved.symbolId);
-        setResolvingMobile(false);
-        flipTo("loginAuth");
-      } catch (err) {
-        setResolvingMobile(false);
-        setLoginError(err instanceof Error ? err.message : "No Gloobal ID found for that mobile number.");
-      }
+      // Usually already settled by the effect below, which fires the
+      // moment a complete number has been dialled; this covers the case
+      // where IN is tapped before that lookup finished.
+      const resolved = loginMobileResolved || (await resolveLoginMobile());
+      // No match under the selected country — the inline error says why,
+      // and the login does not proceed.
+      if (!resolved) return;
+      setSecureId(resolved.symbolId);
+      flipTo("loginAuth");
       return;
     }
     if (secureId.length !== SECURE_ID_LENGTH) return;
@@ -210,6 +297,9 @@ function GloobalId() {
       flipTo("loginAuth");
       return;
     }
+    // A Gloobal ID that's already claimed can't be registered, so the
+    // creation step stops here and offers the suggestions instead.
+    if (idAvailability === "taken") return;
     flipTo("referral");
   };
 
@@ -274,6 +364,8 @@ function GloobalId() {
     try {
       const result = await apiLogin(secureId, loginAuthPin);
       setRegisteredUser(result.user);
+      // Stamps the timestamp the next login screen will show back.
+      recordLastLogin(result.user?.symbolId || secureId);
       setVerifying(false);
       setLoginAuthPin("");
       flipTo("dashboard");
@@ -307,6 +399,7 @@ function GloobalId() {
       if (!verify.verified) throw new Error("Device authentication failed.");
       const profile = await resolveUser(secureId);
       setRegisteredUser(profile);
+      recordLastLogin(profile?.symbolId || secureId);
       setLoginAuthScanning(false);
       setLoginAuthStatus(null);
       setLoginAuthPin("");
@@ -366,6 +459,71 @@ function GloobalId() {
       saveSession(registeredUser, phoneNumber);
     }
   }, [stage, registeredUser, phoneNumber]);
+
+  // Settle the registered country as soon as a complete number has been
+  // dialled — the equivalent of "on blur" for a screen whose number field
+  // is a dial pad rather than a text input, and well before IN is tapped.
+  useEffect(() => {
+    if (stage !== "secureId" || !isLoginAttempt || loginEntryMode !== "mobile") return;
+    if (loginMobileBuffer.length < loginMinLen) return;
+    resolveLoginMobile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, isLoginAttempt, loginEntryMode, loginMobileBuffer, loginMinLen, effectiveLoginCountry.dialCode]);
+
+  // Is the Gloobal ID being created still free? Registration only — on the
+  // login face a 12-symbol ID is expected to already exist. Re-runs
+  // whenever the ID changes, which is also what clears a stale "taken"
+  // panel the moment someone starts editing.
+  useEffect(() => {
+    if (stage !== "secureId" || isLoginAttempt) return;
+    if (secureId.length !== SECURE_ID_LENGTH) {
+      setIdAvailability(null);
+      setIdSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    setIdAvailability("checking");
+    checkSymbolAvailability(secureId).then(({ available }) => {
+      if (cancelled) return;
+      setIdAvailability(available ? "available" : "taken");
+      setIdSuggestions(available ? [] : generateIdSuggestions(secureId, SECURE_ID_LENGTH));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [stage, isLoginAttempt, secureId]);
+
+  // Last-login lookup for the login-by-Gloobal-ID face. Purely
+  // informational: any failure just hides the bar, and none of it can
+  // block or delay the login itself.
+  useEffect(() => {
+    if (stage !== "secureId" || !isLoginAttempt || loginEntryMode !== "id") return;
+    if (secureId.length !== SECURE_ID_LENGTH) {
+      setLastLoginInfo(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      let profile;
+      try {
+        profile = await getProfile(secureId);
+      } catch {
+        // Unrecognized ID (or an unreachable backend) — no bar at all,
+        // rather than a bar claiming a first-time login for an ID that may
+        // not exist.
+        if (!cancelled) setLastLoginInfo(null);
+        return;
+      }
+      if (cancelled) return;
+      // The backend has no last-login field today, so this reads it if one
+      // ever appears and otherwise falls back to what this device recorded
+      // on the previous successful sign-in.
+      setLastLoginInfo({ at: profile.lastLoginAt || profile.lastLogin || readLastLogin(secureId) || null });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [stage, isLoginAttempt, loginEntryMode, secureId]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -551,6 +709,10 @@ function GloobalId() {
     setDeviceSetupStatus(null);
     setLoginAuthPin("");
     setLoginAuthScanning(false);
+    setIdAvailability(null);
+    setIdSuggestions([]);
+    setLastLoginInfo(null);
+    resetLoginMobileResolution();
     flipTo("phone");
   };
 
@@ -825,6 +987,7 @@ function GloobalId() {
                     setLoginEntryMode("id");
                     setLoginMobileBuffer("");
                     setLoginMobileCountry(null);
+                    resetLoginMobileResolution();
                     flipTo("secureId");
                   }}
                 />
@@ -857,6 +1020,7 @@ function GloobalId() {
                     setLoginEntryMode("id");
                     setLoginMobileBuffer("");
                     setLoginMobileCountry(null);
+                    resetLoginMobileResolution();
                     flipTo("secureId");
                   }}
                   aria-label="Flip to log in"
@@ -1079,7 +1243,10 @@ function GloobalId() {
                   toggle, and visibly rotates on tap. */}
               {stage === "secureId" && isLoginAttempt && (
                 <button
-                  onClick={() => setLoginEntryMode((m) => (m === "id" ? "mobile" : "id"))}
+                  onClick={() => {
+                    resetLoginMobileResolution();
+                    setLoginEntryMode((m) => (m === "id" ? "mobile" : "id"));
+                  }}
                   aria-label={`Switch to ${loginEntryMode === "id" ? "mobile number" : "Gloobal ID"}`}
                   className="v2-tap"
                   style={{
@@ -1141,13 +1308,59 @@ function GloobalId() {
 
               {stage === "secureId" && isLoginAttempt && loginEntryMode === "mobile" && (
                 <div style={{ position: "relative", display: "flex", alignItems: "center", width: "100%", gap: 10 }}>
-                  <button
-                    onClick={() => setShowLoginPicker(true)}
-                    aria-label={`Country: ${effectiveLoginCountry.name}. Tap to change`}
-                    style={{ flexShrink: 0, width: 46, height: 40, borderRadius: 13, border: `1px solid ${T.line}`, background: T.surface, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 }}
-                  >
-                    <FlagEmoji flag={effectiveLoginCountry.flag} width={38} height={32} radius={10} dropShadow="drop-shadow(0 4px 10px rgba(76,29,149,0.18))" />
-                  </button>
+                  {/* Once the typed number has been matched to a real
+                      account, this chip freezes on the country that
+                      account is registered under — the same digits can't
+                      then be re-submitted under a different flag. */}
+                  <div style={{ position: "relative", flexShrink: 0 }}>
+                    <button
+                      onClick={() => setShowLoginPicker(true)}
+                      disabled={loginCountryLocked}
+                      aria-label={
+                        loginCountryLocked
+                          ? `Country locked to ${effectiveLoginCountry.name}, the country this number is registered in`
+                          : `Country: ${effectiveLoginCountry.name}. Tap to change`
+                      }
+                      style={{
+                        width: 46,
+                        height: 40,
+                        borderRadius: 13,
+                        border: `1px solid ${T.line}`,
+                        background: T.surface,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 0,
+                        cursor: loginCountryLocked ? "not-allowed" : "pointer",
+                        opacity: loginCountryLocked ? 0.6 : 1,
+                        pointerEvents: loginCountryLocked ? "none" : "auto",
+                        transition: "opacity 0.15s ease",
+                      }}
+                    >
+                      <FlagEmoji flag={effectiveLoginCountry.flag} width={38} height={32} radius={10} dropShadow="drop-shadow(0 4px 10px rgba(76,29,149,0.18))" />
+                    </button>
+                    {loginCountryLocked && (
+                      <span
+                        data-testid="country-lock"
+                        title="Locked to the country this number is registered in"
+                        style={{
+                          position: "absolute",
+                          top: -6,
+                          right: -6,
+                          fontSize: 11,
+                          lineHeight: 1,
+                          padding: 2,
+                          borderRadius: "50%",
+                          background: T.surface,
+                          border: `1px solid ${T.line}`,
+                          boxShadow: T.shadowCard,
+                          pointerEvents: "none",
+                        }}
+                      >
+                        🔒
+                      </span>
+                    )}
+                  </div>
 
                   {/* Masked by default, revealed with the eye toggle that
                       now sits on the card's boundary (top-right corner)
@@ -1179,6 +1392,26 @@ function GloobalId() {
               )}
             </div>
 
+            {/* The gap between the entry card and the dial pad. On the
+                creation face it carries the "already taken" notice and the
+                two suggested IDs; on the login face, the last-login bar.
+                Both are scoped to their own screen — neither ever appears
+                on the other. */}
+            {stage === "secureId" && !isLoginAttempt && idAvailability === "taken" && (
+              <div style={{ width: "100%", position: "relative", zIndex: 1 }}>
+                <div style={{ marginTop: 10, fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
+                  That Gloobal ID is already taken.
+                </div>
+                <IdSuggestionsPanel suggestions={idSuggestions} onPick={setSecureId} />
+              </div>
+            )}
+
+            {stage === "secureId" && isLoginAttempt && loginEntryMode === "id" && lastLoginInfo && (
+              <div style={{ width: "100%", position: "relative", zIndex: 1 }}>
+                <LastLoginBar formatted={formatLastLogin(lastLoginInfo.at)} />
+              </div>
+            )}
+
             {/* Symbol dial pad — same compact grid-button pattern as
                 PhoneDialPad, sized down so the card, dial, and button all
                 stay fully visible together on one screen. */}
@@ -1192,7 +1425,12 @@ function GloobalId() {
               <div style={{ marginTop: 28, position: "relative", zIndex: 1, width: "100%" }}>
                 <PhoneDialPad
                   value={loginMobileBuffer}
-                  onChange={setLoginMobileBuffer}
+                  onChange={(next) => {
+                    setLoginMobileBuffer(next);
+                    // Clearing the field entirely starts a fresh lookup —
+                    // and hands the country picker back.
+                    if (!next) resetLoginMobileResolution();
+                  }}
                   minLength={loginMinLen}
                   maxLength={loginMaxLen}
                   onSubmit={handleSubmitSecureId}
@@ -1236,7 +1474,7 @@ function GloobalId() {
               <div style={{ marginTop: 20 }}>
                 <SubmitButton
                   onClick={handleSubmitSecureId}
-                  disabled={secureId.length !== SECURE_ID_LENGTH}
+                  disabled={secureId.length !== SECURE_ID_LENGTH || idAvailability === "taken"}
                   label="IN"
                 />
               </div>
@@ -1471,6 +1709,7 @@ function GloobalId() {
           onSelect={(c) => {
             setLoginMobileCountry(c);
             setLoginMobileBuffer("");
+            resetLoginMobileResolution();
             setShowLoginPicker(false);
             setLoginCountrySearch("");
           }}
