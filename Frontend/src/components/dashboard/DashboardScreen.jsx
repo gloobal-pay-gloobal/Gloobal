@@ -18,12 +18,23 @@ import { CardAmbientField, DashboardAmbientBg, SendMoneyAmbientBg } from "../bac
 import { POSITION_COLORS } from "../common/CodeEntry";
 import { FlagEmoji } from "../common/FlagComponents";
 import { ChevronRightIcon, EyeIcon, HomeTabIcon, LogoutIcon, ProfileTabIcon, RotatingGlobeIcon, ServiceLock } from "../common/Icons";
-import { BILL_ACTIONS, DASHBOARD_ACTIONS, PROFILE_ROWS, generateReferralNetwork } from "../../constants/dashboardData";
-import { getHistory } from "../../services/api/authApi";
+import { BILL_ACTIONS, DASHBOARD_ACTIONS, PROFILE_ROWS } from "../../constants/dashboardData";
+import { getHistory, getReferrals } from "../../services/api/authApi";
 import { T } from "../../styles/theme";
 import { Plane, Building2, TrainFront, Bus, Car, Ship, RefreshCw, Coins, CreditCard, Landmark, Smartphone, Zap, ChevronUp, ChevronDown, History, ArrowUp, ArrowDown, ArrowDownLeft, ArrowUpRight, RotateCw, Check } from "lucide-react";
 import { COUNTRY_CURRENCY, CURRENCIES } from "../../constants/finance";
 import { nextIdentityMode, IDENTITY_DISPLAY_LABEL, identityDisplayValue } from "../../constants/identity";
+
+// "22 Jul 2026" — the join date on a referral row. Built from explicit
+// parts rather than toLocaleDateString so the order and month spelling are
+// the same on every device, whatever locale it is set to. An unparseable
+// or missing date renders as an em dash instead of "Invalid Date".
+const JOINED_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function formatJoinedDate(value) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return "—";
+  return `${String(date.getUTCDate()).padStart(2, "0")} ${JOINED_MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+}
 
 // A lightweight, dependency-free "QR code" look for the receiving side of
 // a transfer (Accept Rent, and anywhere else a scannable ID is shown). The
@@ -854,10 +865,14 @@ function DashboardScreenBase({
   // Profile tab, layered above the tab bar the same way Send/Bank/Coverage
   // sit above the dashboard itself.
   const [profileOverlay, setProfileOverlay] = useState(null);
-  // The referral member whose earnings breakdown card is currently open —
-  // tapping a row in "My Referral Network" opens this, tapping the backdrop
-  // or the close button clears it back to null.
-  const [selectedMember, setSelectedMember] = useState(null);
+  // My Referral Network, straight from GET /api/referrals/:symbolId — the
+  // real edges the backend recorded at registration, not a generated
+  // sample. Fetched when the overlay opens (and on retry), so a referral
+  // made since the app launched shows up without a reload.
+  const [referrals, setReferrals] = useState([]);
+  const [referralsLoading, setReferralsLoading] = useState(false);
+  const [referralsError, setReferralsError] = useState(null);
+  const [referralsAttempt, setReferralsAttempt] = useState(0);
   // Whether the "How your network works" explanation card is open —
   // opened from the option that replaced the old "Invite a friend" CTA.
   const [showHowItWorks, setShowHowItWorks] = useState(false);
@@ -921,9 +936,31 @@ function DashboardScreenBase({
   // re-randomizing on every render.
   const [avatarSeed] = useState(() => Math.floor(Math.random() * 70) + 1);
 
-  // 5 random referrals — a fresh mix of names, countries, and today's
-  // earnings each time the Referral Network screen loads.
-  const [referralNetwork] = useState(() => generateReferralNetwork());
+  useEffect(() => {
+    if (profileOverlay !== "referral") return;
+    const symbolId = myGloobalId;
+    if (!symbolId) {
+      setReferrals([]);
+      setReferralsError(null);
+      return;
+    }
+    let cancelled = false;
+    setReferralsLoading(true);
+    setReferralsError(null);
+    getReferrals(symbolId)
+      .then((list) => {
+        if (!cancelled) setReferrals(list);
+      })
+      .catch(() => {
+        if (!cancelled) setReferralsError("Could not load referrals. Try again.");
+      })
+      .finally(() => {
+        if (!cancelled) setReferralsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profileOverlay, myGloobalId, referralsAttempt]);
 
   // Two weeks of spending (this week + last week) shown as a swipeable mini
   // bar chart at the bottom of the wallet card — generated once per
@@ -2960,23 +2997,26 @@ function DashboardScreenBase({
             {/* Earnings summary */}
             <div style={{ position: "relative", background: T.gradWallet, borderRadius: T.radiusLg, padding: "22px 22px 52px", display: "flex", flexDirection: "column", gap: 4, boxShadow: T.shadowRaised }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.7)", letterSpacing: 0.3, textTransform: "uppercase" }}>
-                Total earned from referrals
+                People you&apos;ve referred
               </span>
+              {/* Counts come from the referral rows the backend actually
+                  holds. There is no earnings ledger behind referrals yet,
+                  so no money figure is claimed here. */}
               <span style={{ fontSize: 30, fontWeight: 800, color: "#fff", fontFamily: T.fontDisplay }}>
-                ${referralNetwork.reduce((sum, m) => sum + m.earned, 0).toFixed(2)}
+                {referrals.length}
               </span>
               <div style={{ display: "flex", gap: 18, marginTop: 10 }}>
                 <div>
                   <div style={{ fontSize: 17, fontWeight: 800, color: "#fff" }}>
-                    {typeof referralCount === "number" ? referralCount : referralNetwork.length}
+                    {referrals.length || (typeof referralCount === "number" ? referralCount : 0)}
                   </div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", fontWeight: 600 }}>Invited</div>
                 </div>
                 <div>
                   <div style={{ fontSize: 17, fontWeight: 800, color: "#fff" }}>
-                    {referralNetwork.filter((m) => m.status === "Active").length}
+                    {referrals.filter((r) => r.status === "completed").length}
                   </div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", fontWeight: 600 }}>Active</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", fontWeight: 600 }}>Completed</div>
                 </div>
               </div>
 
@@ -3004,35 +3044,78 @@ function DashboardScreenBase({
               How your network works
             </button>
 
-            {/* Network list — ranked by today's earnings first, so whoever
-                is putting the most in your pocket today sits at the top. */}
-            <div style={{ borderRadius: T.radiusLg, background: T.surface, overflow: "hidden", boxShadow: T.shadowCard }}>
-              {[...referralNetwork]
-                .sort((a, b) => b.earnedToday - a.earnedToday)
-                .map((m, i) => (
+            {/* Network list — the real referral rows, newest first (the
+                backend already sorts by createdAt descending). Loading,
+                empty, and error each get their own state rather than an
+                indistinguishable blank card. */}
+            {referralsLoading && (
+              <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: "28px 18px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+                <span
+                  aria-label="Loading referrals"
+                  role="status"
+                  style={{
+                    width: 26, height: 26, borderRadius: "50%",
+                    border: `3px solid ${T.line}`, borderTopColor: T.accent,
+                    animation: "spin 0.8s linear infinite",
+                  }}
+                />
+                <span style={{ fontSize: 12.5, color: T.inkFaint, fontWeight: 600 }}>Loading your referrals…</span>
+              </div>
+            )}
+
+            {!referralsLoading && referralsError && (
+              <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: "24px 18px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: T.ink, textAlign: "center" }}>{referralsError}</span>
                 <button
-                  key={m.name}
-                  onClick={() => setSelectedMember(m)}
+                  onClick={() => setReferralsAttempt((n) => n + 1)}
                   className="v2-tap"
                   style={{
-                    display: "flex", alignItems: "center", gap: 12, padding: "14px 18px",
-                    borderTop: i === 0 ? "none" : `1px solid ${T.line}`,
-                    border: "none", borderTopStyle: "solid", background: "none", width: "100%", textAlign: "left", cursor: "pointer",
+                    border: "none", background: T.gradButton, color: "#fff", borderRadius: T.radiusMd,
+                    padding: "10px 22px", fontSize: 13, fontWeight: 800, cursor: "pointer",
                   }}
                 >
-                  <FlagEmoji flag={m.flag} width={40} height={40} radius={12} dropShadow="drop-shadow(0 2px 6px rgba(76,29,149,0.14))" />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>{m.name}</div>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1 }}>
-                    <span style={{ fontSize: 13.5, fontWeight: 800, color: m.earnedToday > 0 ? T.positive : T.inkFaint }}>
-                      {m.earnedToday > 0 ? `+$${m.earnedToday.toFixed(2)}` : "—"}
-                    </span>
-                    <span style={{ fontSize: 10, color: T.inkFaint, fontWeight: 600 }}>today</span>
-                  </div>
+                  Retry
                 </button>
-              ))}
-            </div>
+              </div>
+            )}
+
+            {!referralsLoading && !referralsError && referrals.length === 0 && (
+              <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: "28px 22px", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                <Users2 size={22} color={T.inkFaint} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: T.ink, textAlign: "center" }}>
+                  No referrals yet. Share your Gloobal ID to invite friends.
+                </span>
+              </div>
+            )}
+
+            {!referralsLoading && !referralsError && referrals.length > 0 && (
+              <div style={{ borderRadius: T.radiusLg, background: T.surface, overflow: "hidden", boxShadow: T.shadowCard }}>
+                {referrals.map((r, i) => (
+                  <div
+                    key={`${r.referredSymbolId}-${r.createdAt}`}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 12, padding: "14px 18px",
+                      borderTop: i === 0 ? "none" : `1px solid ${T.line}`,
+                    }}
+                  >
+                    <span style={{ width: 40, height: 40, borderRadius: 12, flexShrink: 0, background: T.accentSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <User size={18} color={T.accent} />
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink, letterSpacing: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {r.referredSymbolId}
+                      </div>
+                      <div style={{ fontSize: 11, color: T.inkFaint, fontWeight: 600, marginTop: 2 }}>
+                        {formatJoinedDate(r.createdAt)}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: r.status === "completed" ? T.positive : T.inkFaint, textTransform: "capitalize" }}>
+                      {r.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {toast && (
@@ -3046,100 +3129,6 @@ function DashboardScreenBase({
               {toast}
             </div>
           )}
-        </div>
-      )}
-
-      {/* Tapping a name in "My Referral Network" opens this — a share-card
-          style popup with a donut split between what this person earned
-          you today and their all-time total. */}
-      {selectedMember && (
-        <div
-          onClick={() => setSelectedMember(null)}
-          style={{
-            position: "fixed", inset: 0, zIndex: 400, background: "rgba(20,12,36,0.55)",
-            display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: "relative", width: "100%", maxWidth: 320,
-              background: T.surface, borderRadius: T.radiusLg, boxShadow: T.shadowFloat,
-              padding: "30px 24px 26px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14,
-            }}
-          >
-            <button
-              onClick={() => setSelectedMember(null)}
-              aria-label="Close"
-              className="v2-tap"
-              style={{
-                position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: "50%",
-                border: "none", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-              }}
-            >
-              <X size={16} color={T.inkFaint} />
-            </button>
-
-            <span style={{ fontSize: 32 }}>{selectedMember.flag}</span>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 15.5, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>{selectedMember.name}</div>
-              <div style={{ fontSize: 11.5, fontWeight: 600, color: selectedMember.status === "Active" ? T.positive : T.inkFaint, marginTop: 2 }}>
-                {selectedMember.status}
-              </div>
-            </div>
-
-            {(() => {
-              const total = selectedMember.earned;
-              const today = selectedMember.earnedToday;
-              // The ring shows today's earnings as a slice of the all-time
-              // total — with a small minimum sweep so a real but modest
-              // "today" amount is still visible rather than a sliver.
-              const rawPct = total > 0 ? Math.min(100, (today / total) * 100) : 0;
-              const deg = rawPct > 0 ? Math.max(18, (rawPct / 100) * 360) : 0;
-              return (
-                <div
-                  style={{
-                    position: "relative", width: 150, height: 150, borderRadius: "50%",
-                    background: deg > 0
-                      ? `conic-gradient(${T.accent} 0deg ${deg}deg, ${T.accentSoft} ${deg}deg 360deg)`
-                      : T.accentSoft,
-                    display: "flex", alignItems: "center", justifyContent: "center", marginTop: 4,
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 108, height: 108, borderRadius: "50%", background: T.surface,
-                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
-                    }}
-                  >
-                    <span style={{ fontSize: 9.5, fontWeight: 700, color: T.inkFaint, letterSpacing: 0.4, textTransform: "uppercase" }}>
-                      Total earned
-                    </span>
-                    <span style={{ fontSize: 18, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>
-                      ${total.toFixed(2)}
-                    </span>
-                  </div>
-                </div>
-              );
-            })()}
-
-            <div style={{ display: "flex", gap: 22, marginTop: 2 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                <span style={{ width: 9, height: 9, borderRadius: "50%", background: T.accent, flexShrink: 0 }} />
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>{ccy}{selectedMember.earnedToday.toFixed(2)}</div>
-                  <div style={{ fontSize: 10, color: T.inkFaint, fontWeight: 600 }}>Today</div>
-                </div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                <span style={{ width: 9, height: 9, borderRadius: "50%", background: T.accentSoft, flexShrink: 0 }} />
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>{ccy}{selectedMember.earned.toFixed(2)}</div>
-                  <div style={{ fontSize: 10, color: T.inkFaint, fontWeight: 600 }}>All-time total</div>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       )}
 

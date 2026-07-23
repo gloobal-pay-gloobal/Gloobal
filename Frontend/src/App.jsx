@@ -69,6 +69,21 @@ const CREATE_BADGE_WORDS = ["Create", "Secure", "Gloobal", "Id"];
 // typo in the number.
 const NO_ACCOUNT_FOR_NUMBER = "No account found for this number. Check your country code.";
 
+// The eight Gloobal Symbols with the plain, universal word for each shape.
+// Shown under every symbol in the "What is a Gloobal ID?" sheet so the
+// alphabet can be learned from the shapes themselves rather than from the
+// English paragraph beside them.
+const SYMBOL_NAMES = [
+  { symbol: "−", name: "minus" },
+  { symbol: "+", name: "plus" },
+  { symbol: "×", name: "cross" },
+  { symbol: "=", name: "equal" },
+  { symbol: "○", name: "circle" },
+  { symbol: "□", name: "square" },
+  { symbol: "●", name: "dot" },
+  { symbol: "■", name: "block" },
+];
+
 function GloobalId() {
   const stageRef = useRef(null);
   const particlesRef = useRef([]);
@@ -86,7 +101,7 @@ function GloobalId() {
 
   const [, forceRender] = useState(0);
   const [verifying, setVerifying] = useState(false);
-  const [stage, setStage] = useState(restoredSession ? "dashboard" : "phone"); // phone -> otp -> secureId -> referral -> pin -> dashboard (registration); secureId -> loginAuth -> dashboard (login)
+  const [stage, setStage] = useState(restoredSession ? "dashboard" : "phone"); // phone -> otp -> secureId -> referral -> pin -> deviceSetup -> dashboard (registration); secureId -> loginAuth (-> loginBiometric) -> dashboard (login)
   const [flipping, setFlipping] = useState(false);
   const [secureId, setSecureId] = useState("");
   const [referralCode, setReferralCode] = useState("");
@@ -1605,8 +1620,38 @@ function GloobalId() {
           }}
           revealed={loginAuthRevealed}
           onToggleReveal={() => setLoginAuthRevealed((v) => !v)}
+          onUseBiometric={() => {
+            // Nothing about the PIN is cleared here — the typed digits are
+            // still in loginAuthPin when back returns to this screen.
+            setLoginAuthError(null);
+            setLoginAuthStatus(null);
+            flipTo("loginBiometric");
+          }}
+          scanning={verifying}
+          error={loginAuthError}
+          status={loginAuthStatus}
+        />
+      )}
+
+      {/* The biometric half of login, on its own screen rather than
+          competing with the PIN pad for attention. Same real WebAuthn
+          verify as before; only its entry point moved. */}
+      {stage === "loginBiometric" && (
+        <LoginAuthScreen
+          mode="biometric"
+          value={loginAuthPin}
+          length={PIN_LENGTH}
+          onChange={setLoginAuthPin}
+          onSubmit={handleSubmitLoginAuth}
+          onBack={() => {
+            setLoginAuthError(null);
+            setLoginAuthStatus(null);
+            flipTo("loginAuth");
+          }}
+          revealed={loginAuthRevealed}
+          onToggleReveal={() => setLoginAuthRevealed((v) => !v)}
           onBiometric={handleBiometricVerify}
-          scanning={loginAuthScanning || verifying}
+          scanning={loginAuthScanning}
           error={loginAuthError}
           status={loginAuthStatus}
         />
@@ -1729,17 +1774,23 @@ function GloobalId() {
                 Instead of ordinary digits or letters, a Gloobal ID is built from eight shapes we call Gloobal
                 Symbols — four math signs and four hollow/filled shapes:
               </div>
+              {/* Each shape carries its universal name underneath, so the
+                  eight symbols can be told apart and talked about without
+                  reading the surrounding paragraph — the sheet stops
+                  depending on English to be usable. */}
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-                {["−", "+", "×", "=", "○", "□", "●", "■"].map((s) => (
-                  <span
-                    key={s}
-                    style={{
-                      width: 34, height: 34, borderRadius: 10, background: T.surface, border: `1px solid ${T.line}`,
-                      display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 800, color: T.accent,
-                    }}
-                  >
-                    {s}
-                  </span>
+                {SYMBOL_NAMES.map(({ symbol, name }) => (
+                  <div key={symbol} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                    <span
+                      style={{
+                        width: 34, height: 34, borderRadius: 10, background: T.surface, border: `1px solid ${T.line}`,
+                        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 800, color: T.accent,
+                      }}
+                    >
+                      {symbol}
+                    </span>
+                    <span style={{ fontSize: 10, color: T.inkFaint, textAlign: "center", fontWeight: 400 }}>{name}</span>
+                  </div>
                 ))}
               </div>
               <div style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.6, marginTop: 10 }}>
@@ -1769,6 +1820,22 @@ function GloobalId() {
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div style={{ borderRadius: T.radiusLg, background: T.surfaceAlt, border: `1px solid ${T.line}`, padding: "16px" }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink, marginBottom: 4 }}>Your referral code</div>
+              {/* The whole referral idea in one wordless line — you share
+                  your ID, a friend registers with it, you end up
+                  connected — so the paragraph below it is a confirmation
+                  rather than the only way to understand the card. */}
+              <div
+                aria-label="You share your Gloobal ID, a friend registers with it, and you are connected"
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 18, color: "#555", margin: "8px 0 10px" }}
+              >
+                <span>👤</span>
+                <span>→</span>
+                <span>🔗</span>
+                <span>→</span>
+                <span>👥</span>
+                <span>→</span>
+                <span>✅</span>
+              </div>
               <div style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.6 }}>
                 Your Gloobal ID also works as a referral code. Share it with a friend — when they register
                 using it, you&apos;re both connected inside your Referral Network in Profile.
@@ -1778,14 +1845,17 @@ function GloobalId() {
             <div style={{ fontSize: 12.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase", letterSpacing: 0.4 }}>
               Benefits
             </div>
+            {/* One distinct icon per benefit instead of three identical gift
+                boxes: a gift for the reward, a globe for the network, an
+                infinity sign for "no cap" — each one readable on its own. */}
             {[
-              { title: "Earn together", body: "You and the friend you invite both get a welcome reward once they complete registration." },
-              { title: "Grow your network", body: "Everyone you refer shows up in My Referral Network, so you can track who's joined and what you've earned." },
-              { title: "No limit", body: "There's no cap on how many people you can refer — the more you invite, the more it adds up." },
+              { title: "Earn together", icon: <Gift size={15} color={T.positive} />, body: "You and the friend you invite both get a welcome reward once they complete registration." },
+              { title: "Grow your network", icon: <span style={{ fontSize: 15, lineHeight: 1 }}>🌐</span>, body: "Everyone you refer shows up in My Referral Network, so you can track who's joined and what you've earned." },
+              { title: "No limit", icon: <span style={{ fontSize: 20, lineHeight: 1, color: T.accent, fontWeight: 700 }}>∞</span>, body: "There's no cap on how many people you can refer — the more you invite, the more it adds up." },
             ].map((b) => (
               <div key={b.title} style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: "14px 16px", display: "flex", gap: 12, alignItems: "flex-start" }}>
                 <span style={{ width: 30, height: 30, borderRadius: 9, flexShrink: 0, background: T.positiveSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Gift size={15} color={T.positive} />
+                  {b.icon}
                 </span>
                 <span>
                   <div style={{ fontSize: 13, fontWeight: 700, color: T.ink }}>{b.title}</div>

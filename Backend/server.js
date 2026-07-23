@@ -9,6 +9,8 @@ const Otp = require('./models/Otp');
 const Pin = require('./models/Pin');
 const Transaction = require('./models/Transaction');
 const LedgerEntry = require('./models/LedgerEntry');
+const Referral = require('./models/Referral');
+const { nationalNumberFrom } = require('./constants/dialCodes');
 
 
 const app = express();
@@ -36,6 +38,28 @@ const normalizeMobileNumber = (value) => {
   if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
 
   return raw;
+};
+
+// The shortest national number we'll treat as identifying on its own. Any
+// shorter and a suffix match says nothing useful — plenty of unrelated
+// numbers share their last few digits.
+const MIN_IDENTIFYING_NATIONAL_LENGTH = 7;
+
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Finds an account whose stored number carries the same subscriber digits
+// as the one submitted, regardless of which country calling code sits in
+// front of them. Used to tell "you picked the wrong flag" apart from "this
+// number has never been registered", which a plain exact-match lookup
+// can't distinguish.
+const findUserByNationalNumber = async (mobileNumber) => {
+  const national = nationalNumberFrom(mobileNumber);
+
+  if (!national || national.length < MIN_IDENTIFYING_NATIONAL_LENGTH) return null;
+
+  return User.findOne({
+    mobileNumber: new RegExp(`^\\+\\d{1,4}${escapeRegExp(national)}$`)
+  });
 };
 
 const publicUserPayload = async (user) => {
@@ -108,6 +132,36 @@ app.post('/api/otp/send', async (req, res) => {
       return res.status(400).json({
         message: 'Mobile number is required.'
       });
+    }
+
+    // Country-code lock. An account is identified by its *full* stored
+    // number including the calling code, so the same subscriber digits
+    // submitted under a different flag ("+91 8114491364" registered,
+    // "+44 8114491364" submitted) must not be treated as the same person.
+    // Runs before the OTP is generated, so a mismatched country never gets
+    // a code sent to it at all.
+    const registeredUser = await User.findOne({ mobileNumber: cleanMobileNumber });
+
+    if (!registeredUser) {
+      const sameDigitsUser = await findUserByNationalNumber(cleanMobileNumber);
+
+      if (sameDigitsUser) {
+        return res.status(400).json({
+          error: 'Country code does not match the registered number.',
+          message: 'Country code does not match the registered number.'
+        });
+      }
+
+      // Registration is the one purpose that legitimately has no account
+      // yet — a brand-new number has to be allowed through here. Every
+      // other purpose (login, PIN reset, mobile change) is only meaningful
+      // for a number that already belongs to somebody.
+      if (cleanPurpose !== 'registration') {
+        return res.status(404).json({
+          error: 'No account found for this number.',
+          message: 'No account found for this number.'
+        });
+      }
     }
 
     const prototypeOtp = process.env.PROTOTYPE_OTP || '123456';
@@ -508,9 +562,12 @@ app.post('/api/register-symbol', async (req, res) => {
 
     let validReferrerId = null;
     let referralChain = [];
+    // Kept around past this block so the Referral edge can be written once
+    // the new user actually exists and has an _id to point at.
+    let referrerUser = null;
 
     if (cleanReferrer) {
-      const referrerUser = await User.findOne({ symbolId: cleanReferrer });
+      referrerUser = await User.findOne({ symbolId: cleanReferrer });
 
       if (referrerUser) {
         validReferrerId = referrerUser.symbolId;
@@ -536,6 +593,29 @@ app.post('/api/register-symbol', async (req, res) => {
         { symbolId: validReferrerId },
         { $inc: { referralCount: 1 } }
       );
+    }
+
+    // The referral edge itself. Deliberately non-fatal: a referral code
+    // that matches nobody, or a write that fails for any reason, must not
+    // cost somebody their registration — they simply end up with no
+    // referrer. A code that was supplied but matched nothing is logged so
+    // the miss is at least visible server-side.
+    if (cleanReferrer) {
+      if (referrerUser) {
+        try {
+          await Referral.create({
+            referrerId: referrerUser._id,
+            referredId: newUser._id,
+            referrerSymbolId: referrerUser.symbolId,
+            referredSymbolId: newUser.symbolId,
+            status: 'completed'
+          });
+        } catch (referralError) {
+          console.warn('Referral save skipped:', referralError.message);
+        }
+      } else {
+        console.warn(`Referral code did not match any user: ${cleanReferrer}`);
+      }
     }
 
     await consumeOtp(verifiedRegistrationOtp);
@@ -666,6 +746,47 @@ app.get('/api/profile/:symbolId', async (req, res) => {
 
     return res.status(500).json({
       message: 'Server error while loading profile.'
+    });
+  }
+});
+
+// Everyone who registered using this Gloobal ID as their referral code.
+// The response carries Gloobal IDs and join dates only — never mobile
+// numbers, emails, or internal ObjectIds, since a referrer is not entitled
+// to their referrals' contact details.
+app.get('/api/referrals/:symbolId', async (req, res) => {
+  try {
+    const cleanSymbolId = String(req.params.symbolId || '').trim();
+
+    if (!cleanSymbolId) {
+      return res.status(400).json({
+        message: 'Gloobal ID is required.'
+      });
+    }
+
+    const referrer = await User.findOne({ symbolId: cleanSymbolId });
+
+    if (!referrer) {
+      return res.status(404).json({
+        message: 'No account found for this Gloobal ID.'
+      });
+    }
+
+    const referrals = await Referral.find({ referrerId: referrer._id }).sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      referrals: referrals.map((referral) => ({
+        referredSymbolId: referral.referredSymbolId,
+        createdAt: referral.createdAt,
+        status: referral.status
+      })),
+      total: referrals.length
+    });
+  } catch (error) {
+    console.error('Referral list error:', error);
+
+    return res.status(500).json({
+      message: 'Server error while loading referrals.'
     });
   }
 });

@@ -8,19 +8,20 @@ import { T } from "../../styles/theme";
 import { PinScreenHeader, PinChipCard } from "./PinScreenShell";
 
 // Shown right after a successful Secure ID or mobile-number login, before
-// the dashboard — the same full-screen overlay treatment as PinScreen, but
-// with Face / Fingerprint offered as a one-tap alternative to typing the
-// PIN. Either path lands on the dashboard.
+// the dashboard — the same full-screen overlay treatment as PinScreen.
 //
-// mode="login" (default): real POST /api/login fires on PIN submit, real
-// passkey auth fires on a biometric tap — either one alone is enough.
+// mode="login" (default): PIN entry only. Real POST /api/login fires on
+// submit. Face ID / Fingerprint are deliberately NOT on this screen: two
+// competing ways to authenticate on one page read as "which of these am I
+// supposed to use?", so the biometric route is a text link at the bottom
+// that leads to its own screen instead.
+// mode="biometric": that screen. Nothing but the two full-size biometric
+// buttons (real POST /api/passkey/auth/*) and a back button returning to
+// the PIN screen, which keeps whatever was already typed.
 // mode="setup": shown once, right after registration sets a PIN, so a real
-// passkey actually exists to verify against later. The PIN dial pad and
-// "or" divider are hidden (the PIN was just set on the previous screen —
-// re-typing it here would be redundant), leaving only the two biometric
-// buttons (real POST /api/passkey/register/*) plus a "Skip for now" link,
-// since a passkey is a nice-to-have, not a requirement to reach the
-// dashboard.
+// passkey actually exists to verify against later. Same full-size buttons
+// (real POST /api/passkey/register/*) plus a "Skip for now" link, since a
+// passkey is a nice-to-have, not a requirement to reach the dashboard.
 export function LoginAuthScreen({
   value,
   length,
@@ -30,20 +31,22 @@ export function LoginAuthScreen({
   revealed,
   onToggleReveal,
   onBiometric,
+  onUseBiometric,
   scanning,
   mode = "login",
   error,
   status,
   onSkip,
 }) {
-  // The device-security setup screen leads with these two buttons — they
-  // are the whole screen, not an alternative to a dial pad — so they get
-  // a noticeably larger target there. In login mode they stay at their
-  // original size, where they sit *below* a PIN pad and shouldn't
-  // outweigh it.
+  // The two biometric-led screens (one-time setup, and the login-time
+  // biometric screen reached from the PIN screen's link) lead with these
+  // buttons — they are the whole screen, not an alternative to a dial pad —
+  // so they get a noticeably larger target.
   const isSetup = mode === "setup";
-  const bioCircleSize = isSetup ? 88 : 56;
-  const bioIconSize = isSetup ? 44 : 26;
+  const isBiometric = mode === "biometric";
+  const showsBiometricButtons = isSetup || isBiometric;
+  const bioCircleSize = 88;
+  const bioIconSize = 44;
 
   return (
     <div
@@ -57,7 +60,7 @@ export function LoginAuthScreen({
         fontFamily: T.fontBody,
       }}
     >
-      <PinScreenHeader onBack={onBack} title={mode === "setup" ? "Set up device security" : "Verify it's you"} />
+      <PinScreenHeader onBack={onBack} title={isSetup ? "Set up device security" : "Verify it's you"} />
 
       <div
         style={{
@@ -73,11 +76,19 @@ export function LoginAuthScreen({
           WebkitOverflowScrolling: "touch",
         }}
       >
-        {mode === "setup" ? (
+        {isSetup && (
           <p style={{ margin: 0, textAlign: "center", color: T.inkSoft, fontSize: 13, fontWeight: 600, maxWidth: 280 }}>
             Add Face ID or a fingerprint so you can skip typing your PIN next time you log in.
           </p>
-        ) : (
+        )}
+
+        {isBiometric && (
+          <p style={{ margin: 0, textAlign: "center", color: T.inkSoft, fontSize: 13, fontWeight: 600, maxWidth: 280 }}>
+            Use the Face ID or fingerprint already saved on this device instead of typing your PIN.
+          </p>
+        )}
+
+        {!showsBiometricButtons && (
           <>
             {/* Same "Gloobal ID" heading the landing, Secure ID, and
                 Referral steps carry, so this screen is recognisably part
@@ -99,18 +110,36 @@ export function LoginAuthScreen({
             <PinChipCard length={length} value={value} revealed={revealed} onToggleReveal={onToggleReveal} />
             <PhoneDialPad value={value} onChange={onChange} minLength={length} maxLength={length} onSubmit={onSubmit} />
 
-            {/* Divider */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", maxWidth: 260 }}>
-              <span style={{ flex: 1, height: 1, background: T.line }} />
-              <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, color: T.inkFaint, textTransform: "uppercase" }}>or</span>
-              <span style={{ flex: 1, height: 1, background: T.line }} />
-            </div>
+            {/* The only route to Face ID / Fingerprint from here. A link,
+                not a second set of buttons: this screen asks for a PIN and
+                nothing else, and whoever would rather not type one taps
+                through to a screen that offers only biometrics. */}
+            {onUseBiometric && (
+              <button
+                type="button"
+                onClick={onUseBiometric}
+                className="v2-tap"
+                style={{
+                  border: "none",
+                  background: "none",
+                  color: T.accent,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  textAlign: "center",
+                  cursor: "pointer",
+                  padding: "6px 8px",
+                }}
+              >
+                Use Face ID / Fingerprint instead
+              </button>
+            )}
           </>
         )}
 
         {/* Face / Fingerprint — either one is a one-tap shortcut past the
             PIN, landing on the dashboard the same way a completed PIN
             does. */}
+        {showsBiometricButtons && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 28 }}>
           <button
             onClick={() => onBiometric("face")}
@@ -144,7 +173,7 @@ export function LoginAuthScreen({
             >
               <ScanFace size={bioIconSize} />
             </span>
-            <span style={{ fontSize: isSetup ? 12.5 : 10.5, fontWeight: 700, color: T.inkFaint }}>Face ID</span>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: T.inkFaint }}>Face ID</span>
           </button>
 
           <button
@@ -179,9 +208,10 @@ export function LoginAuthScreen({
             >
               <Fingerprint size={bioIconSize} />
             </span>
-            <span style={{ fontSize: isSetup ? 12.5 : 10.5, fontWeight: 700, color: T.inkFaint }}>Fingerprint</span>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: T.inkFaint }}>Fingerprint</span>
           </button>
         </div>
+        )}
 
         {status && !error && (
           <p style={{ margin: 0, textAlign: "center", color: T.inkFaint, fontSize: 12, fontWeight: 600 }}>{status}</p>
