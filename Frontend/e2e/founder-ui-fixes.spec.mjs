@@ -280,12 +280,15 @@ test.describe("Screen 4 — device security setup", () => {
     }
   });
 
-  test("4a: the login screen keeps its original, smaller icons", async ({ page }) => {
+  // Superseded by the 2026-07-23 change that moved Face ID / Fingerprint
+  // off the PIN screen entirely: the login PIN screen no longer carries
+  // biometric buttons at any size, only a link to the screen that does.
+  // The size assertion that used to live here now has nothing to measure.
+  test("4a: the login PIN screen offers biometrics as a link, not buttons", async ({ page }) => {
     await gotoLoginAuth(page);
-    const circle = page.getByRole("button", { name: /Verify with Face ID/i }).locator("span").first();
-    const b = await circle.boundingBox();
-    // Scoped change: only the setup screen grew.
-    expect(b.width).toBeLessThan(64);
+    await expect(page.getByRole("button", { name: /Verify with Face ID/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Verify with fingerprint/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Use Face ID / Fingerprint instead" })).toBeVisible();
   });
 });
 

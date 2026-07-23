@@ -62,6 +62,17 @@ async function registerAccount(page) {
 
   await page.goto("/", { waitUntil: "domcontentloaded" });
 
+  // Every test in this file shares one page, and a signed-in session now
+  // survives a reload, so whoever registered before this call would still
+  // be signed in — the app would restore straight to the dashboard and the
+  // landing screen below would never render. Each registration starts from
+  // a signed-out slate instead.
+  await page.evaluate(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+
   await page.getByRole("button", { name: /Phone number/i }).click();
   await tapDigits(page, mobile);
   await expect(page.getByText("10/10")).toBeVisible();

@@ -145,6 +145,15 @@ export async function getProfile(symbolId) {
   return result.user || { symbolId };
 }
 
+/** GET /api/referrals/:symbolId — everyone who registered using this
+ * Gloobal ID as their referral code. The backend deliberately returns
+ * Gloobal IDs and join dates only, no contact details, so this is the whole
+ * shape: { referredSymbolId, createdAt, status }. */
+export async function getReferrals(symbolId) {
+  const result = await apiClient.get(`/api/referrals/${encodeURIComponent(symbolId)}`);
+  return Array.isArray(result.referrals) ? result.referrals : [];
+}
+
 /** GET /api/transactions/history/:symbolId — a per-viewer projection:
  * `direction` and `counterparty` are computed relative to whichever
  * symbolId was requested. */
