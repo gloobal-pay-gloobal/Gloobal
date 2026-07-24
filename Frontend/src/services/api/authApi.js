@@ -56,6 +56,11 @@ export async function register(payload) {
   return {
     user: result.user || { symbolId: payload.symbolId, fullName: payload.fullName, mobileNumber: payload.mobileNumber },
     alreadyRegistered: result.alreadyRegistered,
+    // Whether the referral code (if one was sent) actually landed. The
+    // backend never fails a registration over a bad code, so this is the
+    // only way the caller can tell the difference.
+    referralApplied: result.referralApplied,
+    referralWarning: result.referralWarning || null,
   };
 }
 
@@ -107,6 +112,37 @@ export async function resolveUser(identifier) {
     }
     throw err;
   }
+}
+
+/** Does this Gloobal ID belong to a real account — i.e. can it be used as
+ * a referral code?
+ *
+ * The mirror image of checkSymbolAvailability below, and deliberately a
+ * separate function rather than a reuse of it: that one treats any unclear
+ * answer as "free to claim", so a flaky lookup can never block somebody
+ * from registering. Here the safe fallback is the opposite way round — an
+ * unclear answer must not reject a referral code that is probably genuine,
+ * so only an explicit 404 counts as "no such ID".
+ *
+ * Returns true | false | null, where null means "couldn't tell". */
+export async function referralCodeExists(symbolId) {
+  try {
+    const result = await apiClient.get(`/api/users/resolve?identifier=${encodeURIComponent(symbolId)}`, {
+      timeoutMs: LOGIN_TIMEOUT_MS,
+    });
+    return Boolean(result.user);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return false;
+    return null;
+  }
+}
+
+/** PATCH /api/profile/change-symbol-id — renames the account's Gloobal ID.
+ * The current ID is the identity proof, matching how every other route in
+ * this backend works. */
+export async function changeSymbolId(currentSymbolId, newSymbolId) {
+  const result = await apiClient.patch("/api/profile/change-symbol-id", { currentSymbolId, newSymbolId });
+  return { newSymbolId: result.newSymbolId || newSymbolId, user: result.user || null };
 }
 
 /** Is this Gloobal ID still free to claim?

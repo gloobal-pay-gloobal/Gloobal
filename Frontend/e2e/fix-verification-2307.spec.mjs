@@ -313,7 +313,20 @@ test.describe("Fix 4 — real referrals", () => {
     await gotoReferral(page, {
       "/api/register-symbol": (route) => {
         registerBodies.push(route.request().postDataJSON());
-        return json({ user: USER }, 201);
+        return json({ user: USER, referralApplied: true }, 201);
+      },
+      // The referral step now checks the code belongs to a real account
+      // before registering (2026-07-24: a code matching nobody used to be
+      // dropped silently). The base mock answers 404 for every symbolId so
+      // that a Secure ID being *created* reads as unclaimed — correct there,
+      // wrong for a referrer, who by definition already exists.
+      "/api/users/resolve": (route) => {
+        const identifier = decodeURIComponent(new URL(route.request().url()).searchParams.get("identifier") || "");
+        if (identifier === REFERRAL_ID.join("")) {
+          return json({ success: true, user: { ...USER, symbolId: identifier } });
+        }
+        if (/^\+?\d+$/.test(identifier)) return json({ success: true, user: USER });
+        return json({ user: null }, 404);
       },
     });
 

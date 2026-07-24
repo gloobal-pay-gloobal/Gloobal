@@ -6,7 +6,10 @@ import { PinScreenHeader, PinChipCard } from "./PinScreenShell";
 // The dedicated, full-screen PIN step: shown after the Referral step,
 // overlaying the whole stage the same way the country picker does. Gives
 // the person a dial pad to type their PIN rather than a keyboard.
-export function PinScreen({ value, length, onChange, onSubmit, onBack, revealed, onToggleReveal, error, submitting }) {
+// `notice` is an optional non-blocking message — used for "your account was
+// created but the referral code didn't land", which is information, not a
+// failure, so it must not read like the red `error` line above it.
+export function PinScreen({ value, length, onChange, onSubmit, onBack, revealed, onToggleReveal, error, notice, submitting }) {
   return (
     <div
       style={{
@@ -42,6 +45,14 @@ export function PinScreen({ value, length, onChange, onSubmit, onBack, revealed,
         )}
         {error && (
           <p style={{ margin: 0, color: "#dc2626", fontSize: 12, fontWeight: 700, textAlign: "center" }}>{error}</p>
+        )}
+        {notice && (
+          <p
+            data-testid="pin-notice"
+            style={{ margin: 0, maxWidth: 300, color: "#B45309", fontSize: 12, fontWeight: 700, textAlign: "center" }}
+          >
+            {notice}
+          </p>
         )}
       </div>
     </div>

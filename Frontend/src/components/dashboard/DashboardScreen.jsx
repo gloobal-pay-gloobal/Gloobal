@@ -13,13 +13,17 @@ import {
   Gift,
   Store,
   Info,
+  Pencil,
 } from "lucide-react";
 import { CardAmbientField, DashboardAmbientBg, SendMoneyAmbientBg } from "../backgrounds/FinancialAmbient";
-import { POSITION_COLORS } from "../common/CodeEntry";
+import { POSITION_COLORS, SymbolChipRow } from "../common/CodeEntry";
+import { SymbolDialPad } from "../common/DialPads";
 import { FlagEmoji } from "../common/FlagComponents";
+import { IdSuggestionsPanel } from "../common/GapPanels";
 import { ChevronRightIcon, EyeIcon, HomeTabIcon, LogoutIcon, ProfileTabIcon, RotatingGlobeIcon, ServiceLock } from "../common/Icons";
 import { BILL_ACTIONS, DASHBOARD_ACTIONS, PROFILE_ROWS } from "../../constants/dashboardData";
-import { getHistory, getReferrals } from "../../services/api/authApi";
+import { changeSymbolId, checkSymbolAvailability, getHistory, getReferrals } from "../../services/api/authApi";
+import { generateIdSuggestions } from "../../lib/idSuggestions";
 import { T } from "../../styles/theme";
 import { Plane, Building2, TrainFront, Bus, Car, Ship, RefreshCw, Coins, CreditCard, Landmark, Smartphone, Zap, ChevronUp, ChevronDown, History, ArrowUp, ArrowDown, ArrowDownLeft, ArrowUpRight, RotateCw, Check } from "lucide-react";
 import { COUNTRY_CURRENCY, CURRENCIES } from "../../constants/finance";
@@ -775,6 +779,7 @@ function DashboardScreenBase({
   phoneNumber,
   fullName,
   referralCount,
+  onGloobalIdChange,
 }) {
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [activeTab, setActiveTab] = useState("home"); // home | accounts | profile
@@ -861,10 +866,19 @@ function DashboardScreenBase({
   // before it confirms, so this sheet isn't a different, shorter path.
   const [payTargetMethodOpen, setPayTargetMethodOpen] = useState(false);
   const [payTargetMethod, setPayTargetMethod] = useState(null);
-  // null | "share" | "referral" — full-screen overlays opened from the
-  // Profile tab, layered above the tab bar the same way Send/Bank/Coverage
-  // sit above the dashboard itself.
+  // null | "share" | "referral" | "changeId" — full-screen overlays opened
+  // from the Profile tab, layered above the tab bar the same way
+  // Send/Bank/Coverage sit above the dashboard itself.
   const [profileOverlay, setProfileOverlay] = useState(null);
+  // --- Change Gloobal ID ------------------------------------------------
+  // The new ID being typed, and whether it's free. Same availability
+  // endpoint and same suggestion generator registration uses, so a rename
+  // can't land on an ID that creation would have rejected.
+  const [newIdValue, setNewIdValue] = useState("");
+  const [newIdStatus, setNewIdStatus] = useState(null); // null | "checking" | "available" | "taken"
+  const [newIdSuggestions, setNewIdSuggestions] = useState([]);
+  const [changingId, setChangingId] = useState(false);
+  const [changeIdError, setChangeIdError] = useState(null);
   // My Referral Network, straight from GET /api/referrals/:symbolId — the
   // real edges the backend recorded at registration, not a generated
   // sample. Fetched when the overlay opens (and on retry), so a referral
@@ -1030,6 +1044,67 @@ function DashboardScreenBase({
       // share/clipboard denied or dismissed — nothing to recover from
     }
     showToast(shareRole === "merchant" ? "Link copied · Creators" : "Link copied · Personal");
+  };
+
+  // --- Change Gloobal ID -------------------------------------------------
+
+  const SYMBOL_ID_LENGTH = 12;
+
+  // Is the replacement ID free? Deliberately the same check the creation
+  // screen runs, rather than a second implementation that could drift from
+  // it. Typing again clears a stale "taken" panel.
+  useEffect(() => {
+    if (profileOverlay !== "changeId") return;
+    if (newIdValue.length !== SYMBOL_ID_LENGTH) {
+      setNewIdStatus(null);
+      setNewIdSuggestions([]);
+      return;
+    }
+    // Your own current ID isn't "taken" by somebody else, but it is not a
+    // change either — say so plainly instead of offering to rename it to
+    // itself.
+    if (newIdValue === shareableGloobalId) {
+      setNewIdStatus("same");
+      setNewIdSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    setNewIdStatus("checking");
+    checkSymbolAvailability(newIdValue).then(({ available }) => {
+      if (cancelled) return;
+      setNewIdStatus(available ? "available" : "taken");
+      setNewIdSuggestions(available ? [] : generateIdSuggestions(newIdValue, SYMBOL_ID_LENGTH));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [profileOverlay, newIdValue, shareableGloobalId]);
+
+  const closeChangeId = () => {
+    setProfileOverlay(null);
+    setNewIdValue("");
+    setNewIdStatus(null);
+    setNewIdSuggestions([]);
+    setChangeIdError(null);
+  };
+
+  const handleConfirmIdChange = async () => {
+    if (newIdStatus !== "available" || changingId) return;
+    setChangeIdError(null);
+    setChangingId(true);
+    try {
+      const result = await changeSymbolId(shareableGloobalId, newIdValue);
+      setChangingId(false);
+      // Hand the new ID up so every other screen — share card, Send Money,
+      // the session in localStorage — follows it. Signing out and back in
+      // is not required.
+      onGloobalIdChange?.(result.newSymbolId, result.user);
+      closeChangeId();
+      showToast("Gloobal ID updated successfully");
+    } catch (err) {
+      setChangingId(false);
+      setChangeIdError(err instanceof Error ? err.message : "Couldn't update your Gloobal ID. Try again.");
+    }
   };
 
   // Shares the bare Gloobal ID itself (not the referral link) — used by
@@ -1497,6 +1572,38 @@ function DashboardScreenBase({
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>My Referral Network</div>
                   <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 1 }}>See who you&apos;ve invited and what you&apos;ve earned</div>
+                </span>
+                <ChevronRightIcon />
+              </button>
+
+              <div style={{ height: 1, background: T.line, marginLeft: 72 }} />
+
+              <button
+                onClick={() => setProfileOverlay("changeId")}
+                className="v2-row"
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  padding: "16px 18px",
+                  border: "none",
+                  background: "none",
+                  cursor: "pointer",
+                  textAlign: "left",
+                }}
+              >
+                <span
+                  style={{
+                    width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+                    background: T.accentSoft, display: "flex", alignItems: "center", justifyContent: "center",
+                  }}
+                >
+                  <Pencil size={18} color={T.accent} />
+                </span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>Change Gloobal ID</div>
+                  <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 1 }}>Pick a different 12-symbol ID for this account</div>
                 </span>
                 <ChevronRightIcon />
               </button>
@@ -2970,6 +3077,117 @@ function DashboardScreenBase({
                 <Share2 size={22} color={T.accent} />
               </button>
             </div>
+          </div>
+
+          {toast && (
+            <div
+              style={{
+                position: "absolute", bottom: 30, left: "50%", transform: "translateX(-50%)", zIndex: 50,
+                background: T.ink, color: "#fff", padding: "11px 18px", borderRadius: 999, fontSize: 13, fontWeight: 600,
+                whiteSpace: "nowrap", boxShadow: T.shadowFloat,
+              }}
+            >
+              {toast}
+            </div>
+          )}
+        </div>
+      )}
+
+      {profileOverlay === "changeId" && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 200, background: T.bg, display: "flex", flexDirection: "column", fontFamily: T.fontBody }}>
+          <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 12, padding: "18px 18px 10px" }}>
+            <button
+              onClick={closeChangeId}
+              aria-label="Back"
+              className="v2-tap"
+              style={{
+                width: 34, height: 34, borderRadius: 12, flexShrink: 0,
+                border: `1px solid ${T.line}`, background: T.surface,
+                display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+              }}
+            >
+              <ArrowLeft size={18} color={T.ink} />
+            </button>
+            <span style={{ fontSize: 16, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>Change Gloobal ID</span>
+          </div>
+
+          <div style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "6px 18px 30px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+            {/* What it is now, so the two can be compared before committing. */}
+            <div style={{ width: "100%", maxWidth: 360, borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: "14px 16px" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: T.inkFaint, marginBottom: 8 }}>
+                Current Gloobal ID
+              </div>
+              <div data-testid="current-gloobal-id" style={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
+                {shareableGloobalId.split("").map((ch, i) => (
+                  <span key={i} style={{ fontSize: 17, fontWeight: 800, fontFamily: T.fontDisplay, color: POSITION_COLORS[i % POSITION_COLORS.length] }}>
+                    {ch}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ width: "100%", maxWidth: 360, borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: "14px 16px" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: T.accent, marginBottom: 10 }}>
+                New Gloobal ID
+              </div>
+              <SymbolChipRow length={SYMBOL_ID_LENGTH} value={newIdValue} masked={false} />
+            </div>
+
+            {/* One live line about the ID being typed — never two at once. */}
+            {newIdStatus === "checking" && (
+              <div style={{ fontSize: 12, fontWeight: 700, color: T.inkFaint }}>Checking…</div>
+            )}
+            {newIdStatus === "available" && (
+              <div data-testid="new-id-available" style={{ fontSize: 12.5, fontWeight: 800, color: T.positive }}>Available ✓</div>
+            )}
+            {newIdStatus === "same" && (
+              <div style={{ fontSize: 12, fontWeight: 700, color: T.inkFaint, textAlign: "center" }}>
+                That&apos;s already your Gloobal ID.
+              </div>
+            )}
+            {newIdStatus === "taken" && (
+              <div style={{ width: "100%", maxWidth: 360 }}>
+                <div data-testid="new-id-taken" style={{ fontSize: 12, fontWeight: 700, color: "#EF4444", textAlign: "center" }}>
+                  Already taken
+                </div>
+                <IdSuggestionsPanel suggestions={newIdSuggestions} onPick={setNewIdValue} />
+              </div>
+            )}
+            {changeIdError && (
+              <div data-testid="change-id-error" style={{ maxWidth: 320, fontSize: 12, fontWeight: 700, color: "#EF4444", textAlign: "center" }}>
+                {changeIdError}
+              </div>
+            )}
+
+            <div style={{ width: "100%", maxWidth: 360 }}>
+              <SymbolDialPad value={newIdValue} onChange={setNewIdValue} length={SYMBOL_ID_LENGTH} />
+            </div>
+
+            <button
+              onClick={handleConfirmIdChange}
+              disabled={newIdStatus !== "available" || changingId}
+              style={{
+                width: "100%", maxWidth: 360, padding: "14px 18px", borderRadius: T.radiusMd, border: "none",
+                background: newIdStatus === "available" && !changingId ? T.accent : T.line,
+                color: newIdStatus === "available" && !changingId ? "#fff" : T.inkFaint,
+                fontSize: 14, fontWeight: 800, fontFamily: T.fontDisplay,
+                cursor: newIdStatus === "available" && !changingId ? "pointer" : "not-allowed",
+              }}
+            >
+              {changingId ? "Updating…" : "Update ID"}
+            </button>
+
+            <button
+              onClick={closeChangeId}
+              disabled={changingId}
+              style={{
+                border: "none", background: "none", color: T.accent2,
+                fontSize: 12.5, fontWeight: 700, padding: "6px 8px",
+                cursor: changingId ? "default" : "pointer",
+              }}
+            >
+              Cancel
+            </button>
           </div>
 
           {toast && (
