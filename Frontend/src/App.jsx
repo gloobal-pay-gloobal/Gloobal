@@ -26,7 +26,7 @@ import globalIdLogo from "./assets/globalid-logo.png";
 import { startRegistration, startAuthentication } from "@simplewebauthn/browser";
 import { warmUpBackend } from "./services/httpClient";
 import { loadSession, saveSession, clearSession } from "./services/session";
-import { generateIdSuggestions } from "./lib/idSuggestions";
+import { ID_SYMBOLS, generateIdSuggestions } from "./lib/idSuggestions";
 import { formatLastLogin, readLastLogin, recordLastLogin } from "./lib/lastLogin";
 import {
   sendOtp,
@@ -69,6 +69,27 @@ const CREATE_BADGE_WORDS = ["Create", "Secure", "Gloobal", "Id"];
 // typo in the number.
 const NO_ACCOUNT_FOR_NUMBER = "No account found for this number. Check your country code.";
 
+// Someone arriving through a referral link (https://gloobal.id/r/<encoded
+// ID>) lands here at /?ref=<encoded ID>. URLSearchParams already percent-
+// decodes the value, so no decodeURIComponent is needed — but the result
+// is still untrusted text from a URL, so only an exact 12-character run of
+// real Gloobal Symbols is accepted as a referral code. Anything else
+// (truncated, mangled by a messaging app, hand-edited) is ignored and the
+// referral step behaves as if no link had been used.
+const REFERRAL_ID_LENGTH = 12;
+
+function readReferralFromUrl() {
+  if (typeof window === "undefined") return "";
+  try {
+    const raw = new URLSearchParams(window.location.search).get("ref") || "";
+    const code = raw.trim();
+    if (code.length !== REFERRAL_ID_LENGTH) return "";
+    return code.split("").every((ch) => ID_SYMBOLS.includes(ch)) ? code : "";
+  } catch {
+    return "";
+  }
+}
+
 // The eight Gloobal Symbols with the plain, universal word for each shape.
 // Shown under every symbol in the "What is a Gloobal ID?" sheet so the
 // alphabet can be learned from the shapes themselves rather than from the
@@ -104,7 +125,14 @@ function GloobalId() {
   const [stage, setStage] = useState(restoredSession ? "dashboard" : "phone"); // phone -> otp -> secureId -> referral -> pin -> deviceSetup -> dashboard (registration); secureId -> loginAuth (-> loginBiometric) -> dashboard (login)
   const [flipping, setFlipping] = useState(false);
   const [secureId, setSecureId] = useState("");
-  const [referralCode, setReferralCode] = useState("");
+  // A referral code carried in on the URL is pre-filled here at first
+  // render (lazy init, so the URL is read once rather than on every
+  // render). `referralLocked` keeps it read-only until the person
+  // explicitly chooses to enter a different one — they arrived through
+  // someone's link, so the default is to honour it, not to invite typos.
+  const [referralFromLink] = useState(readReferralFromUrl);
+  const [referralCode, setReferralCode] = useState(referralFromLink);
+  const [referralLocked, setReferralLocked] = useState(Boolean(referralFromLink));
   const [pin, setPin] = useState("");
   // The 6-digit code sent to the phone number just entered — real
   // POST /api/otp/send fires in handleVerify, so this starts empty and is
@@ -170,7 +198,10 @@ function GloobalId() {
   // Whether the entered Secure ID / Referral ID symbols are shown in the
   // clear or masked as dots — toggled by the eye button next to each.
   const [secureIdRevealed, setSecureIdRevealed] = useState(false);
-  const [referralRevealed, setReferralRevealed] = useState(false);
+  // A code that came in on a referral link starts revealed — it wasn't
+  // typed in secret, and the person needs to see which ID they're about to
+  // be referred by before they accept it.
+  const [referralRevealed, setReferralRevealed] = useState(Boolean(referralFromLink));
   // The two info-corner explanation overlays — what the Gloobal symbols
   // are, and what a referral is worth. Purely informational, so they carry
   // no backend state of their own.
@@ -711,6 +742,9 @@ function GloobalId() {
     setLoginCountrySearch("");
     setSecureId("");
     setReferralCode("");
+    // Clearing the code has to clear the lock with it, or the dial pad
+    // would stay read-only over an empty field with nothing to unlock it.
+    setReferralLocked(false);
     setPin("");
     setOtp("");
     setOtpError(null);
@@ -1458,9 +1492,48 @@ function GloobalId() {
               </div>
             )}
 
+            {/* Arrived through someone's referral link: the code is already
+                filled in and held read-only, with one tap to drop it and
+                type a different one. */}
+            {stage === "referral" && referralLocked && (
+              <div style={{ width: "100%", position: "relative", zIndex: 1, marginTop: 10, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 7,
+                    background: "rgba(16,185,129,0.10)",
+                    border: "1px solid rgba(16,185,129,0.35)",
+                    borderRadius: 999,
+                    padding: "6px 13px",
+                  }}
+                >
+                  <span aria-hidden="true" style={{ fontSize: 13, lineHeight: 1 }}>✅</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#059669" }}>Referral applied</span>
+                </div>
+                <button
+                  onClick={() => {
+                    setReferralCode("");
+                    setReferralLocked(false);
+                  }}
+                  style={{
+                    border: "none",
+                    background: "none",
+                    color: T.accent2,
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    padding: "4px 8px",
+                  }}
+                >
+                  Use a different code
+                </button>
+              </div>
+            )}
+
             {stage === "referral" && (
-              <div style={{ marginTop: 32, position: "relative", zIndex: 1, width: "100%" }}>
-                <SymbolDialPad value={referralCode} onChange={setReferralCode} length={REFERRAL_LENGTH} />
+              <div style={{ marginTop: referralLocked ? 18 : 32, position: "relative", zIndex: 1, width: "100%" }}>
+                <SymbolDialPad value={referralCode} onChange={setReferralCode} length={REFERRAL_LENGTH} readOnly={referralLocked} />
               </div>
             )}
 

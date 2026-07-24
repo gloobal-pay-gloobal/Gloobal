@@ -930,7 +930,13 @@ function DashboardScreenBase({
   // The Gloobal ID doubles as the referral code, so every share/invite path
   // resolves to one direct link — no separate referral code to manage.
   // Swap this base URL for the real deep-link domain when it exists.
-  const referralLink = `https://gloobal.id/r/${shareableGloobalId}`;
+  //
+  // The ID is made of Unicode symbols (■ □ ● ○ + − × =), none of which are
+  // safe raw in a URL path: messaging apps either refuse to linkify them or
+  // encode them inconsistently, and a bare "+" is read back as a space, so
+  // the link resolves to the wrong ID. encodeURIComponent percent-encodes
+  // every one of them — encodeURI would not, since it leaves + and = alone.
+  const referralLink = `https://gloobal.id/r/${encodeURIComponent(shareableGloobalId)}`;
 
   // A random placeholder profile photo, picked once per session rather than
   // re-randomizing on every render.
@@ -999,8 +1005,12 @@ function DashboardScreenBase({
   // Single shared handler for every "Share" action in the app (Profile tab,
   // search bar icon, Referral Network invite) — always shares the direct
   // referral link, never just the bare ID.
+  // The message body carries the ID twice on purpose: once as the raw
+  // symbols, so the person reading it can see and retype the Gloobal ID
+  // by hand, and once inside the percent-encoded link, which is the only
+  // form that survives being turned into a tappable URL.
   const handleShareReferralLink = async () => {
-    const text = `Join me on Gloobal Access — send and receive money globally. Use my link: ${referralLink}`;
+    const text = `Join me on Gloobal Access — send and receive money globally.\nMy Gloobal ID: ${shareableGloobalId}\nTap to join: ${referralLink}`;
     try {
       if (navigator.share) {
         await navigator.share({ title: "Join Gloobal Access", text, url: referralLink });
