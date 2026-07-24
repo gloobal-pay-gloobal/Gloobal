@@ -791,6 +791,55 @@ app.get('/api/referrals/:symbolId', async (req, res) => {
   }
 });
 
+// The public referral deep link: https://gloobal.id/r/<encoded Gloobal ID>.
+// The frontend builds the path with encodeURIComponent, so a Gloobal ID of
+// ■■■■■■■■■■□+ arrives here as %E2%96%A0…%E2%96%A1%2B. Express decodes
+// path params itself, but the decode is done again defensively below —
+// nothing in the symbol alphabet is a '%', so a second pass over an
+// already-decoded ID is a no-op, and the try/catch keeps a malformed
+// sequence from throwing a 500 instead of the 404 it deserves.
+const REFERRAL_APP_BASE_URL = process.env.APP_BASE_URL || 'https://gloobal.netlify.app';
+
+const safeDecodeSymbolId = (raw) => {
+  const value = String(raw || '');
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+app.get('/r/:symbolId', async (req, res) => {
+  try {
+    const symbolId = safeDecodeSymbolId(req.params.symbolId).trim();
+
+    if (!symbolId) {
+      return res.status(404).json({
+        error: 'Referral link is invalid or expired.'
+      });
+    }
+
+    const user = await User.findOne({ symbolId });
+
+    if (!user) {
+      return res.status(404).json({
+        error: 'Referral link is invalid or expired.'
+      });
+    }
+
+    // Hand the visitor to the app with the referrer pre-filled. Re-encoding
+    // is required: the query value goes through the same symbol set, and an
+    // unencoded '+' in a query string means a space.
+    return res.redirect(`${REFERRAL_APP_BASE_URL}/?ref=${encodeURIComponent(symbolId)}`);
+  } catch (error) {
+    console.error('Referral link error:', error);
+
+    return res.status(500).json({
+      error: 'Server error while resolving referral link.'
+    });
+  }
+});
+
 app.put('/api/profile/:symbolId', async (req, res) => {
   try {
     const cleanSymbolId = String(req.params.symbolId || '').trim();

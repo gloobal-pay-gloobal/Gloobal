@@ -10,7 +10,10 @@ import { T } from "../../styles/theme";
 // the delete/cross button fixed at the very center. Same progress dots
 // Sits inside a shiny 3D circular housing with a slow breathing glow
 // around its boundary.
-export function SymbolDialPad({ value, onChange, length, showLogo = true }) {
+// `readOnly` freezes what's already in the field — used by the referral
+// step when the code came in on a referral link, so it can't be edited by
+// accident before the person deliberately unlocks it.
+export function SymbolDialPad({ value, onChange, length, showLogo = true, readOnly = false }) {
   const symbolKeys = ["−", "+", "×", "=", "○", "□", "●", "■"];
   // --- Drag-to-rotate ---------------------------------------------------
   // The whole ring of symbol tiles can be spun by dragging anywhere in the
@@ -168,6 +171,7 @@ export function SymbolDialPad({ value, onChange, length, showLogo = true }) {
 
   const press = (k) => {
     if (suppressClickRef.current) return; // that was a drag, not a tap
+    if (readOnly) return; // the ring still spins, but nothing can be typed or deleted
     registerActivity();
     if (k === "cross") onChange(value.slice(0, -1));
     else if (k && value.length < length) onChange(value + k);
