@@ -609,6 +609,16 @@ function GloobalId() {
     setIdAvailability("checking");
     checkSymbolAvailability(secureId).then(({ available }) => {
       if (cancelled) return;
+      // `null` means the lookup never got an answer. Registration stays
+      // permissive — it must never block an ID that's probably free, since
+      // POST /api/register-symbol is the real uniqueness authority — but it
+      // also must not claim the ID is taken. "unknown" renders nothing and
+      // blocks nothing.
+      if (available === null) {
+        setIdAvailability("unknown");
+        setIdSuggestions([]);
+        return;
+      }
       setIdAvailability(available ? "available" : "taken");
       setIdSuggestions(available ? [] : generateIdSuggestions(secureId, SECURE_ID_LENGTH));
     });

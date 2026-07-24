@@ -161,8 +161,18 @@ export async function checkSymbolAvailability(symbolId) {
       timeoutMs: LOGIN_TIMEOUT_MS,
     });
     return { available: !result.user, user: result.user || null };
-  } catch {
-    return { available: true, user: null };
+  } catch (err) {
+    // A 404 is a real answer: the backend looked and found nobody, so the
+    // ID is genuinely free.
+    if (err instanceof ApiError && err.status === 404) return { available: true, user: null };
+    // Anything else — a cold-start timeout, a 5xx, an offline moment — is
+    // not an answer at all. Returning `true` here (as this used to) turned
+    // every backend hiccup into a confident "Available ✓" over an ID that
+    // might well be taken. `null` says "couldn't tell" so each caller can
+    // decide: registration stays permissive and lets POST /api/register-symbol
+    // be the real authority, while any screen that *displays* availability
+    // must not claim one.
+    return { available: null, user: null };
   }
 }
 

@@ -22,7 +22,13 @@ const SYMBOLS = ["−", "+", "×", "=", "○", "□", "●", "■"];
 // when it is not encoded.
 const SYMBOL_ID = "■■■■■■■■■■□+";
 const ENCODED_ID = "%E2%96%A0%E2%96%A0%E2%96%A0%E2%96%A0%E2%96%A0%E2%96%A0%E2%96%A0%E2%96%A0%E2%96%A0%E2%96%A0%E2%96%A1%2B";
-const EXPECTED_LINK = `https://gloobal.id/r/${ENCODED_ID}`;
+// The link base moved off the hardcoded https://gloobal.id on 2026-07-24:
+// that domain does not resolve at all ("Non-existent domain"), so correctly
+// encoded links were still dead on arrival. It now defaults to the backend
+// that actually serves GET /r/:symbolId, overridable via
+// VITE_REFERRAL_LINK_BASE once the real domain exists.
+const LINK_BASE = "https://gloobal-pay.onrender.com";
+const EXPECTED_LINK = `${LINK_BASE}/r/${ENCODED_ID}`;
 
 // A different 12-symbol ID, used as the "I'd rather use this one" code.
 const OTHER_ID = Array.from({ length: 12 }, (_, i) => SYMBOLS[i % SYMBOLS.length]);
@@ -232,8 +238,9 @@ test("RL-F: Backend route decodes symbolId and finds user (mock test)", async ({
   await mockBackend(page);
 
   // Stands in for GET /r/:symbolId on the real backend: decode, look the
-  // user up, 302 to the app with the referrer pre-filled.
-  await page.route("https://gloobal.id/**", async (route) => {
+  // user up, 302 to the app with the referrer pre-filled. Registered after
+  // mockBackend so it wins over that catch-all for this one path.
+  await page.route(`${LINK_BASE}/r/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;
     const symbolId = decodeURIComponent(path.replace("/r/", ""));
     if (symbolId !== SYMBOL_ID) {
