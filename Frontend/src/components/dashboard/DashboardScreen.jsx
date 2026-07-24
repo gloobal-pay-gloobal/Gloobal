@@ -29,6 +29,21 @@ import { Plane, Building2, TrainFront, Bus, Car, Ship, RefreshCw, Coins, CreditC
 import { COUNTRY_CURRENCY, CURRENCIES } from "../../constants/finance";
 import { nextIdentityMode, IDENTITY_DISPLAY_LABEL, identityDisplayValue } from "../../constants/identity";
 
+// Where a referral link points.
+//
+// This used to be hardcoded to https://gloobal.id, which does not resolve —
+// the domain is not registered, so every shared link was dead on arrival no
+// matter how correctly the Gloobal ID inside it was encoded. That is why
+// referrals still read as "broken" after the encoding fix landed: the
+// encoding was necessary and not sufficient.
+//
+// The default is now the backend that actually serves GET /r/:symbolId
+// today, so a shared link resolves and redirects into the app for real.
+// Point VITE_REFERRAL_LINK_BASE at https://gloobal.id the moment that
+// domain exists and is aimed at the backend — nothing else has to change.
+const RAW_REFERRAL_BASE = import.meta.env?.VITE_REFERRAL_LINK_BASE || "";
+const REFERRAL_LINK_BASE = (/^https?:\/\//i.test(RAW_REFERRAL_BASE) ? RAW_REFERRAL_BASE : "https://gloobal-pay.onrender.com").replace(/\/+$/, "");
+
 // "22 Jul 2026" — the join date on a referral row. Built from explicit
 // parts rather than toLocaleDateString so the order and month spelling are
 // the same on every device, whatever locale it is set to. An unparseable
@@ -950,7 +965,7 @@ function DashboardScreenBase({
   // encode them inconsistently, and a bare "+" is read back as a space, so
   // the link resolves to the wrong ID. encodeURIComponent percent-encodes
   // every one of them — encodeURI would not, since it leaves + and = alone.
-  const referralLink = `https://gloobal.id/r/${encodeURIComponent(shareableGloobalId)}`;
+  const referralLink = `${REFERRAL_LINK_BASE}/r/${encodeURIComponent(shareableGloobalId)}`;
 
   // A random placeholder profile photo, picked once per session rather than
   // re-randomizing on every render.
@@ -1072,6 +1087,15 @@ function DashboardScreenBase({
     setNewIdStatus("checking");
     checkSymbolAvailability(newIdValue).then(({ available }) => {
       if (cancelled) return;
+      // This screen states availability out loud, so an unanswered lookup
+      // cannot be rendered as "Available ✓" — that is exactly the green tick
+      // over an already-taken ID the founder reported. "unknown" says so and
+      // holds Update ID shut until a real answer arrives.
+      if (available === null) {
+        setNewIdStatus("unknown");
+        setNewIdSuggestions([]);
+        return;
+      }
       setNewIdStatus(available ? "available" : "taken");
       setNewIdSuggestions(available ? [] : generateIdSuggestions(newIdValue, SYMBOL_ID_LENGTH));
     });
@@ -3151,6 +3175,14 @@ function DashboardScreenBase({
                   Already taken
                 </div>
                 <IdSuggestionsPanel suggestions={newIdSuggestions} onPick={setNewIdValue} />
+              </div>
+            )}
+            {newIdStatus === "unknown" && (
+              <div
+                data-testid="new-id-unknown"
+                style={{ maxWidth: 320, fontSize: 12, fontWeight: 700, color: "#B45309", textAlign: "center" }}
+              >
+                Couldn&apos;t check this ID right now. Check your connection and try again.
               </div>
             )}
             {changeIdError && (
