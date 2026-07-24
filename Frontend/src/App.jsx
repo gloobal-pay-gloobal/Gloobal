@@ -37,6 +37,7 @@ import {
   resolveUser,
   getProfile,
   checkSymbolAvailability,
+  referralCodeExists,
   passkeyRegisterOptions,
   passkeyRegisterVerify,
   passkeyAuthOptions,
@@ -54,6 +55,23 @@ function normalizeMobileForApi(dialCountry, phoneNumber) {
   const digits = raw.replace(/\D/g, "");
   if (dialCountry.iso === "IN" && digits.length === 10) return `+91${digits}`;
   return `${dialCountry.dialCode}${digits}`;
+}
+
+// The country an account actually belongs to, read off the mobile number
+// the backend stores for it ("+918114491364" -> India).
+//
+// This is what makes a Gloobal ID login country-correct. Logging in by ID
+// never mentions a country — the ID is the whole credential — so without
+// this the app just kept whichever flag happened to be selected on the
+// landing screen and presented a +91 account as, say, a UK one: wrong flag
+// on the share card, wrong currency on the dashboard. The account's own
+// number is the only authority on this, never the picker.
+function countryFromMobile(mobileNumber) {
+  const dial = dialCodeFromNumber(mobileNumber);
+  if (!dial) return null;
+  // TOP_COUNTRIES first so the common case resolves to the same object
+  // identity the picker hands out, rather than a duplicate entry.
+  return TOP_COUNTRIES.find((c) => c.dialCode === dial) || ALL_COUNTRIES.find((c) => c.dialCode === dial) || null;
 }
 
 // Hoisted to module scope (not recreated inline at each call site) so
@@ -133,6 +151,15 @@ function GloobalId() {
   const [referralFromLink] = useState(readReferralFromUrl);
   const [referralCode, setReferralCode] = useState(referralFromLink);
   const [referralLocked, setReferralLocked] = useState(Boolean(referralFromLink));
+  // Inline feedback for the referral step: a code that matches no account,
+  // or the person's own ID. Separate from registerError, which is about the
+  // registration call itself failing.
+  const [referralError, setReferralError] = useState(null);
+  const [referralChecking, setReferralChecking] = useState(false);
+  // Set when registration succeeded but the backend still couldn't record
+  // the referrer — the pre-check above catches almost every case, this is
+  // the backstop for the rest.
+  const [referralNotice, setReferralNotice] = useState(null);
   const [pin, setPin] = useState("");
   // The 6-digit code sent to the phone number just entered — real
   // POST /api/otp/send fires in handleVerify, so this starts empty and is
@@ -174,7 +201,15 @@ function GloobalId() {
   // itself is only reachable while stage === "phone", so once registration
   // is complete this is effectively locked until a future settings screen
   // explicitly offers to change it.
-  const [dialCountry, setDialCountry] = useState(() => TOP_COUNTRIES.find((c) => c.iso === "IN") || TOP_COUNTRIES[0]);
+  // A restored session already knows whose account it is, so the country
+  // comes from that account's number rather than resetting to the default
+  // flag on every relaunch.
+  const [dialCountry, setDialCountry] = useState(
+    () =>
+      countryFromMobile(restoredSession?.user?.mobileNumber) ||
+      TOP_COUNTRIES.find((c) => c.iso === "IN") ||
+      TOP_COUNTRIES[0]
+  );
   const [phoneNumber, setPhoneNumber] = useState(restoredSession?.phoneNumber || "");
   const [showPicker, setShowPicker] = useState(false);
   const [phoneDialOpen, setPhoneDialOpen] = useState(false);
@@ -364,6 +399,9 @@ function GloobalId() {
         referredBy: referredByValue || undefined,
       });
       setRegisteredUser(result.user);
+      // The account exists either way; this only reports whether the
+      // referrer came with it.
+      setReferralNotice(referredByValue && result.referralApplied === false ? result.referralWarning || null : null);
       setRegistering(false);
       flipTo("pin");
     } catch (err) {
@@ -372,8 +410,32 @@ function GloobalId() {
     }
   };
 
-  const handleSubmitReferral = () => {
-    if (referralCode.length === REFERRAL_LENGTH) registerAndAdvance(referralCode);
+  // A referral code that matches nobody used to sail straight through:
+  // registration succeeded, the backend dropped the code with a server-side
+  // warning nobody could see, and the person was left believing they'd been
+  // referred. The code is now checked against a real account first, and a
+  // miss is said out loud instead of swallowed.
+  const handleSubmitReferral = async () => {
+    if (referralCode.length !== REFERRAL_LENGTH || registering || referralChecking) return;
+    setReferralError(null);
+
+    if (referralCode === secureId) {
+      setReferralError("That's your own Gloobal ID. Enter the ID of the person who invited you, or skip.");
+      return;
+    }
+
+    setReferralChecking(true);
+    const exists = await referralCodeExists(referralCode);
+    setReferralChecking(false);
+
+    // `null` means the lookup itself failed — that's not evidence the code
+    // is wrong, so it goes through and the backend gets the final say.
+    if (exists === false) {
+      setReferralError("That referral code doesn't match any Gloobal ID. Check it, or skip this step.");
+      return;
+    }
+
+    registerAndAdvance(referralCode);
   };
 
   const handleSkipReferral = () => {
@@ -402,6 +464,16 @@ function GloobalId() {
     }
   };
 
+  // Adopts the country an account is registered under, for every sign-in
+  // path that doesn't go through the country picker (Gloobal ID + PIN, and
+  // the biometric equivalent). Leaves the current flag alone if the number
+  // can't be read, rather than falling back to a default that would be
+  // just as wrong.
+  const adoptAccountCountry = (user) => {
+    const country = countryFromMobile(user?.mobileNumber);
+    if (country) setDialCountry(country);
+  };
+
   // Real POST /api/login — verifies Secure ID + PIN against the backend.
   const handleSubmitLoginAuth = async () => {
     if (loginAuthPin.length !== PIN_LENGTH || verifying) return;
@@ -410,6 +482,11 @@ function GloobalId() {
     try {
       const result = await apiLogin(secureId, loginAuthPin);
       setRegisteredUser(result.user);
+      // Snap the flag to the country this account is actually registered
+      // under. Logging in by Gloobal ID never asks for a country, so
+      // without this the dashboard would keep whatever flag was left on
+      // the landing screen and show the wrong country and currency.
+      adoptAccountCountry(result.user);
       // Stamps the timestamp the next login screen will show back.
       recordLastLogin(result.user?.symbolId || secureId);
       setVerifying(false);
@@ -445,6 +522,7 @@ function GloobalId() {
       if (!verify.verified) throw new Error("Device authentication failed.");
       const profile = await resolveUser(secureId);
       setRegisteredUser(profile);
+      adoptAccountCountry(profile);
       recordLastLogin(profile?.symbolId || secureId);
       setLoginAuthScanning(false);
       setLoginAuthStatus(null);
@@ -745,6 +823,9 @@ function GloobalId() {
     // Clearing the code has to clear the lock with it, or the dial pad
     // would stay read-only over an empty field with nothing to unlock it.
     setReferralLocked(false);
+    setReferralError(null);
+    setReferralChecking(false);
+    setReferralNotice(null);
     setPin("");
     setOtp("");
     setOtpError(null);
@@ -1533,7 +1614,17 @@ function GloobalId() {
 
             {stage === "referral" && (
               <div style={{ marginTop: referralLocked ? 18 : 32, position: "relative", zIndex: 1, width: "100%" }}>
-                <SymbolDialPad value={referralCode} onChange={setReferralCode} length={REFERRAL_LENGTH} readOnly={referralLocked} />
+                <SymbolDialPad
+                  value={referralCode}
+                  onChange={(next) => {
+                    setReferralCode(next);
+                    // Editing the code retires whatever the last check said
+                    // about the previous one.
+                    setReferralError(null);
+                  }}
+                  length={REFERRAL_LENGTH}
+                  readOnly={referralLocked}
+                />
               </div>
             )}
 
@@ -1581,10 +1672,18 @@ function GloobalId() {
                     {registerError}
                   </div>
                 )}
+                {referralError && (
+                  <div
+                    data-testid="referral-error"
+                    style={{ marginBottom: 8, maxWidth: 300, fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}
+                  >
+                    {referralError}
+                  </div>
+                )}
                 <SubmitButton
                   onClick={handleSubmitReferral}
-                  disabled={referralCode.length !== REFERRAL_LENGTH || registering}
-                  label={registering ? "Submitting…" : "IN"}
+                  disabled={referralCode.length !== REFERRAL_LENGTH || registering || referralChecking}
+                  label={referralChecking ? "Checking…" : registering ? "Submitting…" : "IN"}
                 />
                 <button
                   onClick={handleSkipReferral}
@@ -1675,6 +1774,7 @@ function GloobalId() {
           revealed={pinRevealed}
           onToggleReveal={() => setPinRevealed((v) => !v)}
           error={registerError}
+          notice={referralNotice}
           submitting={registering}
         />
       )}
@@ -1761,6 +1861,15 @@ function GloobalId() {
               referralCount={registeredUser?.referralCount}
               phoneNumber={phoneNumber}
               fullName={registeredUser?.fullName}
+              // A renamed Gloobal ID has to land here, not just inside the
+              // dashboard: `registeredUser` is what every other screen and
+              // the persisted session read from, and `secureId` is the
+              // fallback they use before it. The saveSession effect keyed
+              // on registeredUser then rewrites localStorage on its own.
+              onGloobalIdChange={(newSymbolId, updatedUser) => {
+                setSecureId(newSymbolId);
+                setRegisteredUser((prev) => ({ ...(prev || {}), ...(updatedUser || {}), symbolId: newSymbolId }));
+              }}
             />
           </Suspense>
         </ErrorBoundary>

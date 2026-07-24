@@ -600,6 +600,9 @@ app.post('/api/register-symbol', async (req, res) => {
     // cost somebody their registration — they simply end up with no
     // referrer. A code that was supplied but matched nothing is logged so
     // the miss is at least visible server-side.
+    let referralApplied = false;
+    let referralWarning = null;
+
     if (cleanReferrer) {
       if (referrerUser) {
         try {
@@ -610,18 +613,28 @@ app.post('/api/register-symbol', async (req, res) => {
             referredSymbolId: newUser.symbolId,
             status: 'completed'
           });
+          referralApplied = true;
         } catch (referralError) {
           console.warn('Referral save skipped:', referralError.message);
+          referralWarning = 'Your referral code could not be recorded, but your Gloobal ID was created.';
         }
       } else {
         console.warn(`Referral code did not match any user: ${cleanReferrer}`);
+        referralWarning = 'That referral code does not match any Gloobal ID, so no referrer was recorded.';
       }
     }
 
     await consumeOtp(verifiedRegistrationOtp);
 
+    // referralApplied / referralWarning are reported back rather than kept
+    // server-side only. The registration itself still succeeds either way —
+    // a bad referral code must not cost somebody their account — but the
+    // caller now has something to say about it, instead of the silent drop
+    // that made a mistyped code look like it had been accepted.
     return res.status(201).json({
       message: 'Secure ID registered successfully.',
+      referralApplied,
+      referralWarning,
       user: await publicUserPayload(newUser)
     });
   } catch (error) {
@@ -644,6 +657,20 @@ app.post('/api/register-symbol', async (req, res) => {
   }
 });
 // Secure Login
+// Login by Gloobal ID + PIN.
+//
+// There is deliberately no country-code check here, and adding one would
+// be checking nothing: this request carries no country at all. The Gloobal
+// ID is globally unique and is itself the credential, so unlike
+// /api/otp/send — where the same subscriber digits can legitimately exist
+// under two different calling codes and the flag is the only thing telling
+// them apart — there is no ambiguity for a country to resolve.
+//
+// What *was* wrong is presentational and lives on the client: after a
+// successful login the app kept whatever flag the person happened to leave
+// on the landing screen, so a +91 account could be shown as a UK one. The
+// response below carries mobileNumber precisely so the client can derive
+// the account's real country instead of guessing.
 app.post('/api/login', async (req, res) => {
   try {
     const { secureId, symbolId, pin } = req.body;
@@ -787,6 +814,113 @@ app.get('/api/referrals/:symbolId', async (req, res) => {
 
     return res.status(500).json({
       message: 'Server error while loading referrals.'
+    });
+  }
+});
+
+// The eight Gloobal Symbols a Secure ID is built from. Kept here rather
+// than imported from the frontend so the server validates against its own
+// copy of the alphabet.
+const GLOOBAL_SYMBOLS = ['−', '+', '×', '=', '○', '□', '●', '■'];
+const SYMBOL_ID_LENGTH = 12;
+
+const isValidSymbolId = (value) => {
+  const chars = Array.from(String(value || ''));
+
+  return chars.length === SYMBOL_ID_LENGTH && chars.every((ch) => GLOOBAL_SYMBOLS.includes(ch));
+};
+
+// Changing the Gloobal ID someone signed up with. The ID is the identity
+// every other route keys off, so the rename has to carry the referral
+// graph with it — otherwise a changed ID silently detaches the person from
+// everyone they referred and from whoever referred them.
+//
+// Identity proof here is the *current* symbolId, consistent with every
+// other route in this prototype. That is not authentication: anyone who
+// knows an ID can rename it. Recorded plainly rather than dressed up —
+// this route inherits the codebase-wide missing auth layer and must be put
+// behind real session checks along with the rest of them.
+app.patch('/api/profile/change-symbol-id', async (req, res) => {
+  try {
+    const currentSymbolId = String(req.body.currentSymbolId || '').trim();
+    const newSymbolId = String(req.body.newSymbolId || '').trim();
+
+    if (!currentSymbolId || !newSymbolId) {
+      return res.status(400).json({
+        error: 'Current and new Gloobal ID are both required.',
+        message: 'Current and new Gloobal ID are both required.'
+      });
+    }
+
+    if (!isValidSymbolId(newSymbolId)) {
+      return res.status(400).json({
+        error: 'Invalid Gloobal ID format.',
+        message: 'Invalid Gloobal ID format.'
+      });
+    }
+
+    if (newSymbolId === currentSymbolId) {
+      return res.status(400).json({
+        error: 'That is already your Gloobal ID.',
+        message: 'That is already your Gloobal ID.'
+      });
+    }
+
+    const user = await User.findOne({ symbolId: currentSymbolId });
+
+    if (!user) {
+      return res.status(404).json({
+        error: 'No account found for this Gloobal ID.',
+        message: 'No account found for this Gloobal ID.'
+      });
+    }
+
+    const taken = await User.findOne({ symbolId: newSymbolId });
+
+    if (taken) {
+      return res.status(409).json({
+        error: 'This Gloobal ID is already taken. Please choose another.',
+        message: 'This Gloobal ID is already taken. Please choose another.'
+      });
+    }
+
+    user.symbolId = newSymbolId;
+    // fullName mirrors the mobile number for these prototype accounts, so
+    // it is deliberately left alone — only the ID changes.
+    await user.save();
+
+    // Re-point every place the old ID was written down. Transactions and
+    // ledger entries key off ObjectIds, so they need no rewrite; these
+    // three are the only symbolId-valued references in the schema.
+    await Promise.all([
+      Referral.updateMany({ referrerSymbolId: currentSymbolId }, { $set: { referrerSymbolId: newSymbolId } }),
+      Referral.updateMany({ referredSymbolId: currentSymbolId }, { $set: { referredSymbolId: newSymbolId } }),
+      User.updateMany({ referredBy: currentSymbolId }, { $set: { referredBy: newSymbolId } }),
+      User.updateMany(
+        { referralChain: currentSymbolId },
+        { $set: { 'referralChain.$[entry]': newSymbolId } },
+        { arrayFilters: [{ entry: currentSymbolId }] }
+      )
+    ]);
+
+    return res.status(200).json({
+      message: 'Gloobal ID updated.',
+      newSymbolId,
+      user: await publicUserPayload(user)
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({
+        error: 'This Gloobal ID is already taken. Please choose another.',
+        message: 'This Gloobal ID is already taken. Please choose another.'
+      });
+    }
+
+    console.error('Change Gloobal ID error:', error);
+
+    return res.status(500).json({
+      error: 'Server error while updating Gloobal ID.',
+      message: 'Server error while updating Gloobal ID.'
     });
   }
 });
