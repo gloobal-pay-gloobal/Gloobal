@@ -11,17 +11,19 @@ import { PinScreenHeader, PinChipCard } from "./PinScreenShell";
 // the dashboard — the same full-screen overlay treatment as PinScreen.
 //
 // mode="login" (default): PIN entry only. Real POST /api/login fires on
-// submit. Face ID / Fingerprint are deliberately NOT on this screen: two
-// competing ways to authenticate on one page read as "which of these am I
-// supposed to use?", so the biometric route is a text link at the bottom
-// that leads to its own screen instead.
-// mode="biometric": that screen. Nothing but the two full-size biometric
-// buttons (real POST /api/passkey/auth/*) and a back button returning to
-// the PIN screen, which keeps whatever was already typed.
-// mode="setup": shown once, right after registration sets a PIN, so a real
-// passkey actually exists to verify against later. Same full-size buttons
-// (real POST /api/passkey/register/*) plus a "Skip for now" link, since a
-// passkey is a nice-to-have, not a requirement to reach the dashboard.
+// submit. Face ID / Fingerprint are deliberately NOT on this screen — no
+// icons, no link. Two competing ways to authenticate on one page read as
+// "which of these am I supposed to use?", so the biometric offer lives on
+// its own screen shown *after* a correct PIN (mode="setup"), exactly the
+// way registration does it.
+// mode="biometric": nothing but the two full-size biometric buttons (real
+// POST /api/passkey/auth/*) and a back button returning to the PIN screen,
+// which keeps whatever was already typed.
+// mode="setup": shown once, right after a PIN is accepted (registration, or
+// a login where no passkey exists yet), so a real passkey can be registered
+// for faster login next time. Same full-size buttons (real
+// POST /api/passkey/register/*) plus a "Skip for now" link, since a passkey
+// is a nice-to-have, not a requirement to reach the dashboard.
 export function LoginAuthScreen({
   value,
   length,
@@ -31,7 +33,6 @@ export function LoginAuthScreen({
   revealed,
   onToggleReveal,
   onBiometric,
-  onUseBiometric,
   scanning,
   mode = "login",
   error,
@@ -110,29 +111,10 @@ export function LoginAuthScreen({
             <PinChipCard length={length} value={value} revealed={revealed} onToggleReveal={onToggleReveal} />
             <PhoneDialPad value={value} onChange={onChange} minLength={length} maxLength={length} onSubmit={onSubmit} />
 
-            {/* The only route to Face ID / Fingerprint from here. A link,
-                not a second set of buttons: this screen asks for a PIN and
-                nothing else, and whoever would rather not type one taps
-                through to a screen that offers only biometrics. */}
-            {onUseBiometric && (
-              <button
-                type="button"
-                onClick={onUseBiometric}
-                className="v2-tap"
-                style={{
-                  border: "none",
-                  background: "none",
-                  color: T.accent,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  textAlign: "center",
-                  cursor: "pointer",
-                  padding: "6px 8px",
-                }}
-              >
-                Use Face ID / Fingerprint instead
-              </button>
-            )}
+            {/* No Face ID / Fingerprint link here on purpose. The PIN screen
+                asks for a PIN and nothing else; the biometric offer is a
+                separate screen shown *after* a correct PIN, the same way
+                registration does it, so the two never compete on one page. */}
           </>
         )}
 

@@ -493,11 +493,33 @@ function GloobalId() {
       // without this the dashboard would keep whatever flag was left on
       // the landing screen and show the wrong country and currency.
       adoptAccountCountry(result.user);
+      const symbolId = result.user?.symbolId || secureId;
       // Stamps the timestamp the next login screen will show back.
-      recordLastLogin(result.user?.symbolId || secureId);
+      recordLastLogin(symbolId);
       setVerifying(false);
       setLoginAuthPin("");
-      flipTo("dashboard");
+
+      // Model login on registration: PIN first, THEN a one-time biometric
+      // offer on its own screen — but only when this account has no passkey
+      // yet. Someone who already set one up skips the offer entirely and
+      // lands straight on the dashboard.
+      let hasPasskey = true;
+      try {
+        const status = await passkeyStatus(symbolId);
+        hasPasskey = Boolean(status?.hasPasskey);
+      } catch {
+        // Couldn't tell (offline / cold start) — don't strand a
+        // successful login behind a setup offer; just go to the dashboard.
+        hasPasskey = true;
+      }
+
+      if (hasPasskey) {
+        flipTo("dashboard");
+      } else {
+        setDeviceSetupError(null);
+        setDeviceSetupStatus(null);
+        flipTo("loginBiometricSetup");
+      }
     } catch (err) {
       setVerifying(false);
       setLoginAuthError(err instanceof Error ? err.message : "That Secure ID or PIN wasn't recognized.");
@@ -1856,22 +1878,42 @@ function GloobalId() {
           }}
           revealed={loginAuthRevealed}
           onToggleReveal={() => setLoginAuthRevealed((v) => !v)}
-          onUseBiometric={() => {
-            // Nothing about the PIN is cleared here — the typed digits are
-            // still in loginAuthPin when back returns to this screen.
-            setLoginAuthError(null);
-            setLoginAuthStatus(null);
-            flipTo("loginBiometric");
-          }}
           scanning={verifying}
           error={loginAuthError}
           status={loginAuthStatus}
         />
       )}
 
+      {/* Post-PIN biometric offer on login — the same one-time "set up Face
+          ID / Fingerprint for faster login next time" screen registration
+          shows, reached only after a correct PIN and only when no passkey
+          exists yet. Back returns to the PIN screen; Skip goes straight to
+          the dashboard. Same real WebAuthn register ceremony as setup. */}
+      {stage === "loginBiometricSetup" && (
+        <LoginAuthScreen
+          mode="setup"
+          value=""
+          length={PIN_LENGTH}
+          onChange={() => {}}
+          onSubmit={() => {}}
+          onBack={() => {
+            setDeviceSetupError(null);
+            setDeviceSetupStatus(null);
+            flipTo("loginAuth");
+          }}
+          revealed={false}
+          onToggleReveal={() => {}}
+          onBiometric={handleBiometricSetup}
+          scanning={deviceSetupBusy}
+          error={deviceSetupError}
+          status={deviceSetupStatus}
+          onSkip={() => flipTo("dashboard")}
+        />
+      )}
+
       {/* The biometric half of login, on its own screen rather than
           competing with the PIN pad for attention. Same real WebAuthn
-          verify as before; only its entry point moved. */}
+          verify as before; kept for the Secure ID card's face-login path. */}
       {stage === "loginBiometric" && (
         <LoginAuthScreen
           mode="biometric"

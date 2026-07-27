@@ -280,15 +280,15 @@ test.describe("Screen 4 — device security setup", () => {
     }
   });
 
-  // Superseded by the 2026-07-23 change that moved Face ID / Fingerprint
-  // off the PIN screen entirely: the login PIN screen no longer carries
-  // biometric buttons at any size, only a link to the screen that does.
-  // The size assertion that used to live here now has nothing to measure.
-  test("4a: the login PIN screen offers biometrics as a link, not buttons", async ({ page }) => {
+  // Superseded again by the 2026-07-27 change: the login PIN screen carries
+  // no biometrics at all — no buttons and no link. The biometric offer is a
+  // separate screen shown *after* a correct PIN (modelled on registration),
+  // so the PIN screen asks for a PIN and nothing else.
+  test("4a: the login PIN screen carries no biometrics — no buttons, no link", async ({ page }) => {
     await gotoLoginAuth(page);
     await expect(page.getByRole("button", { name: /Verify with Face ID/i })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Verify with fingerprint/i })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Use Face ID / Fingerprint instead" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Use Face ID / Fingerprint instead" })).toHaveCount(0);
   });
 });
 
