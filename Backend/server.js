@@ -10,6 +10,7 @@ const Pin = require('./models/Pin');
 const Transaction = require('./models/Transaction');
 const LedgerEntry = require('./models/LedgerEntry');
 const Referral = require('./models/Referral');
+const AssetSeed = require('./models/AssetSeed');
 const { nationalNumberFrom } = require('./constants/dialCodes');
 
 
@@ -1535,6 +1536,155 @@ app.get('/api/users/resolve', async (req, res) => {
     });
   }
 });
+// --- My Assets --------------------------------------------------------------
+// Cashback earned on a payment is "planted" and grows 1%/month, compounded,
+// toward the original amount paid. Everything a client sees (current value,
+// years accrued, years to full) is derived here from plantedAt on every read,
+// so nothing about a seed's worth is ever stored and can never drift.
+const ASSET_GROWTH_RATE_MONTHLY = 0.01; // 1% per month, internal compounding step
+const MS_PER_YEAR = 1000 * 60 * 60 * 24 * 365.25;
+
+function computeSeed(seed) {
+  const cashback = Number(seed.cashback) || 0;
+  const amountPaid = Number(seed.amountPaid) || 0;
+  const plantedAt = seed.plantedAt ? new Date(seed.plantedAt) : new Date();
+  const yearsAccrued = Math.max(0, (Date.now() - plantedAt.getTime()) / MS_PER_YEAR);
+  const currentValue = cashback * Math.pow(1 + ASSET_GROWTH_RATE_MONTHLY, yearsAccrued * 12);
+
+  // Months for the planted cashback to compound up to the full amount paid.
+  // Guard the log against non-positive/degenerate inputs so a bad seed can
+  // never yield NaN/Infinity in the response.
+  let yearsToTarget = 0;
+  if (cashback > 0 && amountPaid > cashback) {
+    const monthsToTarget = Math.log(amountPaid / cashback) / Math.log(1 + ASSET_GROWTH_RATE_MONTHLY);
+    yearsToTarget = monthsToTarget / 12;
+  }
+
+  return {
+    id: String(seed._id || seed.id || ''),
+    business: seed.business,
+    category: seed.category || 'General',
+    amountPaid,
+    cashbackRate: Number(seed.cashbackRate) || 0,
+    cashback,
+    currentValue,
+    yearsAccrued,
+    yearsToTarget,
+    plantedAt,
+    currency: seed.currency || 'INR',
+  };
+}
+
+// GET /api/assets/:symbolId — a user's planted seeds with live-derived values.
+app.get('/api/assets/:symbolId', async (req, res) => {
+  try {
+    const cleanSymbolId = String(req.params.symbolId || '').trim();
+    if (!cleanSymbolId) {
+      return res.status(400).json({ message: 'Secure ID is required.' });
+    }
+
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+    if (!user) {
+      return res.status(404).json({ message: 'Secure ID not found.' });
+    }
+
+    const rawSeeds = await AssetSeed.find({ userId: user._id }).sort({ plantedAt: -1 });
+    if (rawSeeds.length === 0) {
+      return res.status(200).json({
+        totalAssets: 0, futureAssets: 0, seeds: [], avgYearsToTarget: 0, payLaterLimit: 0,
+      });
+    }
+
+    const seeds = rawSeeds.map(computeSeed);
+    const totalAssets = seeds.reduce((s, x) => s + x.currentValue, 0);
+    const futureAssets = seeds.reduce((s, x) => s + x.amountPaid, 0);
+    const avgYearsToTarget = seeds.reduce((s, x) => s + x.yearsToTarget, 0) / seeds.length;
+
+    return res.status(200).json({
+      totalAssets,
+      futureAssets,
+      seeds,
+      avgYearsToTarget,
+      payLaterLimit: totalAssets,
+    });
+  } catch (error) {
+    console.error('Assets fetch error:', error);
+    return res.status(500).json({ message: 'Server error while fetching assets.' });
+  }
+});
+
+// POST /api/assets/plant-seed — plant a new seed from a cashback-earning
+// payment. P2P sends carry cashbackRate 0 and are rejected here.
+app.post('/api/assets/plant-seed', async (req, res) => {
+  try {
+    const { symbolId, business, category, amountPaid, cashbackRate, currency } = req.body || {};
+    const cleanSymbolId = String(symbolId || '').trim();
+    const numericAmount = Number(amountPaid);
+    const numericRate = Number(cashbackRate);
+
+    if (!cleanSymbolId) {
+      return res.status(400).json({ message: 'Secure ID is required.' });
+    }
+    if (!Number.isFinite(numericRate) || numericRate <= 0) {
+      return res.status(400).json({ message: 'cashbackRate must be greater than 0.' });
+    }
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      return res.status(400).json({ message: 'A valid amountPaid is required.' });
+    }
+
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+    if (!user) {
+      return res.status(404).json({ message: 'Secure ID not found.' });
+    }
+
+    const seed = await AssetSeed.create({
+      userId: user._id,
+      symbolId: user.symbolId,
+      business: String(business || 'Payment').trim().slice(0, 80),
+      category: String(category || 'General').trim().slice(0, 40),
+      amountPaid: numericAmount,
+      cashbackRate: numericRate,
+      cashback: numericAmount * numericRate,
+      currency: String(currency || user.currency || 'INR').trim().toUpperCase(),
+    });
+
+    return res.status(201).json({ seed: computeSeed(seed) });
+  } catch (error) {
+    console.error('Plant seed error:', error);
+    return res.status(500).json({ message: 'Server error while planting seed.' });
+  }
+});
+
+// GET /api/assets/paylater/:symbolId — PayLater limit is always the live
+// total of the user's assets; the repayment ledger is a phase-2 feature.
+app.get('/api/assets/paylater/:symbolId', async (req, res) => {
+  try {
+    const cleanSymbolId = String(req.params.symbolId || '').trim();
+    if (!cleanSymbolId) {
+      return res.status(400).json({ message: 'Secure ID is required.' });
+    }
+
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+    if (!user) {
+      return res.status(404).json({ message: 'Secure ID not found.' });
+    }
+
+    const rawSeeds = await AssetSeed.find({ userId: user._id });
+    const totalAssets = rawSeeds.map(computeSeed).reduce((s, x) => s + x.currentValue, 0);
+    const pendingDues = 0;
+
+    return res.status(200).json({
+      limit: totalAssets,
+      available: totalAssets - pendingDues,
+      pendingDues,
+      transactions: [],
+    });
+  } catch (error) {
+    console.error('PayLater fetch error:', error);
+    return res.status(500).json({ message: 'Server error while fetching PayLater.' });
+  }
+});
+
 app.post('/api/transactions/send', async (req, res) => {
   let pendingTransaction = null;
 
@@ -1766,6 +1916,28 @@ app.post('/api/transactions/send', async (req, res) => {
 
     pendingTransaction.status = 'success';
     await pendingTransaction.save();
+
+    // Plant a My Assets seed for cashback-earning business/bill payments.
+    // P2P sends between two Gloobal users carry no cashbackRate (or 0), so
+    // this never fires for them. Best-effort — a seed failure must never
+    // fail an already-successful transaction.
+    const seedCashbackRate = Number(req.body?.cashbackRate);
+    if (Number.isFinite(seedCashbackRate) && seedCashbackRate > 0) {
+      try {
+        await AssetSeed.create({
+          userId: sender._id,
+          symbolId: sender.symbolId,
+          business: String(req.body?.business || req.body?.payeeName || cleanNote || 'Payment').trim().slice(0, 80),
+          category: String(req.body?.category || 'General').trim().slice(0, 40),
+          amountPaid: numericAmount,
+          cashbackRate: seedCashbackRate,
+          cashback: numericAmount * seedCashbackRate,
+          currency: cleanCurrency,
+        });
+      } catch (seedError) {
+        console.error('Seed planting error (non-fatal):', seedError);
+      }
+    }
 
     return res.status(201).json({
       success: true,
