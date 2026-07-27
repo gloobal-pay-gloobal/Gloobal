@@ -142,6 +142,19 @@ app.post('/api/otp/send', async (req, res) => {
     // a code sent to it at all.
     const registeredUser = await User.findOne({ mobileNumber: cleanMobileNumber });
 
+    // Registration must be blocked at step one for a number that already has
+    // an account — otherwise the person gets an OTP, picks a Secure ID, and
+    // only discovers the number is taken at the referral step. Send back a
+    // 409 so the phone screen can stop the flow there and offer login
+    // instead. Only applies to registration; login/pin_reset/mobile_change
+    // all legitimately require an existing account.
+    if (registeredUser && cleanPurpose === 'registration') {
+      return res.status(409).json({
+        error: 'This number is already registered. Please log in instead.',
+        message: 'This number is already registered. Please log in instead.'
+      });
+    }
+
     if (!registeredUser) {
       const sameDigitsUser = await findUserByNationalNumber(cleanMobileNumber);
 

@@ -42,7 +42,9 @@ import {
   passkeyRegisterVerify,
   passkeyAuthOptions,
   passkeyAuthVerify,
+  passkeyStatus,
 } from "./services/api/authApi";
+import { ApiError } from "./services/httpClient";
 
 // Combines the chosen country's dial code with the typed national number
 // into the string the backend's normalizeMobileNumber helper expects.
@@ -166,6 +168,10 @@ function GloobalId() {
   // actually typed in by whoever received the code, not pre-filled.
   const [otp, setOtp] = useState("");
   const [otpError, setOtpError] = useState(null);
+  // Set when POST /api/otp/send comes back 409 "already registered" on the
+  // phone step, so the phone screen can stop the registration flow there and
+  // surface a "Log in instead" link rather than sending an OTP.
+  const [otpAlreadyRegistered, setOtpAlreadyRegistered] = useState(false);
   // The mobile number OTP was actually sent to (normalized to the
   // backend's +91XXXXXXXXXX-style format) — kept separate from the raw
   // `phoneNumber` dial-pad buffer so a later edit to that buffer can't
@@ -786,6 +792,7 @@ function GloobalId() {
     if (digits.length < minLen || digits.length > maxLen) return;
     const mobileNumber = normalizeMobileForApi(dialCountry, phoneNumber);
     setOtpError(null);
+    setOtpAlreadyRegistered(false);
     setVerifying(true);
     try {
       await sendOtp(mobileNumber);
@@ -794,8 +801,32 @@ function GloobalId() {
       flipTo("otp");
     } catch (err) {
       setVerifying(false);
+      // 409 means this number already has an account — registration must
+      // stop here, at step one, and offer login instead of advancing to the
+      // OTP entry step. (The old flow only surfaced this at the referral
+      // step, three screens too late.)
+      if (err instanceof ApiError && err.status === 409) {
+        setOtpAlreadyRegistered(true);
+        setOtpError(err.message || "This number is already registered. Please log in instead.");
+        return;
+      }
       setOtpError(err instanceof Error ? err.message : "Couldn't send OTP. Try again.");
     }
+  };
+
+  // Switches from a blocked registration attempt (409 above) straight into
+  // the login card, the same jump the phone screen's flip-to-login control
+  // makes, so the person can sign in with the number they already own.
+  const handleSwitchToLogin = () => {
+    setOtpError(null);
+    setOtpAlreadyRegistered(false);
+    setShowLoginFace(true);
+    setIsLoginAttempt(true);
+    setLoginEntryMode("id");
+    setLoginMobileBuffer("");
+    setLoginMobileCountry(null);
+    resetLoginMobileResolution();
+    flipTo("secureId");
   };
 
   // Real POST /api/otp/verify.
@@ -839,6 +870,7 @@ function GloobalId() {
     setPin("");
     setOtp("");
     setOtpError(null);
+    setOtpAlreadyRegistered(false);
     setRegisteredMobile("");
     setRegisteredUser(null);
     setRegisterError(null);
@@ -1137,6 +1169,27 @@ function GloobalId() {
                 <div style={{ marginTop: 8, fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
                   {otpError}
                 </div>
+              )}
+
+              {stage === "phone" && otpAlreadyRegistered && (
+                <button
+                  type="button"
+                  onClick={handleSwitchToLogin}
+                  className="v2-tap"
+                  style={{
+                    display: "block",
+                    margin: "6px auto 0",
+                    border: "none",
+                    background: "none",
+                    color: T.accent,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    padding: "4px 8px",
+                  }}
+                >
+                  Log in instead →
+                </button>
               )}
 
               {/* Flip to log in — on the card's own boundary now, not on
