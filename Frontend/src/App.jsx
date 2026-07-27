@@ -42,7 +42,9 @@ import {
   passkeyRegisterVerify,
   passkeyAuthOptions,
   passkeyAuthVerify,
+  passkeyStatus,
 } from "./services/api/authApi";
+import { ApiError } from "./services/httpClient";
 
 // Combines the chosen country's dial code with the typed national number
 // into the string the backend's normalizeMobileNumber helper expects.
@@ -166,6 +168,10 @@ function GloobalId() {
   // actually typed in by whoever received the code, not pre-filled.
   const [otp, setOtp] = useState("");
   const [otpError, setOtpError] = useState(null);
+  // Set when POST /api/otp/send comes back 409 "already registered" on the
+  // phone step, so the phone screen can stop the registration flow there and
+  // surface a "Log in instead" link rather than sending an OTP.
+  const [otpAlreadyRegistered, setOtpAlreadyRegistered] = useState(false);
   // The mobile number OTP was actually sent to (normalized to the
   // backend's +91XXXXXXXXXX-style format) — kept separate from the raw
   // `phoneNumber` dial-pad buffer so a later edit to that buffer can't
@@ -487,11 +493,33 @@ function GloobalId() {
       // without this the dashboard would keep whatever flag was left on
       // the landing screen and show the wrong country and currency.
       adoptAccountCountry(result.user);
+      const symbolId = result.user?.symbolId || secureId;
       // Stamps the timestamp the next login screen will show back.
-      recordLastLogin(result.user?.symbolId || secureId);
+      recordLastLogin(symbolId);
       setVerifying(false);
       setLoginAuthPin("");
-      flipTo("dashboard");
+
+      // Model login on registration: PIN first, THEN a one-time biometric
+      // offer on its own screen — but only when this account has no passkey
+      // yet. Someone who already set one up skips the offer entirely and
+      // lands straight on the dashboard.
+      let hasPasskey = true;
+      try {
+        const status = await passkeyStatus(symbolId);
+        hasPasskey = Boolean(status?.hasPasskey);
+      } catch {
+        // Couldn't tell (offline / cold start) — don't strand a
+        // successful login behind a setup offer; just go to the dashboard.
+        hasPasskey = true;
+      }
+
+      if (hasPasskey) {
+        flipTo("dashboard");
+      } else {
+        setDeviceSetupError(null);
+        setDeviceSetupStatus(null);
+        flipTo("loginBiometricSetup");
+      }
     } catch (err) {
       setVerifying(false);
       setLoginAuthError(err instanceof Error ? err.message : "That Secure ID or PIN wasn't recognized.");
@@ -786,6 +814,7 @@ function GloobalId() {
     if (digits.length < minLen || digits.length > maxLen) return;
     const mobileNumber = normalizeMobileForApi(dialCountry, phoneNumber);
     setOtpError(null);
+    setOtpAlreadyRegistered(false);
     setVerifying(true);
     try {
       await sendOtp(mobileNumber);
@@ -794,8 +823,32 @@ function GloobalId() {
       flipTo("otp");
     } catch (err) {
       setVerifying(false);
+      // 409 means this number already has an account — registration must
+      // stop here, at step one, and offer login instead of advancing to the
+      // OTP entry step. (The old flow only surfaced this at the referral
+      // step, three screens too late.)
+      if (err instanceof ApiError && err.status === 409) {
+        setOtpAlreadyRegistered(true);
+        setOtpError(err.message || "This number is already registered. Please log in instead.");
+        return;
+      }
       setOtpError(err instanceof Error ? err.message : "Couldn't send OTP. Try again.");
     }
+  };
+
+  // Switches from a blocked registration attempt (409 above) straight into
+  // the login card, the same jump the phone screen's flip-to-login control
+  // makes, so the person can sign in with the number they already own.
+  const handleSwitchToLogin = () => {
+    setOtpError(null);
+    setOtpAlreadyRegistered(false);
+    setShowLoginFace(true);
+    setIsLoginAttempt(true);
+    setLoginEntryMode("id");
+    setLoginMobileBuffer("");
+    setLoginMobileCountry(null);
+    resetLoginMobileResolution();
+    flipTo("secureId");
   };
 
   // Real POST /api/otp/verify.
@@ -839,6 +892,7 @@ function GloobalId() {
     setPin("");
     setOtp("");
     setOtpError(null);
+    setOtpAlreadyRegistered(false);
     setRegisteredMobile("");
     setRegisteredUser(null);
     setRegisterError(null);
@@ -1137,6 +1191,27 @@ function GloobalId() {
                 <div style={{ marginTop: 8, fontSize: 12, fontWeight: 600, color: "#EF4444", textAlign: "center" }}>
                   {otpError}
                 </div>
+              )}
+
+              {stage === "phone" && otpAlreadyRegistered && (
+                <button
+                  type="button"
+                  onClick={handleSwitchToLogin}
+                  className="v2-tap"
+                  style={{
+                    display: "block",
+                    margin: "6px auto 0",
+                    border: "none",
+                    background: "none",
+                    color: T.accent,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    padding: "4px 8px",
+                  }}
+                >
+                  Log in instead →
+                </button>
               )}
 
               {/* Flip to log in — on the card's own boundary now, not on
@@ -1803,22 +1878,42 @@ function GloobalId() {
           }}
           revealed={loginAuthRevealed}
           onToggleReveal={() => setLoginAuthRevealed((v) => !v)}
-          onUseBiometric={() => {
-            // Nothing about the PIN is cleared here — the typed digits are
-            // still in loginAuthPin when back returns to this screen.
-            setLoginAuthError(null);
-            setLoginAuthStatus(null);
-            flipTo("loginBiometric");
-          }}
           scanning={verifying}
           error={loginAuthError}
           status={loginAuthStatus}
         />
       )}
 
+      {/* Post-PIN biometric offer on login — the same one-time "set up Face
+          ID / Fingerprint for faster login next time" screen registration
+          shows, reached only after a correct PIN and only when no passkey
+          exists yet. Back returns to the PIN screen; Skip goes straight to
+          the dashboard. Same real WebAuthn register ceremony as setup. */}
+      {stage === "loginBiometricSetup" && (
+        <LoginAuthScreen
+          mode="setup"
+          value=""
+          length={PIN_LENGTH}
+          onChange={() => {}}
+          onSubmit={() => {}}
+          onBack={() => {
+            setDeviceSetupError(null);
+            setDeviceSetupStatus(null);
+            flipTo("loginAuth");
+          }}
+          revealed={false}
+          onToggleReveal={() => {}}
+          onBiometric={handleBiometricSetup}
+          scanning={deviceSetupBusy}
+          error={deviceSetupError}
+          status={deviceSetupStatus}
+          onSkip={() => flipTo("dashboard")}
+        />
+      )}
+
       {/* The biometric half of login, on its own screen rather than
           competing with the PIN pad for attention. Same real WebAuthn
-          verify as before; only its entry point moved. */}
+          verify as before; kept for the Secure ID card's face-login path. */}
       {stage === "loginBiometric" && (
         <LoginAuthScreen
           mode="biometric"

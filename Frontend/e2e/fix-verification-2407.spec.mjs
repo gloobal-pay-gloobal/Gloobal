@@ -179,7 +179,10 @@ test("I1-E: Gloobal ID login adopts the account's own country, not the picked fl
   // The actual defect behind "same Gloobal ID any flag": pick any country
   // on the landing screen, log in by ID, and the dashboard used to keep
   // that country for a +91 account.
-  await gotoHome(page);
+  // A passkey already on file so this returning user goes straight to the
+  // dashboard after the PIN (the post-PIN biometric offer only appears when
+  // no passkey exists yet — see fix-verification-2707 F2-D).
+  await gotoHome(page, { "/api/passkey/status": () => json({ hasPasskey: true }) });
   await pickCountry(page, "United Kingdom, +44");
 
   await page.getByRole("button", { name: /Flip to log in/i }).click();

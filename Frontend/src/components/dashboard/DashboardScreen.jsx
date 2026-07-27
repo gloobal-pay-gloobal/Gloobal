@@ -23,9 +23,11 @@ import { IdSuggestionsPanel } from "../common/GapPanels";
 import { ChevronRightIcon, EyeIcon, HomeTabIcon, LogoutIcon, ProfileTabIcon, RotatingGlobeIcon, ServiceLock } from "../common/Icons";
 import { BILL_ACTIONS, DASHBOARD_ACTIONS, PROFILE_ROWS } from "../../constants/dashboardData";
 import { changeSymbolId, checkSymbolAvailability, getHistory, getReferrals } from "../../services/api/authApi";
+import { getPayLater } from "../../services/api/assetsApi";
+import { MyAssetsScreen } from "./MyAssetsScreen";
 import { generateIdSuggestions } from "../../lib/idSuggestions";
 import { T } from "../../styles/theme";
-import { Plane, Building2, TrainFront, Bus, Car, Ship, RefreshCw, Coins, CreditCard, Landmark, Smartphone, Zap, ChevronUp, ChevronDown, History, ArrowUp, ArrowDown, ArrowDownLeft, ArrowUpRight, RotateCw, Check } from "lucide-react";
+import { Plane, Building2, TrainFront, Bus, Car, Ship, RefreshCw, Coins, CreditCard, Landmark, Smartphone, Zap, ChevronUp, ChevronDown, History, ArrowUp, ArrowDown, ArrowDownLeft, ArrowUpRight, RotateCw, Check, Sprout } from "lucide-react";
 import { COUNTRY_CURRENCY, CURRENCIES } from "../../constants/finance";
 import { nextIdentityMode, IDENTITY_DISPLAY_LABEL, identityDisplayValue } from "../../constants/identity";
 
@@ -830,6 +832,13 @@ function DashboardScreenBase({
   // the prototype: dues are derived from the pending history entries so
   // the balance, dues, and history can never disagree with each other.
   const [showPayLater, setShowPayLater] = useState(false);
+  // My Assets overlay (opened from the Accounts tab). Cross-links with
+  // PayLater in both directions.
+  const [showMyAssets, setShowMyAssets] = useState(false);
+  // Live PayLater figures — limit is always the account's current total
+  // assets (GET /api/assets/paylater/:symbolId), never a hardcoded number.
+  // Null until the fetch lands; the prototype demo limit is the fallback.
+  const [paylaterLive, setPaylaterLive] = useState(null);
   const PAYLATER_LIMIT = 500;
   // Demo ledger, split by direction: "out" = sending (purchases charged
   // to PayLater), "in" = receiving (repayments/refunds credited back).
@@ -846,7 +855,30 @@ function DashboardScreenBase({
   const paylaterSending = paylaterHistory.filter((t) => t.direction === "out");
   const paylaterReceiving = paylaterHistory.filter((t) => t.direction === "in");
   const paylaterDue = paylaterSending.filter((t) => t.status === "pending").reduce((s, t) => s + t.amount, 0);
-  const paylaterAvailable = PAYLATER_LIMIT - paylaterDue;
+
+  // Live limit tied to assets. When the fetch has landed, the limit and
+  // available balance come from the account's real total assets; until then
+  // (or if it fails) the prototype demo figures stand in so the screen is
+  // never blank.
+  useEffect(() => {
+    if (!showPayLater || !myGloobalId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await getPayLater(myGloobalId);
+        if (!cancelled) setPaylaterLive(data);
+      } catch {
+        // offline / cold start — keep the demo fallback
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showPayLater, myGloobalId]);
+
+  const paylaterLimit = paylaterLive ? paylaterLive.limit : PAYLATER_LIMIT;
+  const paylaterAvailable = paylaterLive ? paylaterLive.available : PAYLATER_LIMIT - paylaterDue;
+  const paylaterPendingDues = paylaterLive ? paylaterLive.pendingDues : paylaterDue;
 
   const [showReceiveHistory, setShowReceiveHistory] = useState(false);
   const [showIdTag, setShowIdTag] = useState(false);
@@ -1476,6 +1508,7 @@ function DashboardScreenBase({
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
               {[
                 { key: "gbank", label: "Gloobal Bank", locked: false, onClick: () => showToast("Gloobal Bank — your primary account") },
+                { key: "gassets", label: "My Assets", locked: false, onClick: () => setShowMyAssets(true) },
                 { key: "gcoin", label: "Gloobal Coin", locked: true, onClick: () => showToast("Locked until live APIs connect") },
                 { key: "gpaylater", label: "PayLater", locked: false, onClick: () => setShowPayLater(true) },
                 { key: "linked", label: "Linked Banks", locked: false, onClick: onOpenBank },
@@ -1523,6 +1556,8 @@ function DashboardScreenBase({
                     >
                       {key === "gbank" ? (
                         <img src={globalIdLogo} alt="" style={{ width: 40, height: 40, objectFit: "contain", filter: "brightness(0) invert(1)" }} />
+                      ) : key === "gassets" ? (
+                        <Sprout size={26} color={T.accent} />
                       ) : key === "gcoin" ? (
                         <Coins size={26} color={T.accent} />
                       ) : key === "gpaylater" ? (
@@ -2510,23 +2545,46 @@ function DashboardScreenBase({
           </div>
 
           <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "6px 18px 30px", display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Cross-link to My Assets — PayLater draws its whole limit from
+                the account's assets, so the two screens link both ways. */}
+            <button
+              type="button"
+              onClick={() => { setShowPayLater(false); setShowMyAssets(true); }}
+              className="v2-tap"
+              style={{ alignSelf: "flex-start", border: `1px solid ${T.line}`, background: T.surface, borderRadius: 999, padding: "8px 14px", fontSize: 12, fontWeight: 800, color: T.accent, cursor: "pointer", boxShadow: T.shadowCard }}
+            >
+              View My Assets {"→"}
+            </button>
+
             {/* Balance */}
             <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: "20px 18px" }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: T.inkSoft }}>Available PayLater balance</div>
               <div style={{ fontSize: 28, fontWeight: 800, color: T.accent, fontFamily: T.fontDisplay, marginTop: 4 }}>
                 {ccy}{paylaterAvailable.toFixed(2)}
               </div>
-              <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 2 }}>of {ccy}{PAYLATER_LIMIT.toFixed(2)} limit</div>
+              <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 2 }}>
+                {ccy}{paylaterAvailable.toFixed(2)} available of {ccy}{paylaterLimit.toFixed(2)}
+              </div>
               <div style={{ height: 6, borderRadius: 999, background: T.surfaceAlt, marginTop: 12, overflow: "hidden" }}>
                 <div
                   style={{
-                    width: `${Math.min(100, (paylaterAvailable / PAYLATER_LIMIT) * 100)}%`,
+                    width: `${Math.min(100, (paylaterAvailable / (paylaterLimit || 1)) * 100)}%`,
                     height: "100%",
                     borderRadius: 999,
                     background: T.gradButton,
                   }}
                 />
               </div>
+
+              {/* Limit tied to assets — tapping jumps to My Assets. */}
+              <button
+                type="button"
+                onClick={() => { setShowPayLater(false); setShowMyAssets(true); }}
+                className="v2-tap"
+                style={{ marginTop: 14, border: "none", background: T.accentSoft, borderRadius: T.radiusMd, padding: "10px 12px", width: "100%", textAlign: "left", color: T.accent, fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}
+              >
+                Your limit = your current assets ({ccy}{paylaterLimit.toFixed(2)}) {"→"}
+              </button>
             </div>
 
             {/* Pending dues */}
@@ -2534,14 +2592,14 @@ function DashboardScreenBase({
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                 <span>
                   <div style={{ fontSize: 12, fontWeight: 600, color: T.inkSoft }}>Pending dues</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: paylaterDue > 0 ? T.negative : T.positive, fontFamily: T.fontDisplay, marginTop: 3 }}>
-                    {ccy}{paylaterDue.toFixed(2)}
+                  <div style={{ fontSize: 20, fontWeight: 800, color: paylaterPendingDues > 0 ? T.negative : T.positive, fontFamily: T.fontDisplay, marginTop: 3 }}>
+                    {ccy}{paylaterPendingDues.toFixed(2)}
                   </div>
                   <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 2 }}>
-                    {paylaterDue > 0 ? "Due Aug 1" : "Nothing due — all clear"}
+                    {paylaterPendingDues > 0 ? "Due Aug 1" : "Nothing due — all clear"}
                   </div>
                 </span>
-                {paylaterDue > 0 && (
+                {paylaterPendingDues > 0 && (
                   <button
                     onClick={() => showToast("Payments unlock with live APIs")}
                     className="v2-tap"
@@ -2654,6 +2712,17 @@ function DashboardScreenBase({
             </div>
           )}
         </div>
+      )}
+
+      {/* My Assets — cashback that grows toward the amount paid. Opened from
+          the Accounts tab and cross-linked with PayLater both ways. */}
+      {showMyAssets && (
+        <MyAssetsScreen
+          ccy={ccy}
+          symbolId={myGloobalId}
+          onClose={() => setShowMyAssets(false)}
+          onOpenPayLater={() => { setShowMyAssets(false); setShowPayLater(true); }}
+        />
       )}
 
       {profileDetail && (
