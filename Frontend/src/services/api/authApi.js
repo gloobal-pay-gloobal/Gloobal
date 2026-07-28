@@ -70,6 +70,16 @@ export async function setPin(symbolId, pin) {
   await apiClient.post("/api/pin/set", { symbolId, secureId: symbolId, pin });
 }
 
+/** POST /api/pin/verify — confirms the account's PIN without logging in.
+ * Used as the fallback confirmation when a device has no biometric enrolled
+ * and something still has to be proven before it happens (renaming a Gloobal
+ * ID, for one). Throws with the backend's own message on a bad/locked PIN. */
+export async function verifyPin(symbolId, pin) {
+  const result = await apiClient.post("/api/pin/verify", { symbolId, pin });
+  if (!result?.verified) throw new Error(result?.message || "That PIN wasn't recognized.");
+  return true;
+}
+
 /** POST /api/login — verifies Secure ID + PIN against the backend. */
 export async function login(symbolId, pin) {
   checkAndRecordAttempt("login");

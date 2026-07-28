@@ -14,17 +14,32 @@ import {
   Store,
   Info,
   Pencil,
+  Trophy,
+  Camera,
+  Fingerprint,
 } from "lucide-react";
+import { startAuthentication } from "@simplewebauthn/browser";
 import { CardAmbientField, DashboardAmbientBg, SendMoneyAmbientBg } from "../backgrounds/FinancialAmbient";
 import { POSITION_COLORS, SymbolChipRow } from "../common/CodeEntry";
-import { SymbolDialPad } from "../common/DialPads";
+import { PhoneDialPad, SymbolDialPad } from "../common/DialPads";
 import { FlagEmoji } from "../common/FlagComponents";
 import { IdSuggestionsPanel } from "../common/GapPanels";
 import { ChevronRightIcon, EyeIcon, HomeTabIcon, LogoutIcon, ProfileTabIcon, RotatingGlobeIcon, ServiceLock } from "../common/Icons";
 import { BILL_ACTIONS, DASHBOARD_ACTIONS, PROFILE_ROWS } from "../../constants/dashboardData";
-import { changeSymbolId, checkSymbolAvailability, getHistory, getReferrals } from "../../services/api/authApi";
+import {
+  changeSymbolId,
+  checkSymbolAvailability,
+  getHistory,
+  getProfile,
+  getReferrals,
+  passkeyAuthOptions,
+  passkeyAuthVerify,
+  verifyPin,
+} from "../../services/api/authApi";
 import { getPayLater } from "../../services/api/assetsApi";
 import { MyAssetsScreen } from "./MyAssetsScreen";
+import { CreatorCashbackScreen } from "./CreatorCashbackScreen";
+import { GHScoreScreen } from "../profile/GHScoreScreen";
 import { generateIdSuggestions } from "../../lib/idSuggestions";
 import { T } from "../../styles/theme";
 import { Plane, Building2, TrainFront, Bus, Car, Ship, RefreshCw, Coins, CreditCard, Landmark, Smartphone, Zap, ChevronUp, ChevronDown, History, ArrowUp, ArrowDown, ArrowDownLeft, ArrowUpRight, RotateCw, Check, Sprout } from "lucide-react";
@@ -304,6 +319,65 @@ const ELECTRICITY_BY_COUNTRY = {
   NL: ["Essent", "Vattenfall NL", "Eneco"],
   CH: ["Swissgrid", "BKW", "EWZ"],
 };
+
+// --- Gloobal ID history -----------------------------------------------------
+// Every ID this account has used before, with the moment it was replaced.
+// Kept against the *current* ID, so the record follows a rename instead of
+// being orphaned under the old key. The backend keeps its own copy
+// (User.symbolIdHistory); these two are merged on read so a history recorded
+// on another device still shows up here.
+const idHistoryKey = (symbolId) => `gloobal.idHistory.${symbolId}`;
+
+function readIdHistory(symbolId) {
+  if (!symbolId) return [];
+  try {
+    const raw = window.localStorage.getItem(idHistoryKey(symbolId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Union of two history lists, newest first, deduped on (symbolId, changedAt). */
+function mergeIdHistory(a, b) {
+  const seen = new Set();
+  return [...(a || []), ...(b || [])]
+    .filter((entry) => entry && entry.symbolId)
+    .filter((entry) => {
+      const key = `${entry.symbolId}@${entry.changedAt}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((x, y) => new Date(y.changedAt || 0) - new Date(x.changedAt || 0));
+}
+
+/** Records `oldSymbolId` as replaced by `newSymbolId`, moving the whole
+ * history onto the new ID's key. Returns the updated list. */
+function recordIdChange(oldSymbolId, newSymbolId) {
+  const entry = { symbolId: oldSymbolId, changedAt: new Date().toISOString(), replacedBy: newSymbolId };
+  const next = mergeIdHistory([entry], readIdHistory(oldSymbolId));
+  try {
+    window.localStorage.setItem(idHistoryKey(newSymbolId), JSON.stringify(next));
+    window.localStorage.removeItem(idHistoryKey(oldSymbolId));
+  } catch {
+    // storage unavailable — the in-memory list still renders this session
+  }
+  return next;
+}
+
+// "22 Jul 2026, 14:05" — the timestamp beside a previous Gloobal ID. Built
+// from explicit parts for the same reason formatJoinedDate is.
+function formatIdChangedAt(value) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return "—";
+  const dd = String(date.getDate()).padStart(2, "0");
+  const mon = JOINED_MONTHS[date.getMonth()];
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  return `${dd} ${mon} ${date.getFullYear()}, ${hh}:${mm}`;
+}
 
 function AccountsTabIcon({ active }) {
   const c = active ? "#7c3aed" : "#9a94ad";
@@ -880,6 +954,18 @@ function DashboardScreenBase({
   const paylaterAvailable = paylaterLive ? paylaterLive.available : PAYLATER_LIMIT - paylaterDue;
   const paylaterPendingDues = paylaterLive ? paylaterLive.pendingDues : paylaterDue;
 
+  // --- Gloobal Creators: cashback sharing --------------------------------
+  // Tapping Receive leads with "Share with Gloobal users" — the Creator picks
+  // what share of an incoming payment goes back to whoever paid — and only
+  // then opens the receive sheet itself. The saved rate is read back from the
+  // account so the picker opens on whatever they chose last time.
+  const [showCreatorCashback, setShowCreatorCashback] = useState(false);
+  const [creatorRate, setCreatorRate] = useState(0);
+
+  // --- GH Score ----------------------------------------------------------
+  // The Gloobal Human Score lives on Profile, not Accounts.
+  const [showGHScore, setShowGHScore] = useState(false);
+
   const [showReceiveHistory, setShowReceiveHistory] = useState(false);
   const [showIdTag, setShowIdTag] = useState(false);
   const [toast, setToast] = useState(null);
@@ -926,6 +1012,16 @@ function DashboardScreenBase({
   const [newIdSuggestions, setNewIdSuggestions] = useState([]);
   const [changingId, setChangingId] = useState(false);
   const [changeIdError, setChangeIdError] = useState(null);
+  // Every Gloobal ID this account has used before, newest first, with when it
+  // was replaced — so there is a proper record of which ID belonged to them
+  // when. Held locally and merged with whatever the backend has recorded.
+  const [idHistory, setIdHistory] = useState([]);
+  // Renaming a Gloobal ID is confirmed with the device's own biometrics
+  // before the API call goes out — never after, and never optionally.
+  //   null | { stage: "prompt" | "pin" | "error", message } — see
+  //   requestIdChangeConfirmation below.
+  const [bioConfirm, setBioConfirm] = useState(null);
+  const [bioPin, setBioPin] = useState("");
   // My Referral Network, straight from GET /api/referrals/:symbolId — the
   // real edges the backend recorded at registration, not a generated
   // sample. Fetched when the overlay opens (and on retry), so a referral
@@ -1002,6 +1098,68 @@ function DashboardScreenBase({
   // A random placeholder profile photo, picked once per session rather than
   // re-randomizing on every render.
   const [avatarSeed] = useState(() => Math.floor(Math.random() * 70) + 1);
+
+  // --- Profile photo -----------------------------------------------------
+  // Until somebody picks their own, the Gloobal logo stands in — never a
+  // broken image or an empty circle. Stored as a data URL against this
+  // account's own key, so two accounts on one device don't share a face.
+  // There is no photo upload endpoint yet; this is deliberately local-only.
+  const [profilePhoto, setProfilePhoto] = useState(null);
+  const photoInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!myGloobalId) return;
+    try {
+      setProfilePhoto(window.localStorage.getItem(`gloobal.profilePhoto.${myGloobalId}`) || null);
+    } catch {
+      // storage unavailable — the logo placeholder still renders
+    }
+  }, [myGloobalId]);
+
+  const handlePhotoPicked = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      setProfilePhoto(dataUrl);
+      try {
+        window.localStorage.setItem(`gloobal.profilePhoto.${myGloobalId}`, dataUrl);
+      } catch {
+        // quota/private mode — the photo still shows for this session
+      }
+    };
+    reader.readAsDataURL(file);
+    event.target.value = "";
+  };
+
+  // The account's own record: the cashback share this Creator gives back, and
+  // every Gloobal ID it has been known by. Both come off the same profile
+  // read, so one round trip covers both.
+  useEffect(() => {
+    if (!myGloobalId) return;
+    let cancelled = false;
+    getProfile(myGloobalId)
+      .then((user) => {
+        if (cancelled || !user) return;
+        setCreatorRate(Number(user.cashbackRate) || 0);
+        if (Array.isArray(user.symbolIdHistory)) {
+          setIdHistory((local) => mergeIdHistory(local, user.symbolIdHistory));
+        }
+      })
+      .catch(() => {
+        // offline / cold start — locally held values still render
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [myGloobalId]);
+
+  // Locally recorded ID history for whichever ID is current now.
+  useEffect(() => {
+    if (!myGloobalId) return;
+    setIdHistory((local) => mergeIdHistory(local, readIdHistory(myGloobalId)));
+  }, [myGloobalId]);
 
   useEffect(() => {
     if (profileOverlay !== "referral") return;
@@ -1142,15 +1300,25 @@ function DashboardScreenBase({
     setNewIdStatus(null);
     setNewIdSuggestions([]);
     setChangeIdError(null);
+    setBioConfirm(null);
+    setBioPin("");
   };
 
-  const handleConfirmIdChange = async () => {
-    if (newIdStatus !== "available" || changingId) return;
+  // The rename itself. Only ever reached once a device confirmation has come
+  // back positive — nothing calls this directly off the Update ID button.
+  const performIdChange = async () => {
+    if (changingId) return;
+    const previousId = shareableGloobalId;
     setChangeIdError(null);
     setChangingId(true);
     try {
-      const result = await changeSymbolId(shareableGloobalId, newIdValue);
+      const result = await changeSymbolId(previousId, newIdValue);
       setChangingId(false);
+      setBioConfirm(null);
+      setBioPin("");
+      // Write the old ID into the record before the app starts calling itself
+      // by the new one, so the history is complete and correctly ordered.
+      setIdHistory(recordIdChange(previousId, result.newSymbolId));
       // Hand the new ID up so every other screen — share card, Send Money,
       // the session in localStorage — follows it. Signing out and back in
       // is not required.
@@ -1159,7 +1327,70 @@ function DashboardScreenBase({
       showToast("Gloobal ID updated successfully");
     } catch (err) {
       setChangingId(false);
+      setBioConfirm(null);
+      setBioPin("");
       setChangeIdError(err instanceof Error ? err.message : "Couldn't update your Gloobal ID. Try again.");
+    }
+  };
+
+  // Update ID opens the confirmation gate and stops there. The API call is
+  // made by performIdChange, and only after the device says yes — a cancelled
+  // or failed check leaves the ID exactly as it was.
+  const handleConfirmIdChange = () => {
+    if (newIdStatus !== "available" || changingId || bioConfirm) return;
+    setChangeIdError(null);
+    setBioPin("");
+    setBioConfirm({ stage: "prompt", message: null });
+  };
+
+  // The biometric ceremony runs after the prompt has painted, so the overlay
+  // is on screen before the device dialog appears (and before any request
+  // goes out). A device with nothing enrolled falls back to the PIN pad
+  // rather than blocking the rename outright.
+  useEffect(() => {
+    if (bioConfirm?.stage !== "prompt") return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const available = await window.PublicKeyCredential?.isUserVerifyingPlatformAuthenticatorAvailable?.();
+        if (cancelled) return;
+        if (!available) {
+          setBioConfirm({ stage: "pin", message: "No fingerprint or Face ID on this device — enter your PIN instead." });
+          return;
+        }
+        const options = await passkeyAuthOptions(shareableGloobalId);
+        if (cancelled) return;
+        const authResponse = await startAuthentication({ optionsJSON: options });
+        if (cancelled) return;
+        const verify = await passkeyAuthVerify(shareableGloobalId, authResponse);
+        if (cancelled) return;
+        if (!verify?.verified) throw new Error("not verified");
+        await performIdChange();
+      } catch {
+        if (cancelled) return;
+        setBioConfirm({ stage: "error", message: "Biometric confirmation failed. ID not changed." });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bioConfirm?.stage]);
+
+  // PIN fallback — same PIN the account logs in with, verified server-side.
+  const handleBioPinSubmit = async () => {
+    if (bioPin.length < 6 || changingId) return;
+    try {
+      await verifyPin(shareableGloobalId, bioPin);
+      await performIdChange();
+    } catch (err) {
+      setBioPin("");
+      setBioConfirm({
+        stage: "pin",
+        message: err instanceof Error ? err.message : "That PIN wasn't recognized. ID not changed.",
+      });
     }
   };
 
@@ -1401,7 +1632,9 @@ function DashboardScreenBase({
                 const onClick =
                   key === "send" ? onOpenSend
                   : key === "bank" ? onOpenBank
-                  : key === "receive" ? () => setShowReceive(true)
+                  // Receive leads with the Creator's cashback-sharing choice,
+                  // then the receive sheet itself.
+                  : key === "receive" ? () => setShowCreatorCashback(true)
                   : key === "scan" ? () => showToast("Scanner opening…")
                   : undefined;
                 return (
@@ -1578,12 +1811,17 @@ function DashboardScreenBase({
 
         {activeTab === "profile" && (
           <div style={{ padding: "12px 18px 30px", display: "flex", flexDirection: "column", gap: 22 }}>
+            {/* Flag on one side, face on the other, the person's name in the
+                middle — with a thin line running between the two. The line is
+                the point: this account is one node on a global network, and
+                the header says so before any row underneath does. */}
             <div
+              data-testid="profile-header"
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 14,
-                padding: "18px",
+                gap: 12,
+                padding: "20px 18px",
                 borderRadius: T.radiusLg,
                 background: T.surface,
                 boxShadow: T.shadowCard,
@@ -1591,20 +1829,146 @@ function DashboardScreenBase({
             >
               <FlagEmoji
                 flag={dialCountry.flag}
-                width={54}
-                height={54}
-                radius={16}
+                width={64}
+                height={64}
+                radius={18}
                 dropShadow="drop-shadow(0 4px 10px rgba(76,29,149,0.20))"
               />
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>Gloobal ID Member</div>
-                <div style={{ fontSize: 13, color: T.inkSoft, marginTop: 2 }}>
-                  {dialCountry.flag} {dialCountry.dialCode} · {dialCountry.name}
+
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                <div
+                  data-testid="profile-name"
+                  style={{
+                    fontSize: 18,
+                    fontWeight: 800,
+                    color: T.ink,
+                    fontFamily: T.fontDisplay,
+                    textAlign: "center",
+                    maxWidth: "100%",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {fullName || "Gloobal ID Member"}
                 </div>
+                {/* The connector — flag on the left, face on the right, one
+                    line between them with a node in the middle. */}
+                <div
+                  data-testid="profile-connector"
+                  aria-hidden="true"
+                  style={{ display: "flex", alignItems: "center", gap: 4, width: "100%" }}
+                >
+                  <span style={{ flex: 1, height: 1, borderTop: `1px dashed ${T.line}` }} />
+                  <span style={{ width: 5, height: 5, borderRadius: "50%", background: T.accent, flexShrink: 0 }} />
+                  <span style={{ flex: 1, height: 1, borderTop: `1px dashed ${T.line}` }} />
+                </div>
+                <div style={{ fontSize: 11.5, color: T.inkFaint, fontWeight: 600, textAlign: "center" }}>
+                  {dialCountry.dialCode} · {dialCountry.name}
+                </div>
+              </div>
+
+              {/* Profile photo — the Gloobal logo until they choose one. */}
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                <button
+                  onClick={() => photoInputRef.current?.click()}
+                  aria-label="Change profile photo"
+                  data-testid="profile-photo"
+                  className="v2-tap"
+                  style={{
+                    width: 64,
+                    height: 64,
+                    borderRadius: "50%",
+                    border: `1px solid ${T.line}`,
+                    background: profilePhoto ? T.surface : T.accentSoft,
+                    padding: 0,
+                    overflow: "hidden",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    boxShadow: "0 4px 10px rgba(76,29,149,0.16)",
+                  }}
+                >
+                  {profilePhoto ? (
+                    <img src={profilePhoto} alt="Your profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : (
+                    <img
+                      src={globalIdLogo}
+                      alt="Gloobal logo"
+                      data-testid="profile-photo-default"
+                      style={{ width: 38, height: 38, objectFit: "contain" }}
+                    />
+                  )}
+                </button>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    bottom: -2,
+                    right: -2,
+                    width: 24,
+                    height: 24,
+                    borderRadius: "50%",
+                    background: T.accent,
+                    border: "2px solid #fff",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    pointerEvents: "none",
+                  }}
+                >
+                  <Camera size={12} color="#fff" />
+                </span>
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handlePhotoPicked}
+                  data-testid="profile-photo-input"
+                  aria-label="Upload a profile photo"
+                  style={{ display: "none" }}
+                />
               </div>
             </div>
 
             <div style={{ borderRadius: T.radiusLg, background: T.surface, overflow: "hidden", boxShadow: T.shadowCard }}>
+              {/* GH Score — the Gloobal Human Score. It belongs to the person,
+                  not to an account balance, so it sits on Profile rather than
+                  anywhere in Accounts. */}
+              <button
+                onClick={() => setShowGHScore(true)}
+                aria-label="GH Score"
+                className="v2-row"
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  padding: "16px 18px",
+                  border: "none",
+                  background: "none",
+                  cursor: "pointer",
+                  textAlign: "left",
+                }}
+              >
+                <span
+                  style={{
+                    width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+                    background: "#FEF3E2", display: "flex", alignItems: "center", justifyContent: "center",
+                  }}
+                >
+                  <Trophy size={18} color="#F59E0B" />
+                </span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>GH Score</div>
+                  <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 1 }}>Self, Community, Environment &amp; Finance check-ins</div>
+                </span>
+                <ChevronRightIcon />
+              </button>
+
+              <div style={{ height: 1, background: T.line, marginLeft: 72 }} />
+
               <button
                 onClick={() => setProfileOverlay("referral")}
                 className="v2-row"
@@ -2716,6 +3080,36 @@ function DashboardScreenBase({
 
       {/* My Assets — cashback that grows toward the amount paid. Opened from
           the Accounts tab and cross-linked with PayLater both ways. */}
+      {/* Share with Gloobal users — the Creator picks what share of an
+          incoming payment goes back to whoever paid, before the receive
+          sheet opens. Either button carries on into Receive; only the
+          saved rate differs. */}
+      {showCreatorCashback && (
+        <CreatorCashbackScreen
+          ccy={ccy}
+          symbolId={myGloobalId}
+          initialRate={creatorRate}
+          onClose={() => setShowCreatorCashback(false)}
+          onSaved={(rate) => {
+            setCreatorRate(rate);
+            setShowCreatorCashback(false);
+            setShowReceive(true);
+            showToast(`Sharing ${Math.round(rate * 100)}% with Gloobal users`);
+          }}
+          onSkip={() => {
+            setShowCreatorCashback(false);
+            setShowReceive(true);
+          }}
+          onOpenAssets={() => {
+            setShowCreatorCashback(false);
+            setShowMyAssets(true);
+          }}
+        />
+      )}
+
+      {/* GH Score — opened from the Profile tab. */}
+      {showGHScore && <GHScoreScreen symbolId={myGloobalId} onClose={() => setShowGHScore(false)} />}
+
       {showMyAssets && (
         <MyAssetsScreen
           ccy={ccy}
@@ -3289,7 +3683,139 @@ function DashboardScreenBase({
             >
               Cancel
             </button>
+
+            {/* Previous IDs — a dated record of which Gloobal ID belonged to
+                this account when, so a rename leaves a trail instead of
+                quietly overwriting the old identity. */}
+            <div style={{ width: "100%", maxWidth: 360, borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: T.inkFaint, padding: "14px 16px 10px" }}>
+                Previous IDs
+              </div>
+              {idHistory.length === 0 ? (
+                <div data-testid="id-history-empty" style={{ padding: "0 16px 16px", fontSize: 12, color: T.inkFaint, fontWeight: 600 }}>
+                  No previous IDs
+                </div>
+              ) : (
+                idHistory.map((entry, i) => (
+                  <div
+                    key={`${entry.symbolId}-${entry.changedAt}`}
+                    data-testid="id-history-row"
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderTop: `1px solid ${T.line}` }}
+                  >
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontSize: 13, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay, letterSpacing: 0.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {entry.symbolId}
+                      </span>
+                      <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 2 }}>
+                        changed on {formatIdChangedAt(entry.changedAt)}
+                      </span>
+                    </span>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: T.inkFaint, flexShrink: 0 }}>#{idHistory.length - i}</span>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
+
+          {/* Biometric confirmation — mandatory, and always ahead of the API
+              call. Cancelling or failing here leaves the Gloobal ID alone. */}
+          {bioConfirm && (
+            <div
+              data-testid="id-biometric-overlay"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Confirm to update your Gloobal ID"
+              style={{
+                position: "fixed", inset: 0, zIndex: 400, background: "rgba(20,12,36,0.55)",
+                display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+              }}
+            >
+              <div
+                style={{
+                  width: "100%", maxWidth: 340, background: T.surface, borderRadius: T.radiusLg,
+                  boxShadow: T.shadowFloat, padding: "28px 22px 22px",
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 14,
+                }}
+              >
+                <span
+                  style={{
+                    width: 88, height: 88, borderRadius: "50%", border: `1.5px solid ${T.line}`,
+                    background: T.surface, boxShadow: T.shadowCard,
+                    display: "flex", alignItems: "center", justifyContent: "center", color: T.accent,
+                  }}
+                >
+                  <Fingerprint size={64} />
+                </span>
+
+                <span style={{ fontSize: 14, fontWeight: 800, color: T.ink, textAlign: "center", lineHeight: 1.4 }}>
+                  Confirm with fingerprint or Face ID to update your Gloobal ID
+                </span>
+
+                {bioConfirm.message && (
+                  <span
+                    data-testid="id-biometric-message"
+                    style={{ fontSize: 12, fontWeight: 700, color: bioConfirm.stage === "error" ? T.negative : T.inkSoft, textAlign: "center", lineHeight: 1.45 }}
+                  >
+                    {bioConfirm.message}
+                  </span>
+                )}
+
+                {bioConfirm.stage === "pin" && (
+                  <div style={{ width: "100%" }}>
+                    <div style={{ display: "flex", justifyContent: "center", gap: 12, margin: "4px 0 14px" }}>
+                      {[0, 1, 2, 3, 4, 5].map((i) => (
+                        <span
+                          key={i}
+                          style={{
+                            width: 12, height: 12, borderRadius: "50%",
+                            background: i < bioPin.length ? T.accent : T.line,
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <PhoneDialPad value={bioPin} onChange={setBioPin} minLength={6} maxLength={6} />
+                    <button
+                      onClick={handleBioPinSubmit}
+                      disabled={bioPin.length < 6 || changingId}
+                      data-testid="id-pin-confirm"
+                      className="v2-tap"
+                      style={{
+                        width: "100%",
+                        marginTop: 16,
+                        border: "none",
+                        borderRadius: T.radiusMd,
+                        padding: "13px 0",
+                        fontSize: 13.5,
+                        fontWeight: 800,
+                        color: bioPin.length < 6 ? T.inkFaint : "#fff",
+                        background: bioPin.length < 6 ? T.line : T.gradButton,
+                        cursor: bioPin.length < 6 ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {changingId ? "Updating…" : "Confirm PIN"}
+                    </button>
+                  </div>
+                )}
+
+                {bioConfirm.stage === "error" && (
+                  <button
+                    onClick={() => setBioConfirm({ stage: "prompt", message: null })}
+                    className="v2-tap"
+                    style={{ width: "100%", border: "none", borderRadius: T.radiusMd, padding: "13px 0", color: "#fff", fontSize: 13.5, fontWeight: 800, background: T.gradButton, cursor: "pointer" }}
+                  >
+                    Try again
+                  </button>
+                )}
+
+                <button
+                  onClick={() => { setBioConfirm(null); setBioPin(""); }}
+                  style={{ border: "none", background: "none", color: T.inkFaint, fontSize: 12.5, fontWeight: 700, padding: "4px 8px", cursor: "pointer" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
 
           {toast && (
             <div
