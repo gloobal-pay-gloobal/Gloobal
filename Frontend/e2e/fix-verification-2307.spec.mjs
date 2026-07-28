@@ -1,6 +1,9 @@
 // Verification for the four 2026-07-23 fixes:
 //   1. Country-code lock on login (backend guard + frontend lock).
 //   2. Face ID / Fingerprint moved off the PIN screen onto their own screen.
+//      (Taken further on 2026-07-27: the PIN screen carries no biometric
+//      affordance at all and the offer follows a correct PIN — the Fix 2
+//      block below asserts that shipped behaviour.)
 //   3. Symbol names in the Gloobal Symbols sheet + less language-dependent
 //      referral sheet.
 //   4. Real referrals: stored at registration, read back by
@@ -218,17 +221,22 @@ test.describe("Fix 2 — biometrics separated from PIN", () => {
     await expect(page.getByText("Fingerprint", { exact: true })).toHaveCount(0);
   });
 
-  test("F2-B: the biometric link is visible on the PIN screen", async ({ page }) => {
+  // The separation these three used to describe — a link on the PIN screen
+  // leading to the biometric screen — was superseded on 2026-07-27: the PIN
+  // screen now carries no biometric affordance at all, and the offer is its
+  // own screen shown *after* a correct PIN, and only for an account with no
+  // passkey yet. Same fix, taken further; see fix-verification-2707.spec.mjs.
+  test("F2-B: the PIN screen carries no biometric link at all", async ({ page }) => {
     await gotoLoginAuth(page);
-    const link = page.getByRole("button", { name: "Use Face ID / Fingerprint instead" });
-    await expect(link).toBeVisible();
-    const fontSize = await link.evaluate((el) => getComputedStyle(el).fontSize);
-    expect(parseFloat(fontSize)).toBeCloseTo(13, 0);
+    await expect(page.getByRole("button", { name: "Use Face ID / Fingerprint instead" })).toHaveCount(0);
+    // The PIN pad is the whole screen.
+    await expect(page.getByRole("button", { name: "Digit 1", exact: true })).toBeVisible();
   });
 
-  test("F2-C: tapping the link opens a full-size biometric screen with a back button", async ({ page }) => {
+  test("F2-C: a correct PIN opens the full-size biometric screen", async ({ page }) => {
     await gotoLoginAuth(page);
-    await page.getByRole("button", { name: "Use Face ID / Fingerprint instead" }).click();
+    await tapDigits(page, PIN);
+    await page.getByRole("button", { name: "Log in", exact: true }).last().click();
 
     for (const name of [/Verify with Face ID/i, /Verify with fingerprint/i]) {
       const circle = page.getByRole("button", { name }).locator("span").first();
@@ -237,24 +245,19 @@ test.describe("Fix 2 — biometrics separated from PIN", () => {
       expect(box.width).toBeGreaterThanOrEqual(80);
       expect(box.height).toBeGreaterThanOrEqual(80);
     }
-    await expect(page.getByRole("button", { name: "Back", exact: true })).toBeVisible();
     // The PIN pad does not follow onto this screen.
     await expect(page.getByRole("button", { name: "Digit 1", exact: true })).toHaveCount(0);
   });
 
-  test("F2-D: back from the biometric screen returns to the PIN screen with state intact", async ({ page }) => {
+  test("F2-D: the biometric offer can be skipped through to the dashboard", async ({ page }) => {
     await gotoLoginAuth(page);
-    await tapDigits(page, "12");
-    await expect(page.getByText("2/6")).toBeVisible();
+    await tapDigits(page, PIN);
+    await page.getByRole("button", { name: "Log in", exact: true }).last().click();
 
-    await page.getByRole("button", { name: "Use Face ID / Fingerprint instead" }).click();
-    await expect(page.getByRole("button", { name: /Verify with Face ID/i })).toBeVisible({ timeout: 30_000 });
-
-    await page.getByRole("button", { name: "Back", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Digit 1", exact: true })).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole("button", { name: "Use Face ID / Fingerprint instead" })).toBeVisible();
-    // The two digits typed before the detour are still there.
-    await expect(page.getByText("2/6")).toBeVisible();
+    const skip = page.getByRole("button", { name: /Skip for now/i });
+    await expect(skip).toBeVisible({ timeout: 30_000 });
+    await skip.click();
+    await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
   });
 });
 

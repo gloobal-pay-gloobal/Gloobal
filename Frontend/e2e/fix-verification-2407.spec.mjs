@@ -345,7 +345,15 @@ test("I3-D: Update ID stays disabled when the new ID is taken", async ({ page })
 
 test("I3-E: A successful change updates the displayed ID and shows a toast", async ({ page }) => {
   const patches = [];
+  // Since 2026-07-28 the rename is gated on a device confirmation that runs
+  // before the request. This browser reports no platform authenticator, so the
+  // gate falls back to the account's PIN — see fix-verification-2807.spec.mjs
+  // for the gate's own coverage.
+  await page.addInitScript(() => {
+    window.PublicKeyCredential = { isUserVerifyingPlatformAuthenticatorAvailable: async () => false };
+  });
   await gotoChangeId(page, {
+    "/api/pin/verify": () => json({ verified: true, user: USER }),
     "/api/profile/change-symbol-id": (route) => {
       patches.push(JSON.parse(route.request().postData() || "{}"));
       return json({ message: "Gloobal ID updated.", newSymbolId: NEW_ID_STR, user: { ...USER, symbolId: NEW_ID_STR } });
@@ -355,6 +363,11 @@ test("I3-E: A successful change updates the displayed ID and shows a toast", asy
   await tapSymbols(page, NEW_ID);
   await expect(page.getByTestId("new-id-available")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Update ID", exact: true }).click();
+
+  await expect(page.getByTestId("id-biometric-overlay")).toBeVisible({ timeout: 30_000 });
+  expect(patches).toHaveLength(0);
+  await tapDigits(page, PIN);
+  await page.getByTestId("id-pin-confirm").click();
 
   await expect(page.getByText("Gloobal ID updated successfully")).toBeVisible({ timeout: 30_000 });
   // Sheet closed.
