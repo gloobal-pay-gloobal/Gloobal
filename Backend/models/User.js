@@ -25,6 +25,34 @@ const userSchema = new mongoose.Schema({
     unique: true,
     trim: true
   },
+  // Every Gloobal ID this account has used before, with the moment it was
+  // replaced. The ID is the identity every other route keys off, so a rename
+  // has to leave a dated record rather than silently overwriting the old one.
+  symbolIdHistory: [{
+    symbolId: {
+      type: String,
+      required: true
+    },
+    changedAt: {
+      type: Date,
+      default: Date.now
+    },
+    replacedBy: {
+      type: String,
+      default: null
+    }
+  }],
+  // Gloobal Creators choose for themselves what share of an incoming payment
+  // they give back to whoever paid them — 0% to 7%, stored as a decimal
+  // (1% = 0.01). This is the rate applied to the asset seed planted for the
+  // payer; Gloobal does not set it centrally. A plain (non-Creator) account
+  // simply leaves it at 0, which plants no seed.
+  cashbackRate: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 0.07
+  },
   // The direct person who invited them
   referredBy: {
     type: String,

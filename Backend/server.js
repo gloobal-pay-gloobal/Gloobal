@@ -75,6 +75,14 @@ const publicUserPayload = async (user) => {
     symbolId: user.symbolId,
     referredBy: user.referredBy || null,
     referralCount: user.referralCount || 0,
+    cashbackRate: Number(user.cashbackRate) || 0,
+    symbolIdHistory: Array.isArray(user.symbolIdHistory)
+      ? user.symbolIdHistory.map((entry) => ({
+          symbolId: entry.symbolId,
+          changedAt: entry.changedAt,
+          replacedBy: entry.replacedBy || null
+        }))
+      : [],
     hasPin,
     hasPasskey,
     createdAt: joinedDate,
@@ -898,6 +906,12 @@ app.patch('/api/profile/change-symbol-id', async (req, res) => {
       });
     }
 
+    // Record which ID this account used to be known by, and when — before
+    // the new one is written, so the trail is complete and correctly dated.
+    user.symbolIdHistory = [
+      ...(Array.isArray(user.symbolIdHistory) ? user.symbolIdHistory : []),
+      { symbolId: currentSymbolId, changedAt: new Date(), replacedBy: newSymbolId }
+    ];
     user.symbolId = newSymbolId;
     // fullName mirrors the mobile number for these prototype accounts, so
     // it is deliberately left alone — only the ID changes.
@@ -1575,6 +1589,42 @@ function computeSeed(seed) {
   };
 }
 
+// The ceiling on what a Gloobal Creator can choose to share back. The floor is
+// zero — sharing nothing is a valid choice, and simply plants no seed.
+const MAX_CREATOR_CASHBACK_RATE = 0.07;
+
+// PATCH /api/creator/cashback-rate — a Creator sets the share of every payment
+// they hand back to whoever paid them. Each Creator picks their own rate;
+// Gloobal does not set one centrally. Stored as a decimal (1% = 0.01).
+app.patch('/api/creator/cashback-rate', async (req, res) => {
+  try {
+    const cleanSymbolId = String(req.body?.symbolId || '').trim();
+    const rate = Number(req.body?.cashbackRate);
+
+    if (!cleanSymbolId) {
+      return res.status(400).json({ message: 'Gloobal ID is required.' });
+    }
+    if (!Number.isFinite(rate) || rate < 0 || rate > MAX_CREATOR_CASHBACK_RATE) {
+      return res.status(400).json({
+        message: 'cashbackRate must be between 0 and 0.07 (0%–7%).'
+      });
+    }
+
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+    if (!user) {
+      return res.status(404).json({ message: 'No account found for this Gloobal ID.' });
+    }
+
+    user.cashbackRate = rate;
+    await user.save();
+
+    return res.status(200).json({ cashbackRate: user.cashbackRate });
+  } catch (error) {
+    console.error('Creator cashback rate error:', error);
+    return res.status(500).json({ message: 'Server error while saving your cashback rate.' });
+  }
+});
+
 // GET /api/assets/:symbolId — a user's planted seeds with live-derived values.
 app.get('/api/assets/:symbolId', async (req, res) => {
   try {
@@ -1917,17 +1967,20 @@ app.post('/api/transactions/send', async (req, res) => {
     pendingTransaction.status = 'success';
     await pendingTransaction.save();
 
-    // Plant a My Assets seed for cashback-earning business/bill payments.
-    // P2P sends between two Gloobal users carry no cashbackRate (or 0), so
-    // this never fires for them. Best-effort — a seed failure must never
-    // fail an already-successful transaction.
-    const seedCashbackRate = Number(req.body?.cashbackRate);
+    // Plant a My Assets seed for cashback-earning payments. The rate is the
+    // *payee's* own choice (User.cashbackRate, set via
+    // PATCH /api/creator/cashback-rate) — never a figure the paying client
+    // supplies, and never a hardcoded one. A plain person-to-person send is
+    // simply a payee who never set a rate, so it stays at 0 and plants
+    // nothing. Best-effort — a seed failure must never fail an
+    // already-successful transaction.
+    const seedCashbackRate = Number(receiver.cashbackRate) || 0;
     if (Number.isFinite(seedCashbackRate) && seedCashbackRate > 0) {
       try {
         await AssetSeed.create({
           userId: sender._id,
           symbolId: sender.symbolId,
-          business: String(req.body?.business || req.body?.payeeName || cleanNote || 'Payment').trim().slice(0, 80),
+          business: String(req.body?.business || req.body?.payeeName || receiver.fullName || cleanNote || 'Payment').trim().slice(0, 80),
           category: String(req.body?.category || 'General').trim().slice(0, 40),
           amountPaid: numericAmount,
           cashbackRate: seedCashbackRate,

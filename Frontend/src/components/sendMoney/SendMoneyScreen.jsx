@@ -21,7 +21,7 @@ import { SendMoneyAmbientBg } from "../backgrounds/FinancialAmbient";
 import { SubmitButton, SymbolChipRow } from "../common/CodeEntry";
 import { PhoneDialPad, SymbolDialPad } from "../common/DialPads";
 import { Flag, FlagEmoji, countryGlowStyle } from "../common/FlagComponents";
-import { ALL_COUNTRIES, countryMatches, mobileDigitRange } from "../../constants/countries";
+import { ALL_COUNTRIES, countryFromNumber, countryMatches, mobileDigitRange } from "../../constants/countries";
 import { ACTIVE_ISO_SET } from "../../constants/coverage";
 import { COUNTRY_CURRENCY, CURRENCIES, convert, fmt } from "../../constants/finance";
 import { getHistory, resolveUser, sendTransaction } from "../../services/api/authApi";
@@ -156,6 +156,18 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false }) {
   // filters the flag grid by name or dial code, same predicate every other
   // country search box in the app uses (countryMatches).
   const [searchCountryQuery, setSearchCountryQuery] = useState("");
+  // --- Gloobal ID lookup preview -----------------------------------------
+  // A Gloobal ID carries its own country: the account behind it registered
+  // under one. So the moment a complete ID is dialled, the receiver is looked
+  // up and the flag follows *them*, not the sender's default region — that
+  // was the bug, a UK sender seeing a UK flag over an Indian recipient.
+  //
+  // The switch is a helpful default, not a lock: selectSearchCountry still
+  // overrides it, exactly as it did before. Clearing the ID puts the flag
+  // back on the sender's own country.
+  const [idPreview, setIdPreview] = useState(null); // { user, country } | null
+  const [idPreviewError, setIdPreviewError] = useState(null);
+  const [idPreviewLoading, setIdPreviewLoading] = useState(false);
   const effectiveSearchCountry = searchCountry || toCountryLike(top);
   const [minMobileDigits, maxMobileDigits] = mobileDigitRange(effectiveSearchCountry.iso);
   const filteredSearchCountries = useMemo(
@@ -256,6 +268,54 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pin]);
 
+  useEffect(() => {
+    if (searchMode !== "id" || searchStage !== "dialing") return;
+
+    // Nothing (or not enough) typed: no recipient, so the flag belongs to the
+    // sender's own country again.
+    if (idBuffer.length < ID_SEARCH_LENGTH) {
+      setIdPreview(null);
+      setIdPreviewError(null);
+      setIdPreviewLoading(false);
+      setSearchCountry(null);
+      setBottom((b) => ({ ...b, country: top.country, flag: top.flag }));
+      return;
+    }
+
+    let cancelled = false;
+    setIdPreviewLoading(true);
+    setIdPreviewError(null);
+    (async () => {
+      try {
+        const user = await resolveUser(idBuffer);
+        if (cancelled) return;
+        // Their registered country, read off the dial code of the mobile
+        // number the account was created with.
+        const country = countryFromNumber(user.mobileNumber) || toCountryLike(top);
+        setIdPreview({ user, country });
+        setIdPreviewLoading(false);
+        setSearchCountry(country);
+        setBottom((b) => ({
+          ...b,
+          country: country.name,
+          flag: country.flag,
+          currency: COUNTRY_CURRENCY[country.iso] || b.currency,
+        }));
+      } catch {
+        if (cancelled) return;
+        // An unknown ID must not move the flag anywhere.
+        setIdPreview(null);
+        setIdPreviewLoading(false);
+        setIdPreviewError("No user found for this ID");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idBuffer, searchMode, searchStage]);
+
   function showToast(msg) {
     setToast(msg);
     clearTimeout(toastTimer.current);
@@ -312,6 +372,8 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false }) {
       setSearchCountry(null);
       setSearchCountryQuery("");
       setFoundDisplayMode("name");
+      setIdPreview(null);
+      setIdPreviewError(null);
       setBottom(buildLocalReceiverPlaceholder(top));
     }
   }
@@ -357,16 +419,22 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false }) {
     }
     setSearching(true);
     try {
-      const user = await resolveUser(identifier);
+      // The ID lookup already ran while dialling — reuse its answer instead
+      // of asking the backend the same question twice.
+      const user = searchMode === "id" && idPreview?.user ? idPreview.user : await resolveUser(identifier);
+      // For an ID search the receiver's own registered country wins; for a
+      // mobile search the selected country *is* how the number was built.
+      const receiverCountry = (searchMode === "id" && countryFromNumber(user.mobileNumber)) || c;
       setBottom({
-        country: c.name,
-        flag: c.flag,
+        country: receiverCountry.name,
+        flag: receiverCountry.flag,
         phone: user.mobileNumber || "",
         id: user.symbolId,
         symbolId: user.symbolId,
-        currency: COUNTRY_CURRENCY[c.iso] || "USD",
+        currency: COUNTRY_CURRENCY[receiverCountry.iso] || "USD",
         name: user.fullName || "Gloobal User",
       });
+      setSearchCountry(receiverCountry);
       setSearching(false);
       setSearchStage("found");
       setFoundDisplayMode("name");
@@ -374,7 +442,13 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false }) {
       setBottomOpen(true);
     } catch (err) {
       setSearching(false);
-      setSearchError(err instanceof Error ? err.message : "No Gloobal user found.");
+      setSearchError(
+        searchMode === "id"
+          ? "No user found for this ID"
+          : err instanceof Error
+            ? err.message
+            : "No Gloobal user found."
+      );
     }
   }
 
@@ -905,6 +979,8 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false }) {
                     <button
                       onClick={() => setCountryDropdownOpen((o) => !o)}
                       aria-label={`Country: ${effectiveSearchCountry.name}. Tap to search for someone outside your own country`}
+                      data-testid="receiver-country"
+                      data-country={effectiveSearchCountry.iso}
                       className="v2-tap"
                       style={{ border: "none", background: "none", padding: 0, cursor: "pointer", display: "flex" }}
                     >
@@ -937,7 +1013,9 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false }) {
                     )}
                   </div>
                 ) : (
-                  <Flag emoji={bottom.flag} size="lg" badge="receive" />
+                  <span data-testid="receiver-country" data-country={effectiveSearchCountry.iso} style={{ display: "flex" }}>
+                    <Flag emoji={bottom.flag} size="lg" badge="receive" />
+                  </span>
                 )}
                 {searchStage === "found" ? (
                   <span className="card-name">{identityDisplayValue(bottom, foundDisplayMode)}</span>
@@ -1058,6 +1136,61 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false }) {
                   }
                   label={searching ? "Searching…" : "Search"}
                 />
+                {/* Who this ID actually belongs to — shown as soon as the ID
+                    is complete, with the flag above already switched to their
+                    country. */}
+                {searchMode === "id" && idPreview && (
+                  <div
+                    data-testid="recipient-found"
+                    style={{
+                      marginTop: 12,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 9,
+                      alignSelf: "stretch",
+                      justifyContent: "center",
+                      border: "1px solid #0FA372",
+                      background: "#E3F8EE",
+                      borderRadius: 999,
+                      padding: "9px 14px",
+                    }}
+                  >
+                    <FlagEmoji flag={idPreview.country.flag} width={24} height={18} radius={4} />
+                    <span
+                      style={{
+                        fontSize: 12.5,
+                        fontWeight: 800,
+                        color: "#14122B",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        maxWidth: 130,
+                      }}
+                    >
+                      {idPreview.user.symbolId}
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: "#0FA372", flexShrink: 0 }}>
+                      Recipient found ✓
+                    </span>
+                  </div>
+                )}
+
+                {searchMode === "id" && idPreviewLoading && !idPreview && (
+                  <div style={{ marginTop: 10, textAlign: "center", fontSize: 12, color: "#8b86a3", fontWeight: 600 }}>
+                    Looking up this Gloobal ID…
+                  </div>
+                )}
+
+                {searchMode === "id" && idPreviewError && !searchError && (
+                  <div
+                    data-testid="recipient-not-found"
+                    role="alert"
+                    style={{ marginTop: 10, textAlign: "center", fontSize: 12.5, color: "#EF4444", fontWeight: 600 }}
+                  >
+                    {idPreviewError}
+                  </div>
+                )}
+
                 {searchError && (
                   <div
                     role="alert"
