@@ -148,7 +148,11 @@ export function MyAssetsScreen({ ccy = "₹", symbolId, onClose, onOpenPayLater 
           </button>
         </div>
 
-        {/* 2 — Rate strip */}
+        {/* 2 — Portfolio growth chart. Graph up top, data below it: the shape
+            of the whole portfolio reads first, the per-seed rows explain it. */}
+        {seeds.length > 0 && <PortfolioGrowthChart seeds={seeds} money={money} />}
+
+        {/* 3 — Rate strip */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
           {[
             { value: "0–7%", label: "Cashback range" },
@@ -162,7 +166,7 @@ export function MyAssetsScreen({ ccy = "₹", symbolId, onClose, onOpenPayLater 
           ))}
         </div>
 
-        {/* 3 — Per-transaction list */}
+        {/* 4 — Per-transaction list */}
         <div>
           <div style={{ fontSize: 12.5, fontWeight: 800, color: T.inkSoft, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 2px 8px" }}>
             Assets from spending
@@ -199,7 +203,7 @@ export function MyAssetsScreen({ ccy = "₹", symbolId, onClose, onOpenPayLater 
             ))}
           </div>
 
-          {/* 4 — View all / Show less */}
+          {/* 5 — View all / Show less */}
           {seeds.length > 4 && (
             <button
               type="button"
@@ -224,6 +228,89 @@ export function MyAssetsScreen({ ccy = "₹", symbolId, onClose, onOpenPayLater 
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Whole-portfolio growth chart -------------------------------------------
+// Every planted seed's curve added together, from today forward. Each seed
+// stops growing once it reaches the amount that was actually paid, so the
+// portfolio line flattens as its earliest seeds finish compounding — the same
+// per-seed rule as AssetDetail below, just summed.
+function PortfolioGrowthChart({ seeds, money }) {
+  const target = useMemo(() => seeds.reduce((s, x) => s + x.amountPaid, 0), [seeds]);
+
+  // The horizon is however long the slowest seed still has left to run.
+  const maxYear = useMemo(() => {
+    const remaining = seeds.map((s) => Math.max(0, s.yearsToTarget - s.yearsAccrued));
+    return Math.max(1, Math.ceil(Math.max(0, ...remaining)));
+  }, [seeds]);
+
+  const points = useMemo(
+    () =>
+      Array.from({ length: maxYear + 1 }, (_, y) => ({
+        year: y,
+        value: seeds.reduce(
+          (sum, s) => sum + Math.min(s.amountPaid, s.cashback * Math.pow(1 + GROWTH_MONTHLY, (s.yearsAccrued + y) * 12)),
+          0
+        ),
+      })),
+    [seeds, maxYear]
+  );
+
+  const W = 320;
+  const H = 170;
+  const padL = 46;
+  const padR = 14;
+  const padT = 14;
+  const padB = 26;
+  const maxVal = Math.max(target, points[points.length - 1].value) || 1;
+  const x = (year) => padL + (year / maxYear) * (W - padL - padR);
+  const y = (val) => padT + (1 - val / maxVal) * (H - padT - padB);
+  const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.year).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
+  const area = `${line} L${x(maxYear).toFixed(1)},${(H - padB).toFixed(1)} L${padL},${(H - padB).toFixed(1)} Z`;
+  const targetY = y(target);
+  const tickEvery = Math.ceil(points.length / 6) || 1;
+
+  return (
+    <div data-testid="assets-growth-chart" style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: "16px 12px 12px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 6px 6px" }}>
+        <TrendingUp size={15} color={T.accent} />
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: T.inkSoft }}>Portfolio growth</span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Growth curve for all your assets">
+        <defs>
+          <linearGradient id="gloobalAssetsArea" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={T.accent} stopOpacity="0.24" />
+            <stop offset="100%" stopColor={T.accent} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {/* Target: the sum of every amount actually paid */}
+        <text x={4} y={targetY + 4} fontSize="9" fill={T.inkFaint}>{money(target)}</text>
+        <line x1={padL} y1={targetY} x2={W - padR} y2={targetY} stroke={T.accent} strokeWidth="1" strokeDasharray="4 3" opacity="0.7" />
+        <text x={W - padR} y={targetY - 5} fontSize="9" fill={T.accent} textAnchor="end">full</text>
+
+        <path d={area} fill="url(#gloobalAssetsArea)" stroke="none" />
+        <path d={line} fill="none" stroke={T.accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+
+        {/* Today sits at year 0 — the curve runs forward from here */}
+        <line x1={padL} y1={padT} x2={padL} y2={H - padB} stroke={T.inkSoft} strokeWidth="1" strokeDasharray="3 3" />
+        <text x={padL + 3} y={padT + 9} fontSize="9" fill={T.inkSoft}>Today</text>
+
+        {points
+          .filter((_, i) => i % tickEvery === 0 || i === points.length - 1)
+          .map((p) => (
+            <text key={p.year} x={x(p.year)} y={H - padB + 15} fontSize="9" fill={T.inkFaint} textAnchor="middle">
+              {p.year}yr
+            </text>
+          ))}
+      </svg>
+      {/* Worded out rather than "1%/mo" so it doesn't read as a second copy
+          of the rate strip's own Growth rate tile just below. */}
+      <div style={{ textAlign: "center", fontSize: 10.5, color: T.inkFaint, fontWeight: 600 }}>
+        Compounds 1% a month · X axis in years
       </div>
     </div>
   );
