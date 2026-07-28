@@ -185,9 +185,13 @@ test.describe("GlobalId v2 integration", () => {
     await page.getByRole("button", { name: /^Search/ }).click();
     expect((await resolved).status()).toBe(200);
 
-    // The Send Money screen has its own Pay button below the amount — the
-    // dashboard's Pay is the earlier one in the DOM, hence .last().
-    await page.getByRole("button", { name: /^Pay$/ }).last().click();
+    // The Send Money screen's own Pay button, below the amount. Matched by
+    // class rather than by name+.last(): the dashboard's Pay tile has the same
+    // accessible name, and until the receiver resolves it is the *only* match,
+    // so .last() could pick the covered dashboard button and retry forever.
+    const payNow = page.locator("button.send-btn");
+    await expect(payNow).toBeVisible({ timeout: 90_000 });
+    await payNow.click();
     await page.getByRole("button", { name: "Gloobal Bank", exact: true }).click();
 
     const sendResponse = page.waitForResponse((r) => r.url().includes("/api/transactions/send"), {
