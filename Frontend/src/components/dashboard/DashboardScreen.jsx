@@ -367,6 +367,27 @@ function recordIdChange(oldSymbolId, newSymbolId) {
   return next;
 }
 
+// Everything this app keeps locally is filed under the account's Gloobal ID,
+// which is exactly the thing a rename changes. Without this, changing your ID
+// silently wipes your GH Score answers and your profile photo — same person,
+// same device, but the app looks under a key nobody wrote to. Renaming carries
+// them across.
+const ID_SCOPED_LOCAL_KEYS = ["gloobal.ghAnswers", "gloobal.profilePhoto"];
+
+function migrateIdScopedStorage(oldSymbolId, newSymbolId) {
+  if (!oldSymbolId || !newSymbolId || oldSymbolId === newSymbolId) return;
+  for (const prefix of ID_SCOPED_LOCAL_KEYS) {
+    try {
+      const value = window.localStorage.getItem(`${prefix}.${oldSymbolId}`);
+      if (value === null) continue;
+      window.localStorage.setItem(`${prefix}.${newSymbolId}`, value);
+      window.localStorage.removeItem(`${prefix}.${oldSymbolId}`);
+    } catch {
+      // storage unavailable — nothing to carry across
+    }
+  }
+}
+
 // "22 Jul 2026, 14:05" — the timestamp beside a previous Gloobal ID. Built
 // from explicit parts for the same reason formatJoinedDate is.
 function formatIdChangedAt(value) {
@@ -1317,8 +1338,11 @@ function DashboardScreenBase({
       setBioConfirm(null);
       setBioPin("");
       // Write the old ID into the record before the app starts calling itself
-      // by the new one, so the history is complete and correctly ordered.
+      // by the new one, so the history is complete and correctly ordered, and
+      // carry the ID-scoped local data (GH answers, profile photo) across with
+      // it — a rename is the same person, not a new account.
       setIdHistory(recordIdChange(previousId, result.newSymbolId));
+      migrateIdScopedStorage(previousId, result.newSymbolId);
       // Hand the new ID up so every other screen — share card, Send Money,
       // the session in localStorage — follows it. Signing out and back in
       // is not required.
