@@ -49,8 +49,10 @@ export function CreatorCashbackScreen({ ccy = "₹", symbolId, initialRate = 0, 
       setSaving(false);
       onSaved?.(nextRate);
     } catch (err) {
-      // Offline or a cold backend must not trap a Creator on this screen —
-      // the choice is kept locally and the receive flow carries on.
+      // The rate is what a payer's cashback is calculated from, so an
+      // unsaved one must not be reported as saved. The screen says so and
+      // stays put; Skip for now is still there for anyone who would rather
+      // carry on to Receive at their current rate.
       setSaving(false);
       setError(err instanceof Error ? err.message : "Couldn't save your rate. Try again.");
     }
