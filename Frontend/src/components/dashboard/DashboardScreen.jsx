@@ -39,7 +39,7 @@ import {
 } from "../../services/api/authApi";
 import { getPayLater } from "../../services/api/assetsApi";
 import { MyAssetsScreen } from "./MyAssetsScreen";
-import { CreatorCashbackScreen } from "./CreatorCashbackScreen";
+import { MyShareScreen } from "./MyShareScreen";
 import { GHScoreScreen } from "../profile/GHScoreScreen";
 import { generateIdSuggestions } from "../../lib/idSuggestions";
 import { T } from "../../styles/theme";
@@ -3264,7 +3264,7 @@ function DashboardScreenBase({
           sheet opens. Either button carries on into Receive; only the
           saved rate differs. */}
       {showCreatorCashback && (
-        <CreatorCashbackScreen
+        <MyShareScreen
           ccy={ccy}
           symbolId={myGloobalId}
           initialRate={creatorRate}
@@ -3273,7 +3273,10 @@ function DashboardScreenBase({
             setCreatorRate(rate);
             setShowCreatorCashback(false);
             setShowReceive(true);
-            showToast(`Sharing ${Math.round(rate * 100)}% with Gloobal users`);
+            // Not rounded to a whole percent any more — 1.57% is now a rate
+            // someone can actually pick, so reporting it back as "2%" would
+            // contradict what they just saved.
+            showToast(`Sharing ${Number((rate * 100).toFixed(2))}% with Gloobal users`);
           }}
           onSkip={() => {
             setShowCreatorCashback(false);
