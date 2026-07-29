@@ -239,6 +239,9 @@ function GloobalId() {
   const [loginCountrySearch, setLoginCountrySearch] = useState("");
   const [countrySearch, setCountrySearch] = useState("");
   const [activeScreen, setActiveScreen] = useState(null); // null | "send" | "bank" | "coverage"
+  // The last completed payment's receipt, handed from Send Money down to the
+  // dashboard so the balance and My Assets reflect it without a round trip.
+  const [paymentReceipt, setPaymentReceipt] = useState(null);
   // Whether the entered Secure ID / Referral ID symbols are shown in the
   // clear or masked as dots — toggled by the eye button next to each.
   const [secureIdRevealed, setSecureIdRevealed] = useState(false);
@@ -1987,6 +1990,7 @@ function GloobalId() {
               referralCount={registeredUser?.referralCount}
               phoneNumber={phoneNumber}
               fullName={registeredUser?.fullName}
+              paymentReceipt={paymentReceipt}
               // A renamed Gloobal ID has to land here, not just inside the
               // dashboard: `registeredUser` is what every other screen and
               // the persisted session read from, and `secureId` is the
@@ -2007,6 +2011,10 @@ function GloobalId() {
             <Suspense fallback={<ScreenFallback />}>
               <SendMoneyScreen
                 onClose={() => setActiveScreen(null)}
+                // Send renders as an overlay above the dashboard, which never
+                // unmounts, so the receipt has to be handed across rather
+                // than picked up by a remount.
+                onPaymentComplete={setPaymentReceipt}
                 sender={{
                   ...dialCountry,
                   phoneNumber,
