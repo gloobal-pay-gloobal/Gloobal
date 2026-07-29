@@ -3,8 +3,8 @@
 //   TASK 1 — GH Score (Gloobal Human Score) on the Profile tab: four pillars,
 //     daily-rotating Self/Community/Environment check-ins, permanently locked
 //     Finance check-ins, a Generate gate, and answers that survive a reload.
-//   TASK 2 — Creator cashback sharing: "Share with Gloobal users" opens after
-//     Receive, 0–7% picker, live worked example, PATCH /api/creator/cashback-rate.
+//   TASK 2 — Creator cashback sharing: "My Share" opens after Receive, covers
+//     the 0–7% band, live worked example, PATCH /api/creator/cashback-rate.
 //   TASK 3 — the Accounts tab carries no demo/placeholder asset content of its
 //     own; demo seeds live only inside My Assets.
 //   TASK 4 — My Assets: graph up top, data below it.
@@ -127,13 +127,13 @@ async function gotoProfile(page, overrides, initScript) {
 
 async function gotoGHScore(page, overrides) {
   await gotoProfile(page, overrides);
-  await page.getByRole("button", { name: "GH Score", exact: true }).click();
+  await page.getByRole("button", { name: "My GH Score", exact: true }).click();
   await expect(page.getByTestId("gh-category-self")).toBeVisible({ timeout: 30_000 });
 }
 
 async function gotoChangeId(page, overrides, initScript) {
   await gotoProfile(page, overrides, initScript);
-  await page.getByRole("button", { name: /Change Gloobal ID/i }).click();
+  await page.getByRole("button", { name: "My Gloobal ID", exact: true }).click();
   await expect(page.getByTestId("current-gloobal-id")).toBeVisible({ timeout: 30_000 });
 }
 
@@ -148,7 +148,7 @@ async function gotoSend(page, overrides) {
 
 test("GH-A: GH Score entry appears on Profile screen", async ({ page }) => {
   await gotoProfile(page);
-  await expect(page.getByRole("button", { name: "GH Score", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "My GH Score", exact: true })).toBeVisible();
 });
 
 test("GH-B: Tapping GH Score opens the categories screen with all 4 pillars", async ({ page }) => {
@@ -202,7 +202,7 @@ test("GH-F: GH answers persist across page reload", async ({ page }) => {
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Profile", exact: true }).click();
-  await page.getByRole("button", { name: "GH Score", exact: true }).click();
+  await page.getByRole("button", { name: "My GH Score", exact: true }).click();
 
   await expect(page.getByTestId("gh-progress-self")).toHaveText("1/3");
   await page.getByTestId("gh-category-self").click();
@@ -211,33 +211,33 @@ test("GH-F: GH answers persist across page reload", async ({ page }) => {
 
 // ═══ TASK 2 — Creator cashback sharing ═════════════════════════════════════
 
-test("CR-A: Creator cashback screen appears after tapping Receive", async ({ page }) => {
+test("CR-A: The My Share screen appears after tapping Receive", async ({ page }) => {
   await gotoDashboard(page);
   await page.getByRole("button", { name: "Receive", exact: true }).click();
-  await expect(page.getByText("Share with Gloobal users")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText(/Choose the % you share with users who pay you/i)).toBeVisible();
+  await expect(page.getByText("My Share", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Choose how much you share with users who pay you/i)).toBeVisible();
 });
 
-test("CR-B: Cashback rate picker shows 0–7% range", async ({ page }) => {
+test("CR-B: The rate control covers the whole 0-7% band", async ({ page }) => {
   await gotoDashboard(page);
   await page.getByRole("button", { name: "Receive", exact: true }).click();
-  await expect(page.getByTestId("creator-rate-0")).toHaveText("0%");
-  await expect(page.getByTestId("creator-rate-7")).toHaveText("7%");
-  // The chosen value is shown prominently on its own.
-  await expect(page.getByTestId("creator-rate-value")).toHaveText("0%");
+  const slider = page.getByTestId("my-share-slider");
+  await expect(slider).toHaveAttribute("min", "0");
+  await expect(slider).toHaveAttribute("max", "7");
+  // Opens on the account's saved rate, which is 0 for this fixture.
+  await expect(page.getByTestId("my-share-rate-input")).toHaveValue("0");
 });
 
 test("CR-C: Live example updates when rate changes", async ({ page }) => {
   await gotoDashboard(page);
   await page.getByRole("button", { name: "Receive", exact: true }).click();
-  await page.getByTestId("creator-rate-2").click();
-  await expect(page.getByTestId("creator-rate-value")).toHaveText("2%");
+  await page.getByTestId("my-share-rate-input").fill("2");
   // 2% of 1,000 is 20 — quoted in the person's own currency, not a hardcoded one.
-  await expect(page.getByTestId("creator-rate-example")).toContainText("1000.00");
-  await expect(page.getByTestId("creator-rate-example")).toContainText("20.00");
+  await expect(page.getByTestId("my-share-example")).toContainText("1000.00");
+  await expect(page.getByTestId("my-share-example")).toContainText("20.00");
 });
 
-test('CR-D: "Save & Continue" calls PATCH /api/creator/cashback-rate', async ({ page }) => {
+test('CR-D: "Continue" calls PATCH /api/creator/cashback-rate', async ({ page }) => {
   const patched = [];
   await gotoDashboard(page, {
     "/api/creator/cashback-rate": (route) => {
@@ -247,8 +247,8 @@ test('CR-D: "Save & Continue" calls PATCH /api/creator/cashback-rate', async ({ 
   });
 
   await page.getByRole("button", { name: "Receive", exact: true }).click();
-  await page.getByTestId("creator-rate-3").click();
-  await page.getByTestId("creator-save").click();
+  await page.getByTestId("my-share-rate-input").fill("3");
+  await page.getByTestId("my-share-continue").click();
 
   await expect.poll(() => patched.length).toBeGreaterThan(0);
   expect(patched[0].method).toBe("PATCH");
@@ -398,7 +398,7 @@ test("CH-B: After a successful ID change, old ID appears in history", async ({ p
   expect(patched[0].newSymbolId).toBe(OTHER_ID_STR);
 
   // Back on Change Gloobal ID, the old ID is on the record with a timestamp.
-  await page.getByRole("button", { name: /Change Gloobal ID/i }).click();
+  await page.getByRole("button", { name: "My Gloobal ID", exact: true }).click();
   const row = page.getByTestId("id-history-row").first();
   await expect(row).toBeVisible({ timeout: 30_000 });
   await expect(row).toContainText(SECURE_ID_STR);

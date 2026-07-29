@@ -112,11 +112,11 @@ async function gotoDashboard(page) {
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
 }
 
-/** Dashboard -> Profile -> My Referral Network -> Share your Gloobal ID. */
+/** Dashboard -> Profile -> My Network -> Share your Gloobal ID. */
 async function gotoShareScreen(page) {
   await gotoDashboard(page);
   await page.getByRole("button", { name: "Profile", exact: true }).click();
-  await page.getByText("My Referral Network", { exact: true }).click();
+  await page.getByRole("button", { name: "My Network", exact: true }).click();
   await page.getByRole("button", { name: /Share your referral link/i }).click();
   await expect(page.getByText("Share your Gloobal ID", { exact: true })).toBeVisible({ timeout: 30_000 });
 }

@@ -118,7 +118,7 @@ async function gotoDashboard(page, overrides) {
 async function gotoChangeId(page, overrides) {
   await gotoDashboard(page, overrides);
   await page.getByRole("button", { name: "Profile", exact: true }).click();
-  await page.getByText("Change Gloobal ID", { exact: true }).click();
+  await page.getByRole("button", { name: "My Gloobal ID", exact: true }).click();
   await expect(page.getByRole("button", { name: "Update ID", exact: true })).toBeVisible({ timeout: 30_000 });
 }
 
@@ -250,7 +250,7 @@ test("I2-B: Referral network renders what GET /api/referrals returns", async ({ 
   });
 
   await page.getByRole("button", { name: "Profile", exact: true }).click();
-  await page.getByText("My Referral Network", { exact: true }).click();
+  await page.getByRole("button", { name: "My Network", exact: true }).click();
 
   await expect(page.getByText(SECURE_ID_STR).first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("24 Jul 2026").first()).toBeVisible();
@@ -260,7 +260,7 @@ test("I2-C: Referral network shows an empty state when no referrals exist", asyn
   await gotoDashboard(page, { "/api/referrals/": () => json({ referrals: [], total: 0 }) });
 
   await page.getByRole("button", { name: "Profile", exact: true }).click();
-  await page.getByText("My Referral Network", { exact: true }).click();
+  await page.getByRole("button", { name: "My Network", exact: true }).click();
 
   await expect(page.getByText(/No referrals yet/i)).toBeVisible({ timeout: 30_000 });
 });
@@ -307,7 +307,7 @@ test("I3-A: Profile screen has a Change Gloobal ID row", async ({ page }) => {
   await gotoDashboard(page);
   await page.getByRole("button", { name: "Profile", exact: true }).click();
 
-  await expect(page.getByText("Change Gloobal ID", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "My Gloobal ID", exact: true })).toBeVisible({ timeout: 30_000 });
 });
 
 test("I3-B: Tapping Change Gloobal ID opens the change sheet", async ({ page }) => {
@@ -378,7 +378,7 @@ test("I3-E: A successful change updates the displayed ID and shows a toast", asy
 
   // The new ID is what the app now holds — reopening the sheet shows it as
   // the current one, with no sign-out in between.
-  await page.getByText("Change Gloobal ID", { exact: true }).click();
+  await page.getByRole("button", { name: "My Gloobal ID", exact: true }).click();
   await expect(page.getByTestId("current-gloobal-id")).toContainText(NEW_ID_STR);
 });
 
@@ -398,6 +398,6 @@ test("I3-F: Cancelling closes the sheet and changes nothing", async ({ page }) =
   expect(patches).toHaveLength(0);
 
   // Still the original ID.
-  await page.getByText("Change Gloobal ID", { exact: true }).click();
+  await page.getByRole("button", { name: "My Gloobal ID", exact: true }).click();
   await expect(page.getByTestId("current-gloobal-id")).toContainText(SECURE_ID_STR);
 });

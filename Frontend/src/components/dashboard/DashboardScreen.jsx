@@ -1005,10 +1005,10 @@ function DashboardScreenBase({
   const [showPayLater, setShowPayLater] = useState(false);
   // My Assets overlay (opened from the Accounts tab). Cross-links with
   // PayLater in both directions.
+  // My Assets is unmounted while closed, so it re-reads on every open — a
+  // seed planted by a payment is already there the next time it is opened,
+  // with nothing to invalidate.
   const [showMyAssets, setShowMyAssets] = useState(false);
-  // Bumped when a payment plants a seed, so My Assets re-reads instead of
-  // showing the list as it was before the payment.
-  const [assetsReload, setAssetsReload] = useState(0);
   // Live PayLater figures — limit is always the account's current total
   // assets (GET /api/assets/paylater/:symbolId), never a hardcoded number.
   // Null until the fetch lands; the prototype demo limit is the fallback.
@@ -1269,9 +1269,6 @@ function DashboardScreenBase({
     if (!paymentReceipt) return;
     if (Number.isFinite(Number(paymentReceipt.newBalance))) {
       setBalanceValue(Number(paymentReceipt.newBalance));
-    }
-    if (Number(paymentReceipt.cashback) > 0) {
-      setAssetsReload((n) => n + 1);
     }
     // The history panels are now stale by exactly one payment.
     setMoneyReload((n) => n + 1);
@@ -3296,7 +3293,6 @@ function DashboardScreenBase({
         <MyAssetsScreen
           ccy={ccy}
           symbolId={myGloobalId}
-          reloadKey={assetsReload}
           onClose={() => setShowMyAssets(false)}
           onOpenPayLater={() => { setShowMyAssets(false); setShowPayLater(true); }}
         />

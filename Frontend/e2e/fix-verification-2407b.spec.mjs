@@ -108,7 +108,7 @@ async function gotoDashboard(page, overrides, user = USER) {
 async function gotoChangeId(page, overrides, user = USER) {
   await gotoDashboard(page, overrides, user);
   await page.getByRole("button", { name: "Profile", exact: true }).click();
-  await page.getByText("Change Gloobal ID", { exact: true }).click();
+  await page.getByRole("button", { name: "My Gloobal ID", exact: true }).click();
   await expect(page.getByRole("button", { name: "Update ID", exact: true })).toBeVisible({ timeout: 30_000 });
 }
 
@@ -116,7 +116,7 @@ async function gotoChangeId(page, overrides, user = USER) {
 async function gotoShareScreen(page, overrides, user = LINK_USER) {
   await gotoDashboard(page, overrides, user);
   await page.getByRole("button", { name: "Profile", exact: true }).click();
-  await page.getByText("My Referral Network", { exact: true }).click();
+  await page.getByRole("button", { name: "My Network", exact: true }).click();
   await page.getByRole("button", { name: /Share your referral link/i }).click();
   await expect(page.getByText("Share your Gloobal ID", { exact: true })).toBeVisible({ timeout: 30_000 });
 }

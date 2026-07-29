@@ -37,10 +37,7 @@ const fmtDate = (d) =>
   new Date(d).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 const yr = (n) => `${(Number(n) || 0).toFixed(1)} yr`;
 
-// `reloadKey` changes when a payment plants a new seed. The screen is opened
-// as an overlay and may already be mounted, so a fresh read has to be
-// triggerable from outside rather than only on mount.
-export function MyAssetsScreen({ ccy = "₹", symbolId, onClose, onOpenPayLater, reloadKey = 0 }) {
+export function MyAssetsScreen({ ccy = "₹", symbolId, onClose, onOpenPayLater }) {
   const [raw, setRaw] = useState(null); // { seeds, ... } from API, or null while loading
   const [isDemo, setIsDemo] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -70,7 +67,7 @@ export function MyAssetsScreen({ ccy = "₹", symbolId, onClose, onOpenPayLater,
     return () => {
       cancelled = true;
     };
-  }, [symbolId, reloadKey]);
+  }, [symbolId]);
 
   const seeds = useMemo(() => (raw?.seeds || []).map(computeSeed), [raw]);
   const totalAssets = useMemo(() => seeds.reduce((s, x) => s + x.currentValue, 0), [seeds]);
