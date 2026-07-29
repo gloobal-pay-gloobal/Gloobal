@@ -506,14 +506,21 @@ function GloobalId() {
       // offer on its own screen — but only when this account has no passkey
       // yet. Someone who already set one up skips the offer entirely and
       // lands straight on the dashboard.
-      let hasPasskey = true;
+      // Default false, not true. Assuming a passkey already exists whenever
+      // the check can't be completed skips the offer for exactly the people
+      // who need it: a cold Render dyno answers slowly or not at all, and
+      // every one of those failures landed on "already enrolled", so nobody
+      // with an unenrolled device was ever shown the screen. The offer is
+      // skippable, so showing it to someone who did not need it costs one
+      // tap; hiding it from someone who did means they never set biometrics
+      // up at all.
+      let hasPasskey = false;
       try {
         const status = await passkeyStatus(symbolId);
         hasPasskey = Boolean(status?.hasPasskey);
       } catch {
-        // Couldn't tell (offline / cold start) — don't strand a
-        // successful login behind a setup offer; just go to the dashboard.
-        hasPasskey = true;
+        // Couldn't tell (offline / cold start / 5xx) — show the offer.
+        hasPasskey = false;
       }
 
       if (hasPasskey) {
