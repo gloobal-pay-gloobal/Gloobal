@@ -81,7 +81,10 @@ function countryFromMobile(mobileNumber) {
 // CyclingBadge's React.memo to actually skip re-renders instead of seeing
 // a "new" words array every time.
 const LOGIN_BADGE_WORDS = ["Login", "Gloobal", "Id"];
-const CREATE_BADGE_WORDS = ["Create", "Secure", "Gloobal", "Id"];
+// Mirrors LOGIN_BADGE_WORDS word-for-word past the first slot: the two
+// screens are the same card doing opposite jobs, so only the verb should
+// differ. "Create Secure Gloobal Id" read as a different feature.
+const CREATE_BADGE_WORDS = ["Register", "Gloobal", "Id"];
 
 // Shown when a mobile-number login can't be matched to a registered
 // account under the selected flag. Deliberately names the country code:
@@ -1264,6 +1267,15 @@ function GloobalId() {
 
               {stage === "secureId" && (
                 <span
+                  // The visible word rotates, so it is never a reliable
+                  // name for this badge — a screen reader (or a test)
+                  // catching it mid-cycle would hear "Id". The accessible
+                  // name states the whole thing and never changes; the
+                  // rotating half is hidden from the tree.
+                  data-testid="secureid-badge"
+                  data-badge-mode={isLoginAttempt ? "login" : "register"}
+                  role="img"
+                  aria-label={isLoginAttempt ? "Login · Gloobal ID" : "Register · Gloobal ID"}
                   style={{
                     position: "absolute",
                     top: -11,
@@ -1282,11 +1294,13 @@ function GloobalId() {
                     textAlign: "center",
                   }}
                 >
-                  {isLoginAttempt ? (
-                    <CyclingBadge words={LOGIN_BADGE_WORDS} intervalMs={2600} />
-                  ) : (
-                    <CyclingBadge words={CREATE_BADGE_WORDS} intervalMs={2600} />
-                  )}
+                  <span aria-hidden="true">
+                    {isLoginAttempt ? (
+                      <CyclingBadge words={LOGIN_BADGE_WORDS} intervalMs={2600} />
+                    ) : (
+                      <CyclingBadge words={CREATE_BADGE_WORDS} intervalMs={2600} />
+                    )}
+                  </span>
                 </span>
               )}
 
