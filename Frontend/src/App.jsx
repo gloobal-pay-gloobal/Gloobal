@@ -81,7 +81,10 @@ function countryFromMobile(mobileNumber) {
 // CyclingBadge's React.memo to actually skip re-renders instead of seeing
 // a "new" words array every time.
 const LOGIN_BADGE_WORDS = ["Login", "Gloobal", "Id"];
-const CREATE_BADGE_WORDS = ["Create", "Secure", "Gloobal", "Id"];
+// Mirrors LOGIN_BADGE_WORDS word-for-word past the first slot: the two
+// screens are the same card doing opposite jobs, so only the verb should
+// differ. "Create Secure Gloobal Id" read as a different feature.
+const CREATE_BADGE_WORDS = ["Register", "Gloobal", "Id"];
 
 // Shown when a mobile-number login can't be matched to a registered
 // account under the selected flag. Deliberately names the country code:
@@ -236,6 +239,9 @@ function GloobalId() {
   const [loginCountrySearch, setLoginCountrySearch] = useState("");
   const [countrySearch, setCountrySearch] = useState("");
   const [activeScreen, setActiveScreen] = useState(null); // null | "send" | "bank" | "coverage"
+  // The last completed payment's receipt, handed from Send Money down to the
+  // dashboard so the balance and My Assets reflect it without a round trip.
+  const [paymentReceipt, setPaymentReceipt] = useState(null);
   // Whether the entered Secure ID / Referral ID symbols are shown in the
   // clear or masked as dots — toggled by the eye button next to each.
   const [secureIdRevealed, setSecureIdRevealed] = useState(false);
@@ -503,14 +509,21 @@ function GloobalId() {
       // offer on its own screen — but only when this account has no passkey
       // yet. Someone who already set one up skips the offer entirely and
       // lands straight on the dashboard.
-      let hasPasskey = true;
+      // Default false, not true. Assuming a passkey already exists whenever
+      // the check can't be completed skips the offer for exactly the people
+      // who need it: a cold Render dyno answers slowly or not at all, and
+      // every one of those failures landed on "already enrolled", so nobody
+      // with an unenrolled device was ever shown the screen. The offer is
+      // skippable, so showing it to someone who did not need it costs one
+      // tap; hiding it from someone who did means they never set biometrics
+      // up at all.
+      let hasPasskey = false;
       try {
         const status = await passkeyStatus(symbolId);
         hasPasskey = Boolean(status?.hasPasskey);
       } catch {
-        // Couldn't tell (offline / cold start) — don't strand a
-        // successful login behind a setup offer; just go to the dashboard.
-        hasPasskey = true;
+        // Couldn't tell (offline / cold start / 5xx) — show the offer.
+        hasPasskey = false;
       }
 
       if (hasPasskey) {
@@ -896,6 +909,10 @@ function GloobalId() {
     setRegisteredMobile("");
     setRegisteredUser(null);
     setRegisterError(null);
+    // A receipt belongs to the account that made the payment. Left in place,
+    // it is re-applied when the dashboard next mounts — so the next person to
+    // sign in on this device sees the previous account's balance.
+    setPaymentReceipt(null);
     setLoginError(null);
     setLoginAuthError(null);
     setLoginAuthStatus(null);
@@ -1264,6 +1281,15 @@ function GloobalId() {
 
               {stage === "secureId" && (
                 <span
+                  // The visible word rotates, so it is never a reliable
+                  // name for this badge — a screen reader (or a test)
+                  // catching it mid-cycle would hear "Id". The accessible
+                  // name states the whole thing and never changes; the
+                  // rotating half is hidden from the tree.
+                  data-testid="secureid-badge"
+                  data-badge-mode={isLoginAttempt ? "login" : "register"}
+                  role="img"
+                  aria-label={isLoginAttempt ? "Login · Gloobal ID" : "Register · Gloobal ID"}
                   style={{
                     position: "absolute",
                     top: -11,
@@ -1282,11 +1308,13 @@ function GloobalId() {
                     textAlign: "center",
                   }}
                 >
-                  {isLoginAttempt ? (
-                    <CyclingBadge words={LOGIN_BADGE_WORDS} intervalMs={2600} />
-                  ) : (
-                    <CyclingBadge words={CREATE_BADGE_WORDS} intervalMs={2600} />
-                  )}
+                  <span aria-hidden="true">
+                    {isLoginAttempt ? (
+                      <CyclingBadge words={LOGIN_BADGE_WORDS} intervalMs={2600} />
+                    ) : (
+                      <CyclingBadge words={CREATE_BADGE_WORDS} intervalMs={2600} />
+                    )}
+                  </span>
                 </span>
               )}
 
@@ -1966,6 +1994,7 @@ function GloobalId() {
               referralCount={registeredUser?.referralCount}
               phoneNumber={phoneNumber}
               fullName={registeredUser?.fullName}
+              paymentReceipt={paymentReceipt}
               // A renamed Gloobal ID has to land here, not just inside the
               // dashboard: `registeredUser` is what every other screen and
               // the persisted session read from, and `secureId` is the
@@ -1986,6 +2015,10 @@ function GloobalId() {
             <Suspense fallback={<ScreenFallback />}>
               <SendMoneyScreen
                 onClose={() => setActiveScreen(null)}
+                // Send renders as an overlay above the dashboard, which never
+                // unmounts, so the receipt has to be handed across rather
+                // than picked up by a remount.
+                onPaymentComplete={setPaymentReceipt}
                 sender={{
                   ...dialCountry,
                   phoneNumber,

@@ -14,6 +14,22 @@ const AssetSeed = require('./models/AssetSeed');
 const { nationalNumberFrom } = require('./constants/dialCodes');
 
 
+// The prototype float every account opens with. Kept here rather than only on
+// the schema so accounts written before the field existed read back the same
+// number a new one does, instead of undefined.
+const DEFAULT_ACCOUNT_BALANCE = 10000;
+
+const accountBalanceOf = (user) => {
+  const raw = Number(user?.balance);
+  return Number.isFinite(raw) ? raw : DEFAULT_ACCOUNT_BALANCE;
+};
+
+// Money is held as a Number, so every derived figure gets rounded to the
+// minor unit before it is stored. 1000 * 0.0157 is 15.700000000000001 in
+// binary floating point, and a balance carrying that dust would drift a
+// little further with every payment.
+const toMinorUnit = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+
 const app = express();
 
 // Middleware
@@ -76,6 +92,10 @@ const publicUserPayload = async (user) => {
     referredBy: user.referredBy || null,
     referralCount: user.referralCount || 0,
     cashbackRate: Number(user.cashbackRate) || 0,
+    // Accounts created before the balance field existed have no value stored,
+    // and `undefined` would render as a blank balance card rather than a
+    // number. They open at the same float a new account does.
+    balance: Number.isFinite(Number(user.balance)) ? Number(user.balance) : DEFAULT_ACCOUNT_BALANCE,
     symbolIdHistory: Array.isArray(user.symbolIdHistory)
       ? user.symbolIdHistory.map((entry) => ({
           symbolId: entry.symbolId,
@@ -1876,6 +1896,19 @@ app.post('/api/transactions/send', async (req, res) => {
     pinRecord.lastVerifiedAt = new Date();
     await pinRecord.save();
 
+    // Checked after the PIN, not before it: the answer reveals roughly what
+    // the account holds, which is not something to hand out to whoever can
+    // guess a Gloobal ID.
+    const senderBalanceBefore = accountBalanceOf(sender);
+
+    if (senderBalanceBefore < numericAmount) {
+      return res.status(400).json({
+        success: false,
+        message: 'Insufficient balance.',
+        balance: senderBalanceBefore,
+      });
+    }
+
     if (cleanIdempotencyKey) {
       const existingIdempotentTransaction = await Transaction.findOne({
         fromUserId: sender._id,
@@ -1933,33 +1966,81 @@ app.post('/api/transactions/send', async (req, res) => {
       },
     });
 
+    // The payee's own cashback rate splits the payment. The full amount
+    // leaves the sender; the payee is credited the amount minus their chosen
+    // share, and that share comes back to the sender as a planted asset
+    // rather than as spendable money. So a 1% Creator paid 1,000 receives
+    // 990 and the payer holds 10 as a seed — the payer is out 1,000 either
+    // way, and the 10 is the part that grows.
+    const payeeCashbackRate = Number(receiver.cashbackRate) || 0;
+    const cashback = toMinorUnit(numericAmount * payeeCashbackRate);
+    const payeeReceives = toMinorUnit(numericAmount - cashback);
+
+    const receiverBalanceBefore = accountBalanceOf(receiver);
+    const senderBalanceAfter = toMinorUnit(senderBalanceBefore - numericAmount);
+    const receiverBalanceAfter = toMinorUnit(receiverBalanceBefore + payeeReceives);
+
+    // Two independent writes, so the second can fail with the first already
+    // committed — and a debit that lands with no matching credit is money
+    // gone. Mongo can only make this atomic inside a session/transaction; in
+    // the meantime the debit is compensated explicitly rather than left.
+    let senderDebited = false;
+
+    try {
+      sender.balance = senderBalanceAfter;
+      await sender.save();
+      senderDebited = true;
+
+      receiver.balance = receiverBalanceAfter;
+      await receiver.save();
+    } catch (moveError) {
+      if (senderDebited) {
+        try {
+          sender.balance = senderBalanceBefore;
+          await sender.save();
+        } catch (revertError) {
+          // Nothing further can be done in-process; this is the one case
+          // that needs to be findable in the logs after the fact.
+          console.error('CRITICAL: debit could not be reverted for', sender.symbolId, revertError);
+        }
+      }
+      throw moveError;
+    }
+
     await LedgerEntry.create([
       {
         transactionId: pendingTransaction._id,
         userId: sender._id,
         entryType: 'debit',
         amount: numericAmount,
-        balanceBefore: 0,
-        balanceAfter: 0,
+        balanceBefore: senderBalanceBefore,
+        balanceAfter: senderBalanceAfter,
         currency: cleanCurrency,
         note: 'Prototype debit entry',
         metadata: {
           prototype: true,
           transactionReferenceId: pendingTransaction.referenceId,
+          cashback,
+          cashbackRate: payeeCashbackRate,
         },
       },
       {
         transactionId: pendingTransaction._id,
+        // The credit is the amount minus the payee's own cashback share, so
+        // the two entries deliberately do not carry the same figure — the
+        // difference is what became the payer's asset seed below.
         userId: receiver._id,
         entryType: 'credit',
-        amount: numericAmount,
-        balanceBefore: 0,
-        balanceAfter: 0,
+        amount: payeeReceives,
+        balanceBefore: receiverBalanceBefore,
+        balanceAfter: receiverBalanceAfter,
         currency: cleanCurrency,
         note: 'Prototype credit entry',
         metadata: {
           prototype: true,
           transactionReferenceId: pendingTransaction.referenceId,
+          cashback,
+          cashbackRate: payeeCashbackRate,
         },
       },
     ]);
@@ -1974,17 +2055,18 @@ app.post('/api/transactions/send', async (req, res) => {
     // simply a payee who never set a rate, so it stays at 0 and plants
     // nothing. Best-effort — a seed failure must never fail an
     // already-successful transaction.
-    const seedCashbackRate = Number(receiver.cashbackRate) || 0;
-    if (Number.isFinite(seedCashbackRate) && seedCashbackRate > 0) {
+    let plantedSeed = null;
+
+    if (Number.isFinite(payeeCashbackRate) && payeeCashbackRate > 0) {
       try {
-        await AssetSeed.create({
+        plantedSeed = await AssetSeed.create({
           userId: sender._id,
           symbolId: sender.symbolId,
           business: String(req.body?.business || req.body?.payeeName || receiver.fullName || cleanNote || 'Payment').trim().slice(0, 80),
           category: String(req.body?.category || 'General').trim().slice(0, 40),
           amountPaid: numericAmount,
-          cashbackRate: seedCashbackRate,
-          cashback: numericAmount * seedCashbackRate,
+          cashbackRate: payeeCashbackRate,
+          cashback,
           currency: cleanCurrency,
         });
       } catch (seedError) {
@@ -1996,6 +2078,11 @@ app.post('/api/transactions/send', async (req, res) => {
       success: true,
       message: 'Prototype transaction completed successfully.',
       transaction: cleanTransactionPayload(pendingTransaction, sender, receiver),
+      newBalance: senderBalanceAfter,
+      cashback,
+      cashbackRate: payeeCashbackRate,
+      payeeReceives,
+      assetSeed: plantedSeed ? computeSeed(plantedSeed) : null,
     });
   } catch (error) {
     if (pendingTransaction && pendingTransaction.status === 'pending') {

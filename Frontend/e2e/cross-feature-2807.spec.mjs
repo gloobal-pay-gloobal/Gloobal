@@ -125,7 +125,7 @@ async function answerSelfRest(page) {
 
 /** Drives Change Gloobal ID all the way through the confirmation gate. */
 async function renameTo(page, symbols) {
-  await page.getByRole("button", { name: /Change Gloobal ID/i }).click();
+  await page.getByRole("button", { name: "My Gloobal ID", exact: true }).click();
   await expect(page.getByTestId("current-gloobal-id")).toBeVisible({ timeout: 30_000 });
   await tapSymbols(page, symbols);
   await expect(page.getByTestId("new-id-available")).toBeVisible({ timeout: 30_000 });
@@ -143,11 +143,11 @@ test("X1: all seven surfaces open and close in one session without stranding an 
   page.on("pageerror", (e) => pageErrors.push(e.message));
   await boot(page);
 
-  // Receive -> Creator cashback -> receive sheet -> closed.
+  // Receive -> My Share -> receive sheet -> closed.
   await page.getByRole("button", { name: "Receive", exact: true }).click();
-  await expect(page.getByText("Share with Gloobal users")).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId("creator-rate-2").click();
-  await page.getByTestId("creator-save").click();
+  await expect(page.getByTestId("my-share-rate-input")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("my-share-rate-input").fill("2");
+  await page.getByTestId("my-share-continue").click();
   await expect(page.getByText("Share this Gloobal ID to receive money")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Close", exact: true }).first().click();
   await expect(page.getByText("Share this Gloobal ID to receive money")).toHaveCount(0);
@@ -161,13 +161,13 @@ test("X1: all seven surfaces open and close in one session without stranding an 
 
   // Profile -> GH Score -> back.
   await goProfile(page);
-  await page.getByRole("button", { name: "GH Score", exact: true }).click();
+  await page.getByRole("button", { name: "My GH Score", exact: true }).click();
   await expect(page.getByTestId("gh-category-self")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.getByTestId("profile-header")).toBeVisible();
 
   // Profile -> Change Gloobal ID -> cancelled.
-  await page.getByRole("button", { name: /Change Gloobal ID/i }).click();
+  await page.getByRole("button", { name: "My Gloobal ID", exact: true }).click();
   await expect(page.getByText("Previous IDs", { exact: true })).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByTestId("profile-header")).toBeVisible();
@@ -191,7 +191,7 @@ test("X2: GH Score answers survive a Gloobal ID change", async ({ page }) => {
   await boot(page, undefined, { initScript: noPlatformAuthenticator });
 
   await goProfile(page);
-  await page.getByRole("button", { name: "GH Score", exact: true }).click();
+  await page.getByRole("button", { name: "My GH Score", exact: true }).click();
   await answerSelfRest(page);
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.getByTestId("gh-progress-self")).toHaveText("1/3");
@@ -201,7 +201,7 @@ test("X2: GH Score answers survive a Gloobal ID change", async ({ page }) => {
 
   // Same person, same device — the answer is still there under the new ID.
   await goProfile(page);
-  await page.getByRole("button", { name: "GH Score", exact: true }).click();
+  await page.getByRole("button", { name: "My GH Score", exact: true }).click();
   await expect(page.getByTestId("gh-progress-self")).toHaveText("1/3");
   await expect(page.getByTestId("gh-progress")).toContainText("1 of 12");
 
@@ -239,23 +239,23 @@ test("X3: the profile photo survives a Gloobal ID change", async ({ page }) => {
   expect(carried).toBe(PHOTO);
 });
 
-// ═══ X4 — Creator cashback vs. My Assets ═══════════════════════════════════
+// ═══ X4 — My Share vs. My Assets ═══════════════════════════════════
 
-test("X4: Creator cashback screen cross-links into My Assets and back without stranding", async ({ page }) => {
+test("X4: My Share cross-links into My Assets and back without stranding", async ({ page }) => {
   await boot(page);
   await page.getByRole("button", { name: "Receive", exact: true }).click();
-  await expect(page.getByText("Share with Gloobal users")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("my-share-rate-input")).toBeVisible({ timeout: 30_000 });
 
-  await page.getByRole("button", { name: /Learn more about Assets/i }).click();
+  await page.getByTestId("my-share-assets-link").click();
   await expect(page.getByText("Growing toward")).toBeVisible({ timeout: 30_000 });
-  // The cashback screen stepped aside rather than stacking underneath.
-  await expect(page.getByText("Share with Gloobal users")).toHaveCount(0);
+  // The My Share screen stepped aside rather than stacking underneath.
+  await expect(page.getByTestId("my-share-rate-input")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Back", exact: true }).click();
   // Back on the dashboard with nothing left over, and Receive still works.
   await expect(page.getByRole("button", { name: "Receive", exact: true })).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Receive", exact: true }).click();
-  await expect(page.getByText("Share with Gloobal users")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("my-share-rate-input")).toBeVisible({ timeout: 30_000 });
 });
 
 test("X5: a saved cashback rate is what the picker reopens on", async ({ page }) => {
@@ -268,16 +268,15 @@ test("X5: a saved cashback rate is what the picker reopens on", async ({ page })
   });
 
   await page.getByRole("button", { name: "Receive", exact: true }).click();
-  await page.getByTestId("creator-rate-5").click();
-  await page.getByTestId("creator-save").click();
+  await page.getByTestId("my-share-rate-input").fill("5");
+  await page.getByTestId("my-share-continue").click();
   await expect(page.getByText("Share this Gloobal ID to receive money")).toBeVisible({ timeout: 30_000 });
   expect(saved).toBeCloseTo(0.05, 6);
 
   await page.getByRole("button", { name: "Close", exact: true }).first().click();
   await page.getByRole("button", { name: "Receive", exact: true }).click();
   // Reopens on the rate just chosen, not back at 0%.
-  await expect(page.getByTestId("creator-rate-value")).toHaveText("5%");
-  await expect(page.getByText(/Keep current: 5%/i)).toBeVisible();
+  await expect(page.getByTestId("my-share-rate-input")).toHaveValue("5");
 });
 
 // ═══ X6 — Send flag vs. the rest of the app ════════════════════════════════
@@ -356,15 +355,15 @@ test("X9: GH Score lives on Profile only, and Accounts carries no demo asset con
   await boot(page);
 
   await goAccounts(page);
-  await expect(page.getByRole("button", { name: "GH Score", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "My GH Score", exact: true })).toHaveCount(0);
   await expect(page.getByText("Demo data", { exact: true })).toHaveCount(0);
   await expect(page.getByTestId("asset-seed-row")).toHaveCount(0);
 
   await goProfile(page);
-  await expect(page.getByRole("button", { name: "GH Score", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "My GH Score", exact: true })).toBeVisible();
 
   // Opening GH Score does not disturb the tab underneath.
-  await page.getByRole("button", { name: "GH Score", exact: true }).click();
+  await page.getByRole("button", { name: "My GH Score", exact: true }).click();
   await expect(page.getByTestId("gh-category-finance")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await goAccounts(page);
@@ -387,12 +386,12 @@ test("X10: cancelling the confirmation leaves the ID, the history and the local 
   );
 
   await goProfile(page);
-  await page.getByRole("button", { name: "GH Score", exact: true }).click();
+  await page.getByRole("button", { name: "My GH Score", exact: true }).click();
   await answerSelfRest(page);
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await page.getByRole("button", { name: "Back", exact: true }).click();
 
-  await page.getByRole("button", { name: /Change Gloobal ID/i }).click();
+  await page.getByRole("button", { name: "My Gloobal ID", exact: true }).click();
   await tapSymbols(page, NEW_ID);
   await expect(page.getByTestId("new-id-available")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Update ID", exact: true }).click();

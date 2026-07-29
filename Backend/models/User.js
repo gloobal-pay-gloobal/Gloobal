@@ -53,6 +53,15 @@ const userSchema = new mongoose.Schema({
     min: 0,
     max: 0.07
   },
+  // The account's Gloobal bank balance. Prototype money: every account opens
+  // with the same test float so payment flows can actually be driven end to
+  // end, instead of the dashboard showing one hardcoded string that no
+  // transaction ever changed. No real money is represented here.
+  balance: {
+    type: Number,
+    default: 10000,
+    min: 0
+  },
   // The direct person who invited them
   referredBy: {
     type: String,

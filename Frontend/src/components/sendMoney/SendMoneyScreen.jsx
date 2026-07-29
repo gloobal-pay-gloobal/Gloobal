@@ -90,7 +90,7 @@ export function toCountryLike(senderProfile) {
 // How many symbols the Gloobal ID search dial pad requires — a fixed
 // 12-symbol code, same length as the account's own Secure ID.
 export const ID_SEARCH_LENGTH = 12;
-function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false }) {
+function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false, onPaymentComplete }) {
   const [top, setTop] = useState(() => buildSenderProfile(sender));
   const [showHistory, setShowHistory] = useState(false);
   // Arriving here from Profile's "View full send history" — open the
@@ -233,7 +233,7 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false }) {
       try {
         const amountNumber = parseFloat(amount) || 0;
         const idempotencyKey = `gloobal-${top.symbolId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        await sendTransaction({
+        const receipt = await sendTransaction({
           senderSymbolId: top.symbolId,
           receiverSymbolId: bottom.symbolId,
           amount: amountNumber,
@@ -241,14 +241,22 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false }) {
           idempotencyKey,
         });
         if (cancelled) return;
+        // The backend is the only place that knows the payee's cashback rate,
+        // so the seed figure comes back with the receipt rather than being
+        // recomputed here from a rate this screen never sees.
+        const cashback = Number(receipt?.cashback) || 0;
+        // Stamped with who paid, so a receipt can never be applied to a
+        // different account than the one it came from.
+        onPaymentComplete?.({ ...receipt, amount: amountNumber, symbolId: top.symbolId });
         pinErrorTimer.current = setTimeout(() => {
           setPinOpen(false);
           setPin("");
           setSending(false);
+          const ccy = CURRENCIES[top.currency].label;
           showToast(
-            `Paid ${CURRENCIES[top.currency].label} ${fmt(amountNumber)} to ${bottom.country} · via ${
-              payMethod || "Gloobal Bank"
-            }`
+            cashback > 0
+              ? `Paid ${ccy} ${fmt(amountNumber)}. You earned ${ccy} ${fmt(cashback)} as an asset! 🌱`
+              : `Paid ${ccy} ${fmt(amountNumber)} to ${bottom.country} · via ${payMethod || "Gloobal Bank"}`
           );
         }, 280);
       } catch (err) {

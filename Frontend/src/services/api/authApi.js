@@ -192,7 +192,10 @@ export async function sendTransaction(payload) {
   checkAndRecordAttempt(`send:${payload.senderSymbolId}`);
   const result = await apiClient.post("/api/transactions/send", payload);
   clearAttempts(`send:${payload.senderSymbolId}`);
-  return result.transaction || {};
+  // The whole receipt, not just the transaction record: the sender's new
+  // balance, the cashback withheld, and the seed it planted are all decided
+  // server-side and sit alongside `transaction`, not inside it.
+  return { ...result, transaction: result.transaction || {} };
 }
 
 /** GET /api/profile/:symbolId */

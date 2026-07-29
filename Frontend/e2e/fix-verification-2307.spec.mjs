@@ -145,7 +145,7 @@ async function gotoDashboard(page, overrides) {
 async function gotoReferralNetwork(page, overrides) {
   await gotoDashboard(page, overrides);
   await page.getByRole("button", { name: "Profile", exact: true }).click();
-  await page.getByText("My Referral Network", { exact: true }).click();
+  await page.getByRole("button", { name: "My Network", exact: true }).click();
   await expect(page.getByText(/People you've referred/i)).toBeVisible({ timeout: 30_000 });
 }
 
