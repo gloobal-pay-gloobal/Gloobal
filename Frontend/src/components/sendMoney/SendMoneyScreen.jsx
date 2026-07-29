@@ -245,7 +245,9 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false, onPayme
         // so the seed figure comes back with the receipt rather than being
         // recomputed here from a rate this screen never sees.
         const cashback = Number(receipt?.cashback) || 0;
-        onPaymentComplete?.({ ...receipt, amount: amountNumber });
+        // Stamped with who paid, so a receipt can never be applied to a
+        // different account than the one it came from.
+        onPaymentComplete?.({ ...receipt, amount: amountNumber, symbolId: top.symbolId });
         pinErrorTimer.current = setTimeout(() => {
           setPinOpen(false);
           setPin("");

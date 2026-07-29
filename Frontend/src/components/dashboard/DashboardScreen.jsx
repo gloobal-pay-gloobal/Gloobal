@@ -1267,12 +1267,16 @@ function DashboardScreenBase({
   // was actually planted also invalidates whatever My Assets is holding.
   useEffect(() => {
     if (!paymentReceipt) return;
+    // Only the account that made the payment. A receipt outliving a sign-out
+    // would otherwise be re-applied on the next mount, showing one person's
+    // balance to the next one to use the device.
+    if (paymentReceipt.symbolId && paymentReceipt.symbolId !== myGloobalId) return;
     if (Number.isFinite(Number(paymentReceipt.newBalance))) {
       setBalanceValue(Number(paymentReceipt.newBalance));
     }
     // The history panels are now stale by exactly one payment.
     setMoneyReload((n) => n + 1);
-  }, [paymentReceipt]);
+  }, [paymentReceipt, myGloobalId]);
 
   // Locally recorded ID history for whichever ID is current now.
   useEffect(() => {

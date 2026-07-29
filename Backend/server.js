@@ -1980,10 +1980,32 @@ app.post('/api/transactions/send', async (req, res) => {
     const senderBalanceAfter = toMinorUnit(senderBalanceBefore - numericAmount);
     const receiverBalanceAfter = toMinorUnit(receiverBalanceBefore + payeeReceives);
 
-    sender.balance = senderBalanceAfter;
-    receiver.balance = receiverBalanceAfter;
-    await sender.save();
-    await receiver.save();
+    // Two independent writes, so the second can fail with the first already
+    // committed — and a debit that lands with no matching credit is money
+    // gone. Mongo can only make this atomic inside a session/transaction; in
+    // the meantime the debit is compensated explicitly rather than left.
+    let senderDebited = false;
+
+    try {
+      sender.balance = senderBalanceAfter;
+      await sender.save();
+      senderDebited = true;
+
+      receiver.balance = receiverBalanceAfter;
+      await receiver.save();
+    } catch (moveError) {
+      if (senderDebited) {
+        try {
+          sender.balance = senderBalanceBefore;
+          await sender.save();
+        } catch (revertError) {
+          // Nothing further can be done in-process; this is the one case
+          // that needs to be findable in the logs after the fact.
+          console.error('CRITICAL: debit could not be reverted for', sender.symbolId, revertError);
+        }
+      }
+      throw moveError;
+    }
 
     await LedgerEntry.create([
       {

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { ArrowLeft, PieChart, ShoppingBag, Sprout, User } from "lucide-react";
 import { T } from "../../styles/theme";
 import { setCashbackRate } from "../../services/api/creatorApi";
@@ -42,6 +42,23 @@ export function MyShareScreen({ ccy = "₹", symbolId, initialRate = 0, onSaved,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+
+  // The saved rate comes off a profile read that may not have landed when
+  // this screen was opened. Without this, a Creator on 6.25% who taps Receive
+  // during a cold start sees "0", and tapping Continue writes that 0 over the
+  // rate they actually chose. Only applied while the field is untouched — a
+  // late-arriving read must never overwrite what someone is typing.
+  const edited = useRef(false);
+  useEffect(() => {
+    if (edited.current) return;
+    const percent = (Number(initialRate) || 0) * 100;
+    setRateText(String(Number(percent.toFixed(2))));
+  }, [initialRate]);
+
+  const updateRate = (next) => {
+    edited.current = true;
+    setRateText(next);
+  };
 
   const parsed = Number.parseFloat(rateText);
   const hasValue = rateText.trim() !== "" && Number.isFinite(parsed);
@@ -120,7 +137,7 @@ export function MyShareScreen({ ccy = "₹", symbolId, initialRate = 0, onSaved,
               max={MAX_SHARE_PERCENT}
               step={0.01}
               value={rateText}
-              onChange={(e) => setRateText(e.target.value)}
+              onChange={(e) => updateRate(e.target.value)}
               placeholder="0"
               data-testid="my-share-rate-input"
               aria-label="My contribution percentage"
@@ -156,7 +173,7 @@ export function MyShareScreen({ ccy = "₹", symbolId, initialRate = 0, onSaved,
             max={MAX_SHARE_PERCENT}
             step={0.01}
             value={sliderValue}
-            onChange={(e) => setRateText(e.target.value)}
+            onChange={(e) => updateRate(e.target.value)}
             data-testid="my-share-slider"
             aria-label="My contribution slider"
             className="my-share-range"
@@ -177,7 +194,7 @@ export function MyShareScreen({ ccy = "₹", symbolId, initialRate = 0, onSaved,
               type="text"
               inputMode="decimal"
               value={rateText}
-              onChange={(e) => setRateText(e.target.value)}
+              onChange={(e) => updateRate(e.target.value)}
               placeholder="e.g. 1, 1.57, 6.25"
               data-testid="my-share-custom-input"
               aria-label="Custom contribution percentage"

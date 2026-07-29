@@ -909,6 +909,10 @@ function GloobalId() {
     setRegisteredMobile("");
     setRegisteredUser(null);
     setRegisterError(null);
+    // A receipt belongs to the account that made the payment. Left in place,
+    // it is re-applied when the dashboard next mounts — so the next person to
+    // sign in on this device sees the previous account's balance.
+    setPaymentReceipt(null);
     setLoginError(null);
     setLoginAuthError(null);
     setLoginAuthStatus(null);
