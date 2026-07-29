@@ -1962,7 +1962,7 @@ function DashboardScreenBase({
                   anywhere in Accounts. */}
               <button
                 onClick={() => setShowGHScore(true)}
-                aria-label="GH Score"
+                aria-label="My GH Score"
                 className="v2-row"
                 style={{
                   width: "100%",
@@ -1985,8 +1985,8 @@ function DashboardScreenBase({
                   <Trophy size={18} color="#F59E0B" />
                 </span>
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>GH Score</div>
-                  <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 1 }}>Self, Community, Environment &amp; Finance check-ins</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>My GH Score</div>
+                  <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 1 }}>Check your Gloobal Human Score</div>
                 </span>
                 <ChevronRightIcon />
               </button>
@@ -1995,6 +1995,7 @@ function DashboardScreenBase({
 
               <button
                 onClick={() => setProfileOverlay("referral")}
+                aria-label="My Network"
                 className="v2-row"
                 style={{
                   width: "100%",
@@ -2014,11 +2015,11 @@ function DashboardScreenBase({
                     background: T.positiveSoft, display: "flex", alignItems: "center", justifyContent: "center",
                   }}
                 >
-                  <Gift size={18} color={T.positive} />
+                  <Users2 size={18} color={T.positive} />
                 </span>
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>My Referral Network</div>
-                  <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 1 }}>See who you&apos;ve invited and what you&apos;ve earned</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>My Network</div>
+                  <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 1 }}>See who you&apos;ve invited</div>
                 </span>
                 <ChevronRightIcon />
               </button>
@@ -2027,6 +2028,7 @@ function DashboardScreenBase({
 
               <button
                 onClick={() => setProfileOverlay("changeId")}
+                aria-label="My Gloobal ID"
                 className="v2-row"
                 style={{
                   width: "100%",
@@ -2049,8 +2051,8 @@ function DashboardScreenBase({
                   <Pencil size={18} color={T.accent} />
                 </span>
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>Change Gloobal ID</div>
-                  <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 1 }}>Pick a different 12-symbol ID for this account</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>My Gloobal ID</div>
+                  <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 1 }}>View or change your 12-symbol ID</div>
                 </span>
                 <ChevronRightIcon />
               </button>
