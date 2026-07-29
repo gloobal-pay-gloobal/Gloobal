@@ -34,6 +34,7 @@ import {
   getReferrals,
   passkeyAuthOptions,
   passkeyAuthVerify,
+  passkeyStatus,
   verifyPin,
 } from "../../services/api/authApi";
 import { getPayLater } from "../../services/api/assetsApi";
@@ -549,13 +550,49 @@ function ProfileMoneyChart({ rows, color }) {
 // Shared layout for the Profile's Paid and Received panels — filter
 // chips, a mini bar chart, the transaction list, and a CTA button that
 // simply reuses the existing Send / Receive flows (no new flows needed).
-function ProfileMoneySection({ rows, filter, onFilterChange, color, chip, sign, ccy, ctaLabel, onCta }) {
+function ProfileMoneySection({ rows, filter, onFilterChange, color, chip, sign, ccy, ctaLabel, onCta, status = "ready", onRetry }) {
   // Summary tiles above the chart — a proper glance at the filtered
   // period instead of just the raw bars, which is what a bigger dedicated
   // screen has the room for that the dashboard's mini chart doesn't.
   const total = rows.reduce((s, r) => s + r.amount, 0);
   const avg = rows.length ? total / rows.length : 0;
   const highest = rows.length ? Math.max(...rows.map((r) => r.amount)) : 0;
+
+  // Loading and error are shown instead of the list, not alongside it. A
+  // spinner over a stale list, or "Nothing yet" under a failed request,
+  // both state something about the account that isn't known to be true.
+  if (status === "loading" || status === "error") {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: "32px 16px", textAlign: "center" }}>
+          {status === "loading" ? (
+            <>
+              <span
+                data-testid="money-spinner"
+                aria-label="Loading transactions"
+                role="status"
+                style={{
+                  display: "inline-block", width: 22, height: 22, borderRadius: "50%",
+                  border: `2.5px solid ${T.line}`, borderTopColor: color,
+                  animation: "spin 0.7s linear infinite",
+                }}
+              />
+              <div style={{ marginTop: 12, fontSize: 12, fontWeight: 600, color: T.inkFaint }}>Loading transactions…</div>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="v2-tap"
+              style={{ border: "none", background: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: T.inkSoft, padding: 0 }}
+            >
+              Could not load transactions. Tap to retry.
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -611,7 +648,7 @@ function ProfileMoneySection({ rows, filter, onFilterChange, color, chip, sign, 
 
       <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
         {rows.length === 0 ? (
-          <div style={{ padding: "20px 16px", textAlign: "center", fontSize: 12, color: T.inkFaint }}>Nothing yet</div>
+          <div style={{ padding: "20px 16px", textAlign: "center", fontSize: 12, color: T.inkFaint }}>No transactions yet</div>
         ) : (
           rows.map((t, i) => (
             <div
@@ -892,13 +929,28 @@ function DashboardScreenBase({
   fullName,
   referralCount,
   onGloobalIdChange,
+  paymentReceipt,
 }) {
-  const [balanceVisible, setBalanceVisible] = useState(true);
+  // Hidden on every open, deliberately never remembered. Persisting "shown"
+  // would mean the balance is on screen the instant the app is opened —
+  // over a shoulder, on a lock screen preview, in a shared-device unlock —
+  // which is the one moment the mask exists to cover. Revealing is one tap.
+  const [balanceVisible, setBalanceVisible] = useState(false);
+  const [revealingBalance, setRevealingBalance] = useState(false);
+  // Whether this account has a passkey at all. Null = not known yet. Used
+  // only to decide whether revealing the balance is worth a device check;
+  // an account with nothing enrolled must not be locked out of its own
+  // balance, so unknown and false both mean "just show it".
+  const [accountHasPasskey, setAccountHasPasskey] = useState(null);
   const [activeTab, setActiveTab] = useState("home"); // home | accounts | profile
-  // Real transaction history for this account, split by direction. A
-  // failure leaves the panels on their empty state rather than showing
-  // invented rows.
+  // Real transaction history for this account, split by direction.
   const [moneyRows, setMoneyRows] = useState(NO_MONEY_ROWS);
+  // "loading" | "ready" | "error" — Paid and Received read from the same
+  // fetch, so they share one status. An error is surfaced and retryable
+  // rather than being flattened into an empty list, which would tell
+  // someone with a full history that they have never been paid.
+  const [moneyStatus, setMoneyStatus] = useState("loading");
+  const [moneyReload, setMoneyReload] = useState(0);
 
   // Send Money renders as an overlay above this screen, so the dashboard
   // never unmounts and a fetch on mount alone would leave the Profile
@@ -907,19 +959,43 @@ function DashboardScreenBase({
   useEffect(() => {
     if (!myGloobalId) return;
     let cancelled = false;
+    setMoneyStatus("loading");
     (async () => {
       try {
         const txns = await getHistory(myGloobalId);
         if (cancelled) return;
         setMoneyRows(txns.map(toMoneyRow));
+        setMoneyStatus("ready");
       } catch {
-        // offline or backend still waking up — keep the empty state
+        // Offline, or the backend is still waking up. Say so — an empty
+        // list here would be a claim about this account's history, not a
+        // report about the request.
+        if (cancelled) return;
+        setMoneyStatus("error");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [myGloobalId, activeTab]);
+  }, [myGloobalId, activeTab, moneyReload]);
+
+  // Asked once per account, not per reveal, so tapping the eye doesn't wait
+  // on a round trip. Failure leaves it null, which reads as "no passkey".
+  useEffect(() => {
+    if (!myGloobalId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await passkeyStatus(myGloobalId);
+        if (!cancelled) setAccountHasPasskey(Boolean(status?.hasPasskey));
+      } catch {
+        if (!cancelled) setAccountHasPasskey(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [myGloobalId]);
 
   const sentRows = useMemo(() => moneyRows.filter((r) => r.status !== "received"), [moneyRows]);
   const receivedRows = useMemo(() => moneyRows.filter((r) => r.status === "received"), [moneyRows]);
@@ -930,6 +1006,9 @@ function DashboardScreenBase({
   // My Assets overlay (opened from the Accounts tab). Cross-links with
   // PayLater in both directions.
   const [showMyAssets, setShowMyAssets] = useState(false);
+  // Bumped when a payment plants a seed, so My Assets re-reads instead of
+  // showing the list as it was before the payment.
+  const [assetsReload, setAssetsReload] = useState(0);
   // Live PayLater figures — limit is always the account's current total
   // assets (GET /api/assets/paylater/:symbolId), never a hardcoded number.
   // Null until the fetch lands; the prototype demo limit is the fallback.
@@ -1089,7 +1168,13 @@ function DashboardScreenBase({
   // APIs yet), so there's nothing to toggle per row — just a search query
   // to filter the worldwide brand list.
   const [subscriptionQuery, setSubscriptionQuery] = useState("");
-  const balance = "12,480.50";
+  // The account's real Gloobal bank balance, off the profile read. Null until
+  // it lands — rendered as a dash rather than as a number, because a
+  // stand-in figure on a balance card is indistinguishable from the truth.
+  const [balanceValue, setBalanceValue] = useState(null);
+  const balance = balanceValue === null
+    ? "—"
+    : balanceValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   // The person's own currency symbol, from their registration country —
   // every amount on this screen renders in it (₹ for India, £ for the
   // UK, and so on), instead of hardcoded dollars.
@@ -1164,6 +1249,7 @@ function DashboardScreenBase({
       .then((user) => {
         if (cancelled || !user) return;
         setCreatorRate(Number(user.cashbackRate) || 0);
+        if (Number.isFinite(Number(user.balance))) setBalanceValue(Number(user.balance));
         if (Array.isArray(user.symbolIdHistory)) {
           setIdHistory((local) => mergeIdHistory(local, user.symbolIdHistory));
         }
@@ -1175,6 +1261,21 @@ function DashboardScreenBase({
       cancelled = true;
     };
   }, [myGloobalId]);
+
+  // A completed payment carries its own outcome, so the balance moves off the
+  // receipt rather than off a re-read that would race the write. A seed that
+  // was actually planted also invalidates whatever My Assets is holding.
+  useEffect(() => {
+    if (!paymentReceipt) return;
+    if (Number.isFinite(Number(paymentReceipt.newBalance))) {
+      setBalanceValue(Number(paymentReceipt.newBalance));
+    }
+    if (Number(paymentReceipt.cashback) > 0) {
+      setAssetsReload((n) => n + 1);
+    }
+    // The history panels are now stale by exactly one payment.
+    setMoneyReload((n) => n + 1);
+  }, [paymentReceipt]);
 
   // Locally recorded ID history for whichever ID is current now.
   useEffect(() => {
@@ -1223,6 +1324,43 @@ function DashboardScreenBase({
   // switch it would read.
   const [shareRole, setShareRole] = useState("user"); // "user" | "merchant"
   const [roleFlipping, setRoleFlipping] = useState(false);
+
+  // Hiding is free; revealing asks the device first. The check is a courtesy
+  // to the account holder, not a lock on their own money — an account with no
+  // passkey, a browser with no platform authenticator, or a status call that
+  // never answered all reveal directly. Only an enrolled account that then
+  // fails or cancels the prompt keeps the mask on.
+  const handleToggleBalance = async () => {
+    if (balanceVisible) {
+      setBalanceVisible(false);
+      return;
+    }
+    if (revealingBalance) return;
+
+    if (!accountHasPasskey) {
+      setBalanceVisible(true);
+      return;
+    }
+
+    setRevealingBalance(true);
+    try {
+      const available = await window.PublicKeyCredential?.isUserVerifyingPlatformAuthenticatorAvailable?.();
+      if (!available) {
+        setBalanceVisible(true);
+        return;
+      }
+      const options = await passkeyAuthOptions(myGloobalId);
+      const authResponse = await startAuthentication({ optionsJSON: options });
+      const verify = await passkeyAuthVerify(myGloobalId, authResponse);
+      if (!verify?.verified) throw new Error("not verified");
+      setBalanceVisible(true);
+    } catch {
+      setBalanceVisible(false);
+      showToast("Balance stays hidden — device check didn't pass");
+    } finally {
+      setRevealingBalance(false);
+    }
+  };
 
   const toggleShareRole = () => {
     setRoleFlipping(true);
@@ -1594,7 +1732,9 @@ function DashboardScreenBase({
                   header row) — sits outside the row's own padding so it
                   reads as a corner control for the whole card. */}
               <button
-                onClick={() => setBalanceVisible((v) => !v)}
+                onClick={handleToggleBalance}
+                disabled={revealingBalance}
+                data-testid="balance-eye"
                 aria-label={balanceVisible ? "Hide balance" : "Show balance"}
                 className="v2-tap"
                 style={{
@@ -1615,8 +1755,21 @@ function DashboardScreenBase({
               >
                 <EyeIcon open={balanceVisible} />
               </button>
-              <div style={{ position: "relative", marginTop: 20, fontSize: shareRole === "merchant" ? 24 : 32, fontWeight: 800, letterSpacing: 0.2, fontFamily: T.fontDisplay }}>
+              <div
+                data-testid="balance-amount"
+                style={{ position: "relative", marginTop: 20, fontSize: shareRole === "merchant" ? 24 : 32, fontWeight: 800, letterSpacing: 0.2, fontFamily: T.fontDisplay, display: "flex", alignItems: "center", gap: 10 }}
+              >
                 {balanceVisible ? `${ccy}${balance}` : "•••••••"}
+                {/* Only shown while masked, and only when a device check is
+                    actually what stands between here and the number —
+                    otherwise it would promise a prompt that never comes. */}
+                {!balanceVisible && accountHasPasskey && (
+                  <Fingerprint
+                    size={20}
+                    aria-hidden="true"
+                    style={{ opacity: 0.75, animation: revealingBalance ? "iconAttention 0.7s ease-in-out infinite" : "none" }}
+                  />
+                )}
               </div>
               {/* Spending mini chart — sits below its own divider so it
                   reads as a distinct footer section of the wallet card
@@ -3140,6 +3293,7 @@ function DashboardScreenBase({
         <MyAssetsScreen
           ccy={ccy}
           symbolId={myGloobalId}
+          reloadKey={assetsReload}
           onClose={() => setShowMyAssets(false)}
           onOpenPayLater={() => { setShowMyAssets(false); setShowPayLater(true); }}
         />
@@ -3211,6 +3365,8 @@ function DashboardScreenBase({
                 chip={T.accentSoft}
                 sign="−"
                 ccy={ccy}
+                status={moneyStatus}
+                onRetry={() => setMoneyReload((n) => n + 1)}
                 ctaLabel="Send Money"
                 onCta={() => { setProfileDetail(null); onOpenSend(); }}
               />
@@ -3225,6 +3381,8 @@ function DashboardScreenBase({
                 chip={T.positiveSoft}
                 sign="+"
                 ccy={ccy}
+                status={moneyStatus}
+                onRetry={() => setMoneyReload((n) => n + 1)}
                 ctaLabel="Receive Money"
                 onCta={() => { setProfileDetail(null); setShowReceive(true); }}
               />
