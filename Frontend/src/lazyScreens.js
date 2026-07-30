@@ -8,6 +8,9 @@ export const DashboardScreen = lazy(() =>
 export const SendMoneyScreen = lazy(() =>
   import("./components/sendMoney/SendMoneyScreen").then((m) => ({ default: m.SendMoneyScreen }))
 );
+export const PaymentReceiptScreen = lazy(() =>
+  import("./components/sendMoney/PaymentReceiptScreen").then((m) => ({ default: m.PaymentReceiptScreen }))
+);
 export const AddBankScreen = lazy(() =>
   import("./components/bank/AddBankScreen").then((m) => ({ default: m.AddBankScreen }))
 );

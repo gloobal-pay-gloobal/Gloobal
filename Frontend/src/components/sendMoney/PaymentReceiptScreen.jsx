@@ -1,0 +1,216 @@
+import React, { useEffect, useState } from "react";
+import { ArrowLeft, Check, Share2 } from "lucide-react";
+import { T } from "../../styles/theme";
+import { symbolFor } from "../../constants/finance";
+
+// A payment used to end in a toast: three seconds of text, then nothing to
+// go back to. This is the record of it — who it went to, what it cost, what
+// it earned, and the reference to quote if it ever needs chasing.
+
+const RECEIPT_STYLE_ID = "gloobal-receipt-keyframes";
+const RECEIPT_STYLE = `
+  @keyframes gloobalReceiptTick {
+    0% { transform: scale(0.4); opacity: 0; }
+    60% { transform: scale(1.12); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  .gloobal-receipt-tick { animation: gloobalReceiptTick 0.42s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+  @media (prefers-reduced-motion: reduce) {
+    .gloobal-receipt-tick { animation: none; }
+  }
+`;
+
+/** "30 Jul 2026 · 14:58" */
+function formatStamp(value) {
+  const d = value ? new Date(value) : new Date();
+  if (Number.isNaN(d.getTime())) return "";
+  const date = d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${date} · ${time}`;
+}
+
+/** The tail of the transaction id — long enough to be unique in a support
+ *  conversation, short enough to read out loud. */
+function shortId(receipt) {
+  const raw = String(
+    receipt?.transactionId || receipt?.transaction?._id || receipt?.transaction?.id || receipt?.referenceId || ""
+  );
+  if (!raw) return "";
+  return `#${raw.slice(-8).toUpperCase()}`;
+}
+
+function Row({ label, value, color, testId }) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, padding: "11px 0" }}>
+      <span style={{ fontSize: 12.5, fontWeight: 600, color: T.inkSoft, flexShrink: 0 }}>{label}</span>
+      <span
+        data-testid={testId}
+        style={{
+          fontSize: 13, fontWeight: 800, color: color || T.ink, textAlign: "right",
+          fontFamily: T.fontDisplay, wordBreak: "break-word", minWidth: 0,
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+export function PaymentReceiptScreen({ receipt, ccy, onDone }) {
+  const [shareNote, setShareNote] = useState(null);
+
+  useEffect(() => {
+    if (document.getElementById(RECEIPT_STYLE_ID)) return;
+    const el = document.createElement("style");
+    el.id = RECEIPT_STYLE_ID;
+    el.textContent = RECEIPT_STYLE;
+    document.head.appendChild(el);
+  }, []);
+
+  if (!receipt) return null;
+
+  const symbol = ccy || symbolFor(receipt.currency || "USD");
+  const money = (n) => `${symbol}${(Number(n) || 0).toFixed(2)}`;
+
+  const amount = Number(receipt.amount) || 0;
+  const cashback = Number(receipt.cashback) || 0;
+  const cashbackRate = Number(receipt.cashbackRate) || 0;
+  const amountPaid = Number(receipt.amountPaid ?? receipt.amount) || 0;
+  const recipient =
+    receipt.recipient ||
+    receipt.transaction?.to?.symbolId ||
+    receipt.transaction?.to?.fullName ||
+    "Gloobal user";
+  const stamp = formatStamp(receipt.timestamp || receipt.transaction?.createdAt);
+  const txnId = shortId(receipt);
+
+  const summary =
+    `Paid ${money(amount)} to ${recipient} on ${stamp}.` + (txnId ? ` Transaction ${txnId}` : "");
+
+  const handleShare = async () => {
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "Gloobal payment receipt", text: summary });
+        return;
+      }
+      await navigator.clipboard.writeText(summary);
+      setShareNote("Receipt copied");
+    } catch {
+      // Cancelled, or neither route is available — say what happened rather
+      // than leaving the button looking broken.
+      setShareNote("Could not share receipt");
+    }
+  };
+
+  return (
+    <div
+      data-testid="payment-receipt"
+      style={{
+        position: "fixed", inset: 0, zIndex: 320, background: T.bg,
+        display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: T.fontBody,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "calc(18px + env(safe-area-inset-top, 0px)) 18px 6px", flexShrink: 0 }}>
+        {/* Back goes to the dashboard, not to the form that produced this —
+            the payment is done, and there is nothing to go back and edit. */}
+        <button
+          onClick={onDone}
+          aria-label="Back to dashboard"
+          className="v2-tap"
+          style={{ width: 38, height: 38, borderRadius: "50%", border: "none", background: T.surface, boxShadow: T.shadowCard, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+        >
+          <ArrowLeft size={18} color={T.ink} />
+        </button>
+        <span style={{ fontSize: 20, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>Payment Receipt</span>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "10px 18px 28px", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+        <span
+          data-testid="receipt-tick"
+          className="gloobal-receipt-tick"
+          style={{
+            width: 64, height: 64, borderRadius: "50%", background: T.positive,
+            display: "flex", alignItems: "center", justifyContent: "center", marginTop: 6,
+          }}
+        >
+          <Check size={32} color="#fff" strokeWidth={3} />
+        </span>
+
+        <div style={{ width: "100%", maxWidth: 380, borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: 20 }}>
+          <Row label="To" value={recipient} testId="receipt-to" />
+          <div style={{ height: 1, background: T.line }} />
+          <Row label="Amount" value={money(amount)} testId="receipt-amount" />
+          {cashback > 0 && (
+            <>
+              <div style={{ height: 1, background: T.line }} />
+              <Row
+                label="Cashback earned"
+                value={`${money(cashback)} (${Number((cashbackRate * 100).toFixed(2))}%)`}
+                color={T.positive}
+                testId="receipt-cashback"
+              />
+            </>
+          )}
+          <div style={{ height: 1, background: T.line }} />
+          <Row label="Date & Time" value={stamp} testId="receipt-stamp" />
+          {txnId && (
+            <>
+              <div style={{ height: 1, background: T.line }} />
+              <Row label="Transaction ID" value={txnId} testId="receipt-txn-id" />
+            </>
+          )}
+          <div style={{ height: 1, background: T.line }} />
+          <Row label="Status" value="Completed ✓" color={T.positive} testId="receipt-status" />
+        </div>
+
+        {/* Only when something was actually planted — on a plain person-to-
+            person send there is no seed, and claiming one would be a lie. */}
+        {cashback > 0 && (
+          <div
+            data-testid="receipt-asset-note"
+            style={{
+              width: "100%", maxWidth: 380, borderRadius: T.radiusMd, background: T.accentSoft,
+              padding: "12px 14px", fontSize: 12.5, fontWeight: 700, color: T.positive, lineHeight: 1.5,
+            }}
+          >
+            🌱 {money(cashback)} planted as an asset — growing toward {money(amountPaid)}
+          </div>
+        )}
+
+        <div style={{ width: "100%", maxWidth: 380, marginTop: 4 }}>
+          <button
+            onClick={onDone}
+            data-testid="receipt-done"
+            className="v2-tap"
+            style={{
+              width: "100%", padding: "14px 18px", borderRadius: T.radiusMd, border: "none",
+              background: T.gradButton, color: "#fff", fontSize: 14, fontWeight: 800,
+              fontFamily: T.fontDisplay, cursor: "pointer",
+            }}
+          >
+            Done
+          </button>
+          <button
+            onClick={handleShare}
+            data-testid="receipt-share"
+            style={{
+              width: "100%", marginTop: 10, border: "none", background: "none", color: T.accent,
+              fontSize: 12.5, fontWeight: 800, padding: "8px", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+            }}
+          >
+            <Share2 size={15} color={T.accent} />
+            Share Receipt
+          </button>
+          {shareNote && (
+            <div style={{ textAlign: "center", fontSize: 11.5, fontWeight: 700, color: T.inkFaint, marginTop: 2 }}>
+              {shareNote}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default PaymentReceiptScreen;
