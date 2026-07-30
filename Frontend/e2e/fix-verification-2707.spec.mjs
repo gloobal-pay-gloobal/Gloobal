@@ -32,6 +32,25 @@ const USER = {
   hasPasskey: false,
 };
 
+// My Assets used to fall back to five invented seeds whenever the account had
+// none, and these checks leaned on that fallback. The fallback is gone (a
+// screen about your own spending must not show someone else's), so the
+// account under test is given a real portfolio instead.
+const DAY = 24 * 60 * 60 * 1000;
+const SEEDS = [
+  { _id: "s1", business: "Telecom Co", category: "Telecom", amountPaid: 1000, cashbackRate: 0.01, cashback: 10, currency: "INR", plantedAt: new Date(Date.now() - 30 * DAY).toISOString() },
+  { _id: "s2", business: "Power Board", category: "Electricity", amountPaid: 2500, cashbackRate: 0.02, cashback: 50, currency: "INR", plantedAt: new Date(Date.now() - 60 * DAY).toISOString() },
+  { _id: "s3", business: "Food Delivery", category: "Food", amountPaid: 450, cashbackRate: 0.05, cashback: 22.5, currency: "INR", plantedAt: new Date(Date.now() - 10 * DAY).toISOString() },
+  { _id: "s4", business: "Cinema Tickets", category: "Entertainment", amountPaid: 800, cashbackRate: 0.07, cashback: 56, currency: "INR", plantedAt: new Date(Date.now() - 90 * DAY).toISOString() },
+  { _id: "s5", business: "Broadband", category: "Telecom", amountPaid: 599, cashbackRate: 0.01, cashback: 5.99, currency: "INR", plantedAt: new Date(Date.now() - 5 * DAY).toISOString() },
+];
+const WITH_SEEDS = {
+  "/api/assets/": (route) =>
+    route.request().url().includes("/paylater/")
+      ? null
+      : json({ totalAssets: 144.49, futureAssets: 5349, seeds: SEEDS, avgYearsToTarget: 30, payLaterLimit: 144.49 }),
+};
+
 async function mockBackend(page, overrides = {}) {
   await page.route(`${BACKEND}/**`, async (route) => {
     const url = route.request().url();
@@ -58,6 +77,9 @@ async function mockBackend(page, overrides = {}) {
     }
     if (url.includes("/api/profile/")) return route.fulfill(json({ user: USER }));
     if (url.includes("/api/transactions/history/")) return route.fulfill(json({ success: true, transactions: [], count: 0 }));
+    // The dashboard reads GET /api/transactions/:symbolId now (records plus
+    // lifetime totals); Send Money still reads /history for its own sheet.
+    if (url.includes("/api/transactions/")) return route.fulfill(json({ success: true, transactions: [], count: 0, totalSent: 0, totalReceived: 0 }));
     if (url.includes("/api/passkey/")) return route.fulfill(json({ hasPasskey: false }));
     return route.fulfill(json({}));
   });
@@ -108,7 +130,7 @@ async function gotoDashboard(page, overrides) {
 }
 
 /** Dashboard -> Accounts tab -> My Assets tile. */
-async function gotoMyAssets(page, overrides) {
+async function gotoMyAssets(page, overrides = WITH_SEEDS) {
   await gotoDashboard(page, overrides);
   await page.getByRole("button", { name: "Accounts", exact: true }).click();
   await page.getByRole("button", { name: "My Assets", exact: true }).click();
@@ -116,7 +138,7 @@ async function gotoMyAssets(page, overrides) {
 }
 
 /** Dashboard -> Accounts tab -> PayLater tile. */
-async function gotoPayLater(page, overrides) {
+async function gotoPayLater(page, overrides = WITH_SEEDS) {
   await gotoDashboard(page, overrides);
   await page.getByRole("button", { name: "Accounts", exact: true }).click();
   await page.getByRole("button", { name: "PayLater", exact: true }).click();
@@ -210,7 +232,7 @@ test("F2-D: If biometrics already enrolled, dashboard shows directly after PIN",
 // ═══ FEATURE 3 — My Assets ═════════════════════════════════════════════════
 
 test("MA-A: My Assets is accessible from the dashboard", async ({ page }) => {
-  await gotoDashboard(page);
+  await gotoDashboard(page, WITH_SEEDS);
   await page.getByRole("button", { name: "Accounts", exact: true }).click();
   await expect(page.getByRole("button", { name: "My Assets", exact: true })).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "My Assets", exact: true }).click();
@@ -283,12 +305,16 @@ test("MA-I: PayLater screen cross-links to My Assets", async ({ page }) => {
   await expect(page.getByText("Growing toward")).toBeVisible({ timeout: 30_000 });
 });
 
-test("MA-J: Demo-data badge is shown when no real seeds exist", async ({ page }) => {
-  await gotoMyAssets(page, {
+test("MA-J: An account with no seeds gets an empty state, not invented ones", async ({ page }) => {
+  await gotoDashboard(page, {
     "/api/assets/paylater/": () => json({ limit: 0, available: 0, pendingDues: 0, transactions: [] }),
     "/api/assets/": () => json({ totalAssets: 0, futureAssets: 0, seeds: [], avgYearsToTarget: 0, payLaterLimit: 0 }),
   });
-  await expect(page.getByText("Demo data", { exact: true })).toBeVisible({ timeout: 30_000 });
-  // Demo seed rows are actually rendered.
-  await expect(page.getByTestId("asset-seed-row").first()).toBeVisible();
+  await page.getByRole("button", { name: "Accounts", exact: true }).click();
+  await page.getByRole("button", { name: "My Assets", exact: true }).click();
+
+  await expect(page.getByTestId("assets-empty")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("No assets yet", { exact: true })).toBeVisible();
+  await expect(page.getByText("Demo data", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("asset-seed-row")).toHaveCount(0);
 });

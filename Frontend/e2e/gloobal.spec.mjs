@@ -203,8 +203,11 @@ test.describe("GlobalId v2 integration", () => {
     // 201 Created; a success here is a real prototype transfer recorded
     // against both accounts.
     expect((await sendResponse).status()).toBe(201);
-    await expect(page.getByText(/Paid /i).first()).toBeVisible({ timeout: 30_000 });
-    await closeOverlay(page);
+    // A payment now ends on its receipt rather than on a toast that vanishes.
+    await expect(page.getByTestId("payment-receipt")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("receipt-status")).toContainText("Completed");
+    await page.getByTestId("receipt-done").click();
+    await expect(page.getByTestId("payment-receipt")).toHaveCount(0);
   });
 
   test("Profile tab renders the new money panels backed by real history", async () => {

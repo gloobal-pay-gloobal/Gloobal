@@ -106,6 +106,9 @@ async function mockBackend(page, overrides = {}) {
     }
     if (url.includes("/api/profile/")) return route.fulfill(json({ user: USER }));
     if (url.includes("/api/transactions/history/")) return route.fulfill(json({ success: true, transactions: [], count: 0 }));
+    // The dashboard reads GET /api/transactions/:symbolId now (records plus
+    // lifetime totals); Send Money still reads /history for its own sheet.
+    if (url.includes("/api/transactions/")) return route.fulfill(json({ success: true, transactions: [], count: 0, totalSent: 0, totalReceived: 0 }));
     if (url.includes("/api/passkey/")) return route.fulfill(json({ hasPasskey: false }));
     return route.fulfill(json({}));
   });
@@ -162,7 +165,9 @@ async function completePayment(page) {
   await payNow.click();
   await page.getByRole("button", { name: "Gloobal Bank", exact: true }).click();
   await tapPinSheet(page, PIN);
-  await expect(page.getByText(/Paid /i).first()).toBeVisible({ timeout: 30_000 });
+  // The payment lands on its receipt rather than on a toast.
+  await expect(page.getByTestId("payment-receipt")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("receipt-done").click();
 }
 
 // ═══ X1 — every new surface, one session ═══════════════════════════════════
@@ -313,7 +318,8 @@ test("X6: a failed history fetch recovers on retry rather than reading as empty"
     ],
   };
   await boot(page, {
-    "/api/transactions/history/": () => (failing ? json({ message: "boom" }, 500) : json(rows)),
+    "/api/transactions/": (route) =>
+      route.request().url().includes("/send") ? null : (failing ? json({ message: "boom" }, 500) : json(rows)),
   });
 
   await goProfile(page);
