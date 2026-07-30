@@ -29,12 +29,12 @@ import { BILL_ACTIONS, DASHBOARD_ACTIONS, PROFILE_ROWS } from "../../constants/d
 import {
   changeSymbolId,
   checkSymbolAvailability,
-  getHistory,
   getProfile,
   getReferrals,
   passkeyAuthOptions,
   passkeyAuthVerify,
   passkeyStatus,
+  getTransactionSummary,
   verifyPin,
 } from "../../services/api/authApi";
 import { getPayLater } from "../../services/api/assetsApi";
@@ -641,19 +641,43 @@ function ProfileToggle({ on, onToggle, label }) {
 // two-week limit real rather than just a UI restriction.
 const SPENDING_DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 
-function generateDailySpending() {
-  // Each day now carries both sides of the ledger — paid (money out) and
-  // received (money in) — so the chart can show a single day split in two
-  // rather than one bar per day.
-  const weeks = [0, 1].map(() =>
-    Array.from({ length: 7 }, () => ({
-      paid: Math.round((Math.random() * 110 + 15) * 100) / 100,
-      received: Math.round((Math.random() * 90 + 10) * 100) / 100,
-    }))
-  );
+/** Midnight on the Sunday that starts the week `value` falls in. */
+function startOfWeek(value) {
+  const d = new Date(value);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay());
+  return d;
+}
+
+// This week and last week, Sunday through Saturday, built from the account's
+// real transactions. Each day carries both sides of the ledger — paid (money
+// out) and received (money in) — so the chart can show a single day split in
+// two rather than one bar per day. No transactions means seven zero days,
+// which is the true shape of a brand-new account.
+function buildDailySpending(transactions) {
+  const weeks = [0, 1].map(() => Array.from({ length: 7 }, () => ({ paid: 0, received: 0 })));
+  const thisWeekStart = startOfWeek(new Date());
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+  for (const txn of transactions || []) {
+    if (!txn?.createdAt) continue;
+    // Failed and cancelled attempts never moved money, so they never show up
+    // as a bar. `received` records carry the counterparty's status.
+    if (txn.status && !["success", "completed", "received"].includes(txn.status)) continue;
+    const when = new Date(txn.createdAt);
+    if (Number.isNaN(when.getTime())) continue;
+    const daysBack = Math.floor((thisWeekStart - startOfWeek(when)) / (7 * MS_PER_DAY));
+    if (daysBack < 0 || daysBack > 1) continue; // outside the two weeks shown
+    const day = weeks[daysBack][when.getDay()];
+    const amount = Number(txn.amount) || 0;
+    if (txn.direction === "received") day.received += amount;
+    else day.paid += amount;
+  }
+
+  const round = (n) => Math.round(n * 100) / 100;
   const totals = weeks.map((week) => ({
-    paid: Math.round(week.reduce((sum, d) => sum + d.paid, 0) * 100) / 100,
-    received: Math.round(week.reduce((sum, d) => sum + d.received, 0) * 100) / 100,
+    paid: round(week.reduce((sum, d) => sum + d.paid, 0)),
+    received: round(week.reduce((sum, d) => sum + d.received, 0)),
   }));
   return { weeks, totals }; // weeks[0] = this week (Sun..Sat), weeks[1] = last week
 }
@@ -665,7 +689,7 @@ function generateDailySpending() {
 // again goes back to showing the week total. Hard-capped at two weeks total
 // — dragging past either end just resists/holds instead of paging into data
 // that isn't there.
-function DailySpendingChart({ weeks, totals, symbol = "$" }) {
+function DailySpendingChart({ weeks, totals, lifetime, status = "ready", symbol = "$" }) {
   const [weekOffset, setWeekOffset] = useState(0); // 0 = this week, 1 = last week
   const [selectedDay, setSelectedDay] = useState(null); // index into the current week, or null
   const maxOffset = weeks.length - 1;
@@ -712,9 +736,36 @@ function DailySpendingChart({ weeks, totals, symbol = "$" }) {
   };
 
   const days = weeks[weekOffset]; // [{ paid, received }, ...] for the week
-  const total = totals[weekOffset]; // { paid, received }
+  const total = totals[weekOffset]; // { paid, received } for that week
   const max = Math.max(...days.map((d) => Math.max(d.paid, d.received)), 1);
-  const display = selectedDay !== null ? days[selectedDay] : total;
+  // With no day tapped these are the account's lifetime totals — the same
+  // two figures the Profile's Paid and Received panels add up, so the card
+  // and the panels can't tell different stories. Tapping a bar narrows it
+  // to that one day; the bars themselves always show the week.
+  const display = selectedDay !== null ? days[selectedDay] : (lifetime || total);
+
+  // A figure that isn't known yet must not render as a number. Loading gets
+  // a shimmer bar, a failed fetch gets a dash — either way, never a stand-in
+  // amount that reads exactly like a real balance.
+  const renderAmount = (value, testId) => {
+    if (status === "loading") {
+      return (
+        <div
+          data-testid={`${testId}-skeleton`}
+          className="v2-shimmer"
+          style={{ width: 62, height: 15, borderRadius: 5, background: "rgba(255,255,255,0.22)" }}
+        />
+      );
+    }
+    if (status === "error") {
+      return <div data-testid={testId} style={{ fontSize: 13, fontWeight: 700 }}>–</div>;
+    }
+    return (
+      <div data-testid={testId} style={{ fontSize: 13, fontWeight: 700 }}>
+        {symbol}{value.toFixed(2)}
+      </div>
+    );
+  };
 
   return (
     <div style={{ position: "relative" }}>
@@ -725,13 +776,13 @@ function DailySpendingChart({ weeks, totals, symbol = "$" }) {
           <div style={{ fontSize: 9, fontWeight: 700, color: "#FCA5A5", textTransform: "uppercase", letterSpacing: 0.4 }}>
             Paid
           </div>
-          <div style={{ fontSize: 13, fontWeight: 700 }}>{symbol}{display.paid.toFixed(2)}</div>
+          {renderAmount(display.paid, "card-paid")}
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 9, fontWeight: 700, color: "#86EFAC", textTransform: "uppercase", letterSpacing: 0.4 }}>
             Received
           </div>
-          <div style={{ fontSize: 13, fontWeight: 700 }}>{symbol}{display.received.toFixed(2)}</div>
+          {renderAmount(display.received, "card-received")}
         </div>
       </div>
 
@@ -848,6 +899,11 @@ function DashboardScreenBase({
   // someone with a full history that they have never been paid.
   const [moneyStatus, setMoneyStatus] = useState("loading");
   const [moneyReload, setMoneyReload] = useState(0);
+  // The same fetch, kept in its raw form for the wallet card: the week's
+  // bars are grouped from these records, and the card's PAID / RECEIVED
+  // figures are the account's lifetime totals as the backend adds them up.
+  const [moneyTxns, setMoneyTxns] = useState([]);
+  const [moneyTotals, setMoneyTotals] = useState({ paid: 0, received: 0 });
 
   // Send Money renders as an overlay above this screen, so the dashboard
   // never unmounts and a fetch on mount alone would leave the Profile
@@ -859,9 +915,11 @@ function DashboardScreenBase({
     setMoneyStatus("loading");
     (async () => {
       try {
-        const txns = await getHistory(myGloobalId);
+        const { transactions, totalSent, totalReceived } = await getTransactionSummary(myGloobalId);
         if (cancelled) return;
-        setMoneyRows(txns.map(toMoneyRow));
+        setMoneyRows(transactions.map(toMoneyRow));
+        setMoneyTxns(transactions);
+        setMoneyTotals({ paid: totalSent, received: totalReceived });
         setMoneyStatus("ready");
       } catch {
         // Offline, or the backend is still waking up. Say so — an empty
@@ -908,48 +966,39 @@ function DashboardScreenBase({
   const [showMyAssets, setShowMyAssets] = useState(false);
   // Live PayLater figures — limit is always the account's current total
   // assets (GET /api/assets/paylater/:symbolId), never a hardcoded number.
-  // Null until the fetch lands; the prototype demo limit is the fallback.
+  // Null until the fetch lands. Everything on the PayLater screen — the
+  // limit, the dues, and the activity list — comes from this one read; there
+  // is no demo ledger standing in behind it any more.
   const [paylaterLive, setPaylaterLive] = useState(null);
-  const PAYLATER_LIMIT = 500;
-  // Demo ledger, split by direction: "out" = sending (purchases charged
-  // to PayLater), "in" = receiving (repayments/refunds credited back).
-  // Dues derive only from pending outgoing entries, so balance, dues,
-  // and history can never disagree.
-  const paylaterHistory = [
-    { name: "Metro Recharge", date: "Jul 14", amount: 15.0, status: "pending", direction: "out" },
-    { name: "Grocery Mart", date: "Jul 8", amount: 42.5, status: "pending", direction: "out" },
-    { name: "Repayment — June dues", date: "Jul 1", amount: 68.75, status: "received", direction: "in" },
-    { name: "City Electricity", date: "Jun 28", amount: 60.0, status: "paid", direction: "out" },
-    { name: "Coffee Corner", date: "Jun 21", amount: 8.75, status: "paid", direction: "out" },
-    { name: "Refund — BookHouse", date: "Jun 15", amount: 31.25, status: "received", direction: "in" },
-  ];
-  const paylaterSending = paylaterHistory.filter((t) => t.direction === "out");
-  const paylaterReceiving = paylaterHistory.filter((t) => t.direction === "in");
-  const paylaterDue = paylaterSending.filter((t) => t.status === "pending").reduce((s, t) => s + t.amount, 0);
+  const [paylaterStatus, setPaylaterStatus] = useState("loading"); // loading | ready | error
+  const [paylaterReload, setPaylaterReload] = useState(0);
 
-  // Live limit tied to assets. When the fetch has landed, the limit and
-  // available balance come from the account's real total assets; until then
-  // (or if it fails) the prototype demo figures stand in so the screen is
-  // never blank.
   useEffect(() => {
     if (!showPayLater || !myGloobalId) return;
     let cancelled = false;
+    setPaylaterStatus("loading");
     (async () => {
       try {
         const data = await getPayLater(myGloobalId);
-        if (!cancelled) setPaylaterLive(data);
+        if (cancelled) return;
+        setPaylaterLive(data);
+        setPaylaterStatus("ready");
       } catch {
-        // offline / cold start — keep the demo fallback
+        // Offline, or the backend is still waking up. An empty list here
+        // would be a claim about the account; a retry is the honest answer.
+        if (cancelled) return;
+        setPaylaterStatus("error");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [showPayLater, myGloobalId]);
+  }, [showPayLater, myGloobalId, paylaterReload]);
 
-  const paylaterLimit = paylaterLive ? paylaterLive.limit : PAYLATER_LIMIT;
-  const paylaterAvailable = paylaterLive ? paylaterLive.available : PAYLATER_LIMIT - paylaterDue;
-  const paylaterPendingDues = paylaterLive ? paylaterLive.pendingDues : paylaterDue;
+  const paylaterLimit = paylaterLive ? paylaterLive.limit : 0;
+  const paylaterAvailable = paylaterLive ? paylaterLive.available : 0;
+  const paylaterPendingDues = paylaterLive ? paylaterLive.pendingDues : 0;
+  const paylaterActivity = Array.isArray(paylaterLive?.transactions) ? paylaterLive.transactions : [];
 
   // --- Gloobal Creators: cashback sharing --------------------------------
   // Tapping Receive leads with "Share with Gloobal users" — the Creator picks
@@ -1212,7 +1261,7 @@ function DashboardScreenBase({
   // Two weeks of spending (this week + last week) shown as a swipeable mini
   // bar chart at the bottom of the wallet card — generated once per
   // session, same pattern as the referral network mock above.
-  const [dailySpending] = useState(() => generateDailySpending());
+  const dailySpending = useMemo(() => buildDailySpending(moneyTxns), [moneyTxns]);
 
   // Which profile this Gloobal ID is acting as when it's shared — "user"
   // for personal spending (bills, transfers to friends/family) or
@@ -1676,7 +1725,13 @@ function DashboardScreenBase({
                   reads as a distinct footer section of the wallet card
                   rather than competing with the balance above it. */}
               <div style={{ position: "relative", marginTop: 18, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.18)" }}>
-                <DailySpendingChart weeks={dailySpending.weeks} totals={dailySpending.totals} symbol={ccy} />
+                <DailySpendingChart
+                  weeks={dailySpending.weeks}
+                  totals={dailySpending.totals}
+                  lifetime={moneyTotals}
+                  status={moneyStatus}
+                  symbol={ccy}
+                />
               </div>
 
               {showIdTag && (
@@ -3066,68 +3121,79 @@ function DashboardScreenBase({
               </div>
             </div>
 
-            {/* History — split into the two directions of the ledger. */}
+            {/* Activity — the account's own PayLater records, newest first:
+                charges it put on PayLater, repayments against them, and the
+                cashback credits that raised the limit. */}
             <div>
               <div style={{ fontSize: 12.5, fontWeight: 800, color: T.inkSoft, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 2px 8px" }}>
-                Received
+                Activity
               </div>
               <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
-                {paylaterReceiving.map((t, i) => (
-                  <div
-                    key={`${t.name}-${t.date}`}
-                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderTop: i === 0 ? "none" : `1px solid ${T.line}` }}
-                  >
-                    <span
-                      style={{
-                        width: 36, height: 36, borderRadius: 11, flexShrink: 0,
-                        background: T.positiveSoft, display: "flex", alignItems: "center", justifyContent: "center",
-                      }}
-                    >
-                      <ArrowDownLeft size={17} color={T.positive} />
-                    </span>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
-                      <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 1 }}>{t.date}</span>
-                    </span>
-                    <span style={{ textAlign: "right", flexShrink: 0 }}>
-                      <span style={{ display: "block", fontSize: 13.5, fontWeight: 800, color: T.positive }}>+{ccy}{t.amount.toFixed(2)}</span>
-                      <span style={{ display: "block", fontSize: 10.5, fontWeight: 700, color: T.positive, marginTop: 1 }}>Received</span>
-                    </span>
+                {paylaterStatus === "loading" ? (
+                  <div data-testid="paylater-loading" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "26px 16px", fontSize: 12.5, fontWeight: 700, color: T.inkFaint }}>
+                    <RotateCw size={15} color={T.inkFaint} style={{ animation: "iconAttention 0.9s linear infinite" }} />
+                    Loading…
                   </div>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <div style={{ fontSize: 12.5, fontWeight: 800, color: T.inkSoft, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 2px 8px" }}>
-                Paid
-              </div>
-              <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
-                {paylaterSending.map((t, i) => (
-                  <div
-                    key={`${t.name}-${t.date}`}
-                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderTop: i === 0 ? "none" : `1px solid ${T.line}` }}
+                ) : paylaterStatus === "error" ? (
+                  <button
+                    type="button"
+                    data-testid="paylater-error"
+                    onClick={() => setPaylaterReload((n) => n + 1)}
+                    className="v2-row"
+                    style={{ width: "100%", border: "none", background: "none", padding: "24px 16px", fontSize: 12.5, fontWeight: 700, color: T.negative, cursor: "pointer" }}
                   >
-                    <span
-                      style={{
-                        width: 36, height: 36, borderRadius: 11, flexShrink: 0,
-                        background: T.accentSoft, display: "flex", alignItems: "center", justifyContent: "center",
-                      }}
-                    >
-                      <ArrowUpRight size={17} color={T.accent} />
-                    </span>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
-                      <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 1 }}>{t.date}</span>
-                    </span>
-                    <span style={{ textAlign: "right", flexShrink: 0 }}>
-                      <span style={{ display: "block", fontSize: 13.5, fontWeight: 800, color: T.ink }}>−{ccy}{t.amount.toFixed(2)}</span>
-                      <span style={{ display: "block", fontSize: 10.5, fontWeight: 700, color: t.status === "paid" ? T.positive : T.negative, marginTop: 1 }}>
-                        {t.status === "paid" ? "Paid" : "Pending"}
-                      </span>
-                    </span>
+                    Could not load history. Tap to retry.
+                  </button>
+                ) : paylaterActivity.length === 0 ? (
+                  <div data-testid="paylater-empty" style={{ padding: "26px 16px", textAlign: "center", fontSize: 12.5, fontWeight: 600, color: T.inkFaint }}>
+                    No PayLater activity yet.
                   </div>
-                ))}
+                ) : (
+                  paylaterActivity.map((t, i) => {
+                    // Charges take money out; repayments and cashback credits
+                    // put it back — colour and sign follow that, not the row's
+                    // position in the list.
+                    const isCharge = t.type === "charge";
+                    const isCredit = t.type === "credit";
+                    const tint = isCharge ? T.negative : isCredit ? T.accent : T.positive;
+                    const tintSoft = isCharge ? T.surfaceAlt : isCredit ? T.accentSoft : T.positiveSoft;
+                    const amount = Number(t.amount) || 0;
+                    return (
+                      <div
+                        key={t.id || `${t.description}-${t.createdAt}-${i}`}
+                        data-testid="paylater-row"
+                        style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderTop: i === 0 ? "none" : `1px solid ${T.line}` }}
+                      >
+                        <span
+                          style={{
+                            width: 36, height: 36, borderRadius: 11, flexShrink: 0,
+                            background: tintSoft, display: "flex", alignItems: "center", justifyContent: "center",
+                          }}
+                        >
+                          {isCharge ? <ArrowUpRight size={17} color={tint} />
+                            : isCredit ? <Sprout size={16} color={tint} />
+                            : <ArrowDownLeft size={17} color={tint} />}
+                        </span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {t.description}
+                          </span>
+                          <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 1 }}>
+                            {t.createdAt ? new Date(t.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}
+                          </span>
+                        </span>
+                        <span style={{ textAlign: "right", flexShrink: 0 }}>
+                          <span style={{ display: "block", fontSize: 13.5, fontWeight: 800, color: tint }}>
+                            {isCharge ? "−" : "+"}{ccy}{amount.toFixed(2)}
+                          </span>
+                          <span style={{ display: "block", fontSize: 10.5, fontWeight: 700, color: T.inkFaint, marginTop: 1, textTransform: "capitalize" }}>
+                            {t.type}
+                          </span>
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </div>

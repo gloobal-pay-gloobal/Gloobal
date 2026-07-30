@@ -239,6 +239,9 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false, onPayme
           amount: amountNumber,
           pin,
           idempotencyKey,
+          // Recorded with the transaction so a payment put on PayLater shows
+          // up as a PayLater charge rather than having to be inferred later.
+          payMethod: payMethod || "Gloobal Bank",
         });
         if (cancelled) return;
         // The backend is the only place that knows the payee's cashback rate,

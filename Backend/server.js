@@ -1726,7 +1726,10 @@ app.post('/api/assets/plant-seed', async (req, res) => {
 });
 
 // GET /api/assets/paylater/:symbolId — PayLater limit is always the live
-// total of the user's assets; the repayment ledger is a phase-2 feature.
+// total of the user's assets, and the activity list is built from records
+// that actually exist: payments the account chose to put on PayLater
+// (metadata.payMethod), and the cashback seeds that raised the limit. An
+// account that has done neither gets an empty list, not a sample ledger.
 app.get('/api/assets/paylater/:symbolId', async (req, res) => {
   try {
     const cleanSymbolId = String(req.params.symbolId || '').trim();
@@ -1739,15 +1742,61 @@ app.get('/api/assets/paylater/:symbolId', async (req, res) => {
       return res.status(404).json({ message: 'Secure ID not found.' });
     }
 
-    const rawSeeds = await AssetSeed.find({ userId: user._id });
-    const totalAssets = rawSeeds.map(computeSeed).reduce((s, x) => s + x.currentValue, 0);
-    const pendingDues = 0;
+    const rawSeeds = await AssetSeed.find({ userId: user._id }).sort({ plantedAt: -1 });
+    const seeds = rawSeeds.map(computeSeed);
+    const totalAssets = seeds.reduce((s, x) => s + x.currentValue, 0);
+
+    // Charges: successful sends this account paid for with PayLater.
+    // Repayments: the reverse leg, once a repayment flow exists to write it.
+    const payLaterTxns = await Transaction.find({
+      fromUserId: user._id,
+      status: 'success',
+      'metadata.payMethod': /paylater/i,
+    })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .populate('toUserId', 'fullName symbolId')
+      .lean();
+
+    const charges = payLaterTxns.map((t) => {
+      const repayment = Boolean(t.metadata && t.metadata.payLaterRepayment);
+      const payee = t.toUserId?.fullName || t.toUserId?.symbolId || 'Gloobal user';
+      return {
+        id: String(t._id),
+        type: repayment ? 'repayment' : 'charge',
+        amount: t.amount,
+        description: repayment ? 'Repayment' : `PayLater charge · ${payee}`,
+        createdAt: t.createdAt,
+      };
+    });
+
+    // Credits: cashback that became an asset, which is what a PayLater limit
+    // is made of — so the list explains the number above it.
+    const credits = seeds.map((s) => ({
+      id: String(s._id),
+      type: 'credit',
+      amount: s.cashback,
+      description: `Cashback credited · ${s.business}`,
+      createdAt: s.plantedAt,
+    }));
+
+    const transactions = [...charges, ...credits]
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .slice(0, 50);
+
+    // Nothing repays a charge yet, so every charge is still outstanding.
+    const pendingDues = charges
+      .filter((c) => c.type === 'charge')
+      .reduce((s, c) => s + (Number(c.amount) || 0), 0)
+      - charges.filter((c) => c.type === 'repayment').reduce((s, c) => s + (Number(c.amount) || 0), 0);
+
+    const dues = Math.max(0, pendingDues);
 
     return res.status(200).json({
       limit: totalAssets,
-      available: totalAssets - pendingDues,
-      pendingDues,
-      transactions: [],
+      available: Math.max(0, totalAssets - dues),
+      pendingDues: dues,
+      transactions,
     });
   } catch (error) {
     console.error('PayLater fetch error:', error);
@@ -1771,6 +1820,7 @@ app.post('/api/transactions/send', async (req, res) => {
       note = '',
       pin,
       idempotencyKey,
+      payMethod,
     } = req.body || {};
 
     const senderIdentifier = String(senderSymbolId || fromSymbolId || symbolId || '').trim();
@@ -1780,6 +1830,9 @@ app.post('/api/transactions/send', async (req, res) => {
     const cleanCurrency = String(currency || 'INR').trim().toUpperCase() || 'INR';
     const cleanNote = String(note || '').trim().slice(0, 140);
     const cleanIdempotencyKey = String(idempotencyKey || '').trim().slice(0, 120);
+    // How it was paid ("Gloobal Bank", "Gloobal PayLater", ...). Recorded so
+    // the PayLater screen can list its own charges instead of inventing them.
+    const cleanPayMethod = String(payMethod || '').trim().slice(0, 40);
     const maxPrototypeAmount = Number(process.env.PROTOTYPE_TRANSACTION_MAX_AMOUNT || 5000);
 
     if (!senderIdentifier) {
@@ -1963,6 +2016,7 @@ app.post('/api/transactions/send', async (req, res) => {
         senderInput: senderIdentifier,
         receiverInput: receiverIdentifier,
         maxPrototypeAmount,
+        payMethod: cleanPayMethod || null,
       },
     });
 
@@ -2164,6 +2218,106 @@ app.get('/api/transactions/history/:symbolId', async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Could not load transaction history.',
+    });
+  }
+});
+
+// GET /api/transactions/:symbolId?type=sent|received|all — the same records
+// as /history, plus the two totals the dashboard's balance card needs. Kept
+// as one call so the PAID figure, the RECEIVED figure and the week's bars
+// are always three views of one fetch rather than three that can disagree.
+app.get('/api/transactions/:symbolId', async (req, res) => {
+  try {
+    const symbolId = String(req.params.symbolId || '').trim();
+    const type = String(req.query.type || 'all').trim().toLowerCase();
+
+    if (!symbolId) {
+      return res.status(400).json({ success: false, message: 'Secure ID is required.' });
+    }
+
+    if (!['sent', 'received', 'all'].includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: 'type must be sent, received or all.',
+      });
+    }
+
+    const user = await User.findOne({ symbolId });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Secure ID not found.' });
+    }
+
+    // Totals are computed over every successful transaction, not just the
+    // page returned below — a total that only counted the most recent 50
+    // would quietly shrink as an account got busier.
+    const [totals] = await Transaction.aggregate([
+      {
+        $match: {
+          status: 'success',
+          $or: [{ fromUserId: user._id }, { toUserId: user._id }],
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalSent: {
+            $sum: { $cond: [{ $eq: ['$fromUserId', user._id] }, '$amount', 0] },
+          },
+          totalReceived: {
+            $sum: { $cond: [{ $eq: ['$toUserId', user._id] }, '$amount', 0] },
+          },
+        },
+      },
+    ]);
+
+    const directionMatch =
+      type === 'sent' ? { fromUserId: user._id }
+      : type === 'received' ? { toUserId: user._id }
+      : { $or: [{ fromUserId: user._id }, { toUserId: user._id }] };
+
+    const records = await Transaction.find(directionMatch)
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .populate('fromUserId', 'fullName symbolId')
+      .populate('toUserId', 'fullName symbolId')
+      .lean();
+
+    const transactions = records.map((transaction) => {
+      const senderId = String(transaction.fromUserId?._id || transaction.fromUserId || '');
+      const isSender = senderId === String(user._id);
+      const counterparty = isSender ? transaction.toUserId : transaction.fromUserId;
+
+      return {
+        id: String(transaction._id),
+        referenceId: transaction.referenceId,
+        direction: isSender ? 'sent' : 'received',
+        from: transaction.fromUserId?.symbolId || null,
+        to: transaction.toUserId?.symbolId || null,
+        amount: transaction.amount,
+        cashback: Number(transaction.metadata?.cashback) || 0,
+        cashbackRate: Number(transaction.metadata?.cashbackRate) || 0,
+        currency: transaction.currency,
+        status: transaction.status,
+        note: transaction.note || '',
+        counterparty: cleanTransactionUser(counterparty),
+        createdAt: transaction.createdAt,
+      };
+    });
+
+    return res.json({
+      success: true,
+      symbolId: user.symbolId,
+      count: transactions.length,
+      totalSent: totals?.totalSent || 0,
+      totalReceived: totals?.totalReceived || 0,
+      transactions,
+    });
+  } catch (error) {
+    console.error('Transaction summary error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Could not load transactions.',
     });
   }
 });

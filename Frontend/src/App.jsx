@@ -2234,6 +2234,21 @@ function GloobalId() {
         .v2-row { transition: background 0.15s ease; }
         .v2-row:hover { background: rgba(124,58,237,0.05); }
         .v2-row:active { background: rgba(124,58,237,0.09); }
+        /* Placeholder for a figure that is still being fetched — a moving
+           sheen, never a number, so a loading balance can't be misread as a
+           real one. */
+        .v2-shimmer {
+          background-image: linear-gradient(90deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.34) 50%, rgba(255,255,255,0.10) 100%);
+          background-size: 200% 100%;
+          animation: v2Shimmer 1.1s ease-in-out infinite;
+        }
+        @keyframes v2Shimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .v2-shimmer { animation: none; }
+        }
         @keyframes successPop {
           0% { transform: scale(0.5); opacity: 0; }
           60% { transform: scale(1.08); opacity: 1; }
