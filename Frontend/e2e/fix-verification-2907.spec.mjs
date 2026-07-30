@@ -90,6 +90,9 @@ async function mockBackend(page, overrides = {}) {
     }
     if (url.includes("/api/profile/")) return route.fulfill(json({ user: USER }));
     if (url.includes("/api/transactions/history/")) return route.fulfill(json({ success: true, transactions: [], count: 0 }));
+    // The dashboard reads GET /api/transactions/:symbolId now (records plus
+    // lifetime totals); Send Money still reads /history for its own sheet.
+    if (url.includes("/api/transactions/")) return route.fulfill(json({ success: true, transactions: [], count: 0, totalSent: 0, totalReceived: 0 }));
     if (url.includes("/api/passkey/")) return route.fulfill(json({ hasPasskey: false }));
     return route.fulfill(json({}));
   });
@@ -328,7 +331,8 @@ test("T4-E: Paid loads real transactions from the backend", async ({ page }) => 
   };
   // Held open briefly so the loading state is observable rather than a race.
   await gotoDashboard(page, {
-    "/api/transactions/history/": async () => {
+    "/api/transactions/": async (route) => {
+      if (route.request().url().includes("/send")) return null;
       await new Promise((r) => setTimeout(r, 1200));
       return json(history);
     },
@@ -354,7 +358,8 @@ test("T4-F: Received shows an empty state when there are none", async ({ page })
 test("T4-G: A failed history fetch is reported and retryable", async ({ page }) => {
   let attempts = 0;
   await gotoDashboard(page, {
-    "/api/transactions/history/": () => {
+    "/api/transactions/": (route) => {
+      if (route.request().url().includes("/send")) return null;
       attempts += 1;
       return json({ message: "boom" }, 500);
     },
@@ -471,20 +476,24 @@ test("T6-B: The sender's balance drops after a payment", async ({ page }) => {
 
   await completePayment(page);
 
-  // Send renders over the dashboard; closing it returns to the balance card.
-  await expect(page.getByText(/Paid /i).first()).toBeVisible({ timeout: 30_000 });
-  await closeOverlay(page);
+  // A payment now ends on its receipt; dismissing it returns to the card.
+  await expect(page.getByTestId("payment-receipt")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("receipt-done").click();
   await expect(page.getByTestId("balance-amount")).toContainText("4,000.00", { timeout: 30_000 });
 });
 
-test("T6-C: The success toast names the asset earned when cashback is due", async ({ page }) => {
+test("T6-C: The receipt names the asset earned when cashback is due", async ({ page }) => {
+  // The toast that used to carry this is now the receipt, which says the
+  // same thing and stays on screen until it is dismissed.
   await gotoDashboard(page);
   await completePayment(page);
 
-  const toast = page.getByText(/You earned/i).first();
-  await expect(toast).toBeVisible({ timeout: 30_000 });
-  await expect(toast).toContainText("as an asset");
-  await expect(toast).toContainText("10.00");
+  await expect(page.getByTestId("payment-receipt")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("receipt-cashback")).toContainText("10.00");
+  const note = page.getByTestId("receipt-asset-note");
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("planted as an asset");
+  await expect(note).toContainText("10.00");
 });
 
 test("T6-D: An insufficient balance is reported and nothing is deducted", async ({ page }) => {
@@ -519,8 +528,8 @@ test("T6-E: The seed a payment plants shows up in My Assets", async ({ page }) =
   });
 
   await completePayment(page);
-  await expect(page.getByText(/Paid /i).first()).toBeVisible({ timeout: 30_000 });
-  await closeOverlay(page);
+  await expect(page.getByTestId("payment-receipt")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("receipt-done").click();
 
   await page.getByRole("button", { name: "Accounts", exact: true }).click();
   await page.getByRole("button", { name: "My Assets", exact: true }).click();

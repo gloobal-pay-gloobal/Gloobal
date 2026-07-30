@@ -21,7 +21,10 @@ export const BILL_ACTIONS = [
   { key: "more", label: "More", Icon: MoreHorizontal },
 ];
 
-export const PROFILE_ROWS = ["Personal Details", "Paid", "Received", "Subscriptions", "Language", "Currency", "Security", "Notifications", "Help & Support", "About"];
+// Currency and Subscriptions were dropped: currency follows the account's
+// registration country and is never picked here, and nothing on the
+// subscriptions catalogue was wired to live billing.
+export const PROFILE_ROWS = ["Personal Details", "Paid", "Received", "Language", "Security", "Notifications", "Help & Support", "About"];
 // A pool of illustrative referred members — bigger than the 5 shown at
 // once, so "My Referral Network" can be filled with a different random
 // set of 5 people (name, country, status, today's + all-time earnings)

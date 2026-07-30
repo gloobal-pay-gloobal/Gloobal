@@ -29,12 +29,12 @@ import { BILL_ACTIONS, DASHBOARD_ACTIONS, PROFILE_ROWS } from "../../constants/d
 import {
   changeSymbolId,
   checkSymbolAvailability,
-  getHistory,
   getProfile,
   getReferrals,
   passkeyAuthOptions,
   passkeyAuthVerify,
   passkeyStatus,
+  getTransactionSummary,
   verifyPin,
 } from "../../services/api/authApi";
 import { getPayLater } from "../../services/api/assetsApi";
@@ -44,7 +44,7 @@ import { GHScoreScreen } from "../profile/GHScoreScreen";
 import { generateIdSuggestions } from "../../lib/idSuggestions";
 import { T } from "../../styles/theme";
 import { Plane, Building2, TrainFront, Bus, Car, Ship, RefreshCw, Coins, CreditCard, Landmark, Smartphone, Zap, ChevronUp, ChevronDown, History, ArrowUp, ArrowDown, ArrowDownLeft, ArrowUpRight, RotateCw, Check, Sprout } from "lucide-react";
-import { COUNTRY_CURRENCY, CURRENCIES } from "../../constants/finance";
+import { symbolForCountry } from "../../constants/finance";
 import { nextIdentityMode, IDENTITY_DISPLAY_LABEL, identityDisplayValue } from "../../constants/identity";
 
 // Where a referral link points.
@@ -154,95 +154,6 @@ const TOP_BUSINESSES = [
   { key: "ikea", label: "IKEA", chip: "IK" },
   { key: "zara", label: "Zara", chip: "ZA" },
   { key: "appleStore", label: "Apple Store", chip: "AP" },
-];
-
-// Global auto-pay subscription catalogue for Profile → Subscriptions.
-// Every brand here is real, spanning streaming, music, gaming, cloud/
-// productivity, news, wellness, delivery, and security — the kind of
-// worldwide spread (US/EU alongside India, China, Japan, Korea, ...) that
-// makes the search list actually useful. Demo prices only (prototype
-// stage); every row renders locked (red ServiceLock) until live billing
-// APIs are connected, so there's no "active" state to track yet.
-const SUBSCRIPTION_TOOLS = [
-  // Streaming & entertainment
-  { key: "netflix", label: "Netflix", price: 15.49, chip: "NF", category: "Streaming" },
-  { key: "primeVideo", label: "Amazon Prime", price: 14.99, chip: "AP", category: "Streaming" },
-  { key: "disneyPlus", label: "Disney+", price: 9.99, chip: "D+", category: "Streaming" },
-  { key: "disneyHotstar", label: "Disney+ Hotstar", price: 3.99, chip: "DH", category: "Streaming" },
-  { key: "appleTvPlus", label: "Apple TV+", price: 9.99, chip: "TV", category: "Streaming" },
-  { key: "hboMax", label: "Max (HBO)", price: 15.99, chip: "MX", category: "Streaming" },
-  { key: "hulu", label: "Hulu", price: 9.99, chip: "HU", category: "Streaming" },
-  { key: "paramountPlus", label: "Paramount+", price: 7.99, chip: "P+", category: "Streaming" },
-  { key: "peacock", label: "Peacock", price: 7.99, chip: "PK", category: "Streaming" },
-  { key: "zee5", label: "ZEE5", price: 3.49, chip: "Z5", category: "Streaming" },
-  { key: "sonyliv", label: "SonyLIV", price: 2.99, chip: "SL", category: "Streaming" },
-  { key: "jiocinema", label: "JioCinema", price: 1.99, chip: "JC", category: "Streaming" },
-  { key: "iqiyi", label: "iQIYI", price: 5.99, chip: "IQ", category: "Streaming" },
-  { key: "tencentVideo", label: "Tencent Video", price: 5.49, chip: "TX", category: "Streaming" },
-  { key: "youku", label: "Youku VIP", price: 4.99, chip: "YK", category: "Streaming" },
-  { key: "bilibili", label: "Bilibili VIP", price: 2.49, chip: "BL", category: "Streaming" },
-  { key: "viu", label: "Viu", price: 2.99, chip: "VU", category: "Streaming" },
-  { key: "coupangPlay", label: "Coupang Play", price: 3.99, chip: "CP", category: "Streaming" },
-  { key: "mubi", label: "MUBI", price: 12.99, chip: "MB", category: "Streaming" },
-  { key: "britbox", label: "BritBox", price: 8.99, chip: "BB", category: "Streaming" },
-  { key: "crunchyroll", label: "Crunchyroll", price: 7.99, chip: "CR", category: "Streaming" },
-  { key: "dazn", label: "DAZN", price: 19.99, chip: "DZ", category: "Sports" },
-  { key: "espnPlus", label: "ESPN+", price: 11.99, chip: "ES", category: "Sports" },
-  { key: "f1tv", label: "F1 TV", price: 9.99, chip: "F1", category: "Sports" },
-  { key: "nbaLeaguePass", label: "NBA League Pass", price: 14.99, chip: "NB", category: "Sports" },
-
-  // Music & audio
-  { key: "spotify", label: "Spotify", price: 11.99, chip: "SP", category: "Music" },
-  { key: "appleMusic", label: "Apple Music", price: 10.99, chip: "AM", category: "Music" },
-  { key: "youtubeMusic", label: "YouTube Music", price: 10.99, chip: "YM", category: "Music" },
-  { key: "youtubePremium", label: "YouTube Premium", price: 13.99, chip: "YT", category: "Music" },
-  { key: "amazonMusic", label: "Amazon Music Unlimited", price: 9.99, chip: "AZ", category: "Music" },
-  { key: "tidal", label: "Tidal", price: 10.99, chip: "TD", category: "Music" },
-  { key: "deezer", label: "Deezer", price: 10.99, chip: "DZR", category: "Music" },
-  { key: "audible", label: "Audible", price: 14.95, chip: "AU", category: "Music" },
-
-  // Gaming
-  { key: "xboxGamePass", label: "Xbox Game Pass", price: 16.99, chip: "XB", category: "Gaming" },
-  { key: "playstationPlus", label: "PlayStation Plus", price: 17.99, chip: "PS", category: "Gaming" },
-  { key: "nintendoOnline", label: "Nintendo Switch Online", price: 3.99, chip: "NS", category: "Gaming" },
-  { key: "eaPlay", label: "EA Play", price: 4.99, chip: "EA", category: "Gaming" },
-  { key: "ubisoftPlus", label: "Ubisoft+", price: 17.99, chip: "UB", category: "Gaming" },
-
-  // Cloud & productivity
-  { key: "icloudPlus", label: "iCloud+", price: 2.99, chip: "IC", category: "Productivity" },
-  { key: "googleOne", label: "Google One", price: 2.99, chip: "GO", category: "Productivity" },
-  { key: "dropboxPlus", label: "Dropbox Plus", price: 11.99, chip: "DB", category: "Productivity" },
-  { key: "microsoft365", label: "Microsoft 365", price: 9.99, chip: "M3", category: "Productivity" },
-  { key: "adobeCC", label: "Adobe Creative Cloud", price: 59.99, chip: "AD", category: "Productivity" },
-  { key: "canvaPro", label: "Canva Pro", price: 12.99, chip: "CV", category: "Productivity" },
-  { key: "notionPlus", label: "Notion Plus", price: 10.0, chip: "NT", category: "Productivity" },
-  { key: "chatgptPlus", label: "ChatGPT Plus", price: 20.0, chip: "GP", category: "Productivity" },
-  { key: "grammarly", label: "Grammarly Premium", price: 12.0, chip: "GR", category: "Productivity" },
-  { key: "zoomPro", label: "Zoom Pro", price: 15.99, chip: "ZM", category: "Productivity" },
-  { key: "slackPro", label: "Slack Pro", price: 8.75, chip: "SK", category: "Productivity" },
-
-  // News & learning
-  { key: "nytimes", label: "The New York Times", price: 6.0, chip: "NY", category: "News" },
-  { key: "wsj", label: "The Wall Street Journal", price: 8.0, chip: "WJ", category: "News" },
-  { key: "economist", label: "The Economist", price: 14.0, chip: "EC", category: "News" },
-  { key: "duolingo", label: "Duolingo Super", price: 12.99, chip: "DL", category: "Learning" },
-  { key: "linkedinPremium", label: "LinkedIn Premium", price: 39.99, chip: "LI", category: "Learning" },
-
-  // Wellness & fitness
-  { key: "headspace", label: "Headspace", price: 12.99, chip: "HD", category: "Wellness" },
-  { key: "calm", label: "Calm", price: 14.99, chip: "CL", category: "Wellness" },
-  { key: "strava", label: "Strava", price: 11.99, chip: "ST", category: "Wellness" },
-  { key: "peloton", label: "Peloton App", price: 12.99, chip: "PL", category: "Wellness" },
-
-  // Delivery & membership
-  { key: "uberOne", label: "Uber One", price: 9.99, chip: "UO", category: "Delivery" },
-  { key: "dashpass", label: "DoorDash DashPass", price: 9.99, chip: "DP", category: "Delivery" },
-  { key: "instacartPlus", label: "Instacart+", price: 9.99, chip: "IN", category: "Delivery" },
-  { key: "costco", label: "Costco Membership", price: 5.42, chip: "CO", category: "Membership" },
-
-  // Security
-  { key: "nordvpn", label: "NordVPN", price: 5.99, chip: "NV", category: "Security" },
-  { key: "expressvpn", label: "ExpressVPN", price: 8.32, chip: "EV", category: "Security" },
 ];
 
 // Mobile operators per country, keyed by ISO-2 the same way the banks
@@ -459,13 +370,12 @@ function toMoneyRow(txn) {
 // "Nothing here yet" state for that.
 const NO_MONEY_ROWS = [];
 
-// Languages and currencies offered in the profile's basic settings. Purely
-// client-side selections for now (prototype stage) — picking one updates
-// the selected state so the UI behaves like the real thing, without any
-// backend or i18n plumbing behind it yet.
+// Languages offered in the profile's basic settings. Purely a client-side
+// selection for now (prototype stage) — picking one updates the selected
+// state so the UI behaves like the real thing, without any i18n plumbing
+// behind it yet. Currency is not offered here: it follows the account's
+// registration country (see symbolForCountry).
 const PROFILE_LANGUAGES = ["English", "Español", "Français", "العربية", "हिन्दी", "中文"];
-
-const PROFILE_CURRENCIES = ["USD", "EUR", "GBP", "INR", "PKR", "PHP", "MXN", "NGN", "BRL", "JPY"];
 
 // Tiny inline bar chart for the Profile's Paid / Received panels — no
 // charting dependency, just SVG rects sized against the row amounts, so
@@ -731,19 +641,43 @@ function ProfileToggle({ on, onToggle, label }) {
 // two-week limit real rather than just a UI restriction.
 const SPENDING_DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 
-function generateDailySpending() {
-  // Each day now carries both sides of the ledger — paid (money out) and
-  // received (money in) — so the chart can show a single day split in two
-  // rather than one bar per day.
-  const weeks = [0, 1].map(() =>
-    Array.from({ length: 7 }, () => ({
-      paid: Math.round((Math.random() * 110 + 15) * 100) / 100,
-      received: Math.round((Math.random() * 90 + 10) * 100) / 100,
-    }))
-  );
+/** Midnight on the Sunday that starts the week `value` falls in. */
+function startOfWeek(value) {
+  const d = new Date(value);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay());
+  return d;
+}
+
+// This week and last week, Sunday through Saturday, built from the account's
+// real transactions. Each day carries both sides of the ledger — paid (money
+// out) and received (money in) — so the chart can show a single day split in
+// two rather than one bar per day. No transactions means seven zero days,
+// which is the true shape of a brand-new account.
+function buildDailySpending(transactions) {
+  const weeks = [0, 1].map(() => Array.from({ length: 7 }, () => ({ paid: 0, received: 0 })));
+  const thisWeekStart = startOfWeek(new Date());
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+  for (const txn of transactions || []) {
+    if (!txn?.createdAt) continue;
+    // Failed and cancelled attempts never moved money, so they never show up
+    // as a bar. `received` records carry the counterparty's status.
+    if (txn.status && !["success", "completed", "received"].includes(txn.status)) continue;
+    const when = new Date(txn.createdAt);
+    if (Number.isNaN(when.getTime())) continue;
+    const daysBack = Math.floor((thisWeekStart - startOfWeek(when)) / (7 * MS_PER_DAY));
+    if (daysBack < 0 || daysBack > 1) continue; // outside the two weeks shown
+    const day = weeks[daysBack][when.getDay()];
+    const amount = Number(txn.amount) || 0;
+    if (txn.direction === "received") day.received += amount;
+    else day.paid += amount;
+  }
+
+  const round = (n) => Math.round(n * 100) / 100;
   const totals = weeks.map((week) => ({
-    paid: Math.round(week.reduce((sum, d) => sum + d.paid, 0) * 100) / 100,
-    received: Math.round(week.reduce((sum, d) => sum + d.received, 0) * 100) / 100,
+    paid: round(week.reduce((sum, d) => sum + d.paid, 0)),
+    received: round(week.reduce((sum, d) => sum + d.received, 0)),
   }));
   return { weeks, totals }; // weeks[0] = this week (Sun..Sat), weeks[1] = last week
 }
@@ -755,7 +689,7 @@ function generateDailySpending() {
 // again goes back to showing the week total. Hard-capped at two weeks total
 // — dragging past either end just resists/holds instead of paging into data
 // that isn't there.
-function DailySpendingChart({ weeks, totals, symbol = "$" }) {
+function DailySpendingChart({ weeks, totals, lifetime, status = "ready", symbol = "$" }) {
   const [weekOffset, setWeekOffset] = useState(0); // 0 = this week, 1 = last week
   const [selectedDay, setSelectedDay] = useState(null); // index into the current week, or null
   const maxOffset = weeks.length - 1;
@@ -802,9 +736,36 @@ function DailySpendingChart({ weeks, totals, symbol = "$" }) {
   };
 
   const days = weeks[weekOffset]; // [{ paid, received }, ...] for the week
-  const total = totals[weekOffset]; // { paid, received }
+  const total = totals[weekOffset]; // { paid, received } for that week
   const max = Math.max(...days.map((d) => Math.max(d.paid, d.received)), 1);
-  const display = selectedDay !== null ? days[selectedDay] : total;
+  // With no day tapped these are the account's lifetime totals — the same
+  // two figures the Profile's Paid and Received panels add up, so the card
+  // and the panels can't tell different stories. Tapping a bar narrows it
+  // to that one day; the bars themselves always show the week.
+  const display = selectedDay !== null ? days[selectedDay] : (lifetime || total);
+
+  // A figure that isn't known yet must not render as a number. Loading gets
+  // a shimmer bar, a failed fetch gets a dash — either way, never a stand-in
+  // amount that reads exactly like a real balance.
+  const renderAmount = (value, testId) => {
+    if (status === "loading") {
+      return (
+        <div
+          data-testid={`${testId}-skeleton`}
+          className="v2-shimmer"
+          style={{ width: 62, height: 15, borderRadius: 5, background: "rgba(255,255,255,0.22)" }}
+        />
+      );
+    }
+    if (status === "error") {
+      return <div data-testid={testId} style={{ fontSize: 13, fontWeight: 700 }}>–</div>;
+    }
+    return (
+      <div data-testid={testId} style={{ fontSize: 13, fontWeight: 700 }}>
+        {symbol}{value.toFixed(2)}
+      </div>
+    );
+  };
 
   return (
     <div style={{ position: "relative" }}>
@@ -815,13 +776,13 @@ function DailySpendingChart({ weeks, totals, symbol = "$" }) {
           <div style={{ fontSize: 9, fontWeight: 700, color: "#FCA5A5", textTransform: "uppercase", letterSpacing: 0.4 }}>
             Paid
           </div>
-          <div style={{ fontSize: 13, fontWeight: 700 }}>{symbol}{display.paid.toFixed(2)}</div>
+          {renderAmount(display.paid, "card-paid")}
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 9, fontWeight: 700, color: "#86EFAC", textTransform: "uppercase", letterSpacing: 0.4 }}>
             Received
           </div>
-          <div style={{ fontSize: 13, fontWeight: 700 }}>{symbol}{display.received.toFixed(2)}</div>
+          {renderAmount(display.received, "card-received")}
         </div>
       </div>
 
@@ -905,19 +866,6 @@ function DailySpendingChart({ weeks, totals, symbol = "$" }) {
   );
 }
 
-// Display symbol for every supported currency — used anywhere an amount
-// is shown, so an Indian user sees ₹, a British user £, and so on,
-// following COUNTRY_CURRENCY from the registration country.
-const CURRENCY_SYMBOL = {
-  USD: "$", EUR: "\u20ac", GBP: "\u00a3", CAD: "C$", AUD: "A$", CHF: "CHF ",
-  SEK: "kr ", NOK: "kr ", DKK: "kr ", PLN: "z\u0142 ", RUB: "\u20bd", TRY: "\u20ba",
-  UAH: "\u20b4", INR: "\u20b9", CNY: "\u00a5", JPY: "\u00a5", KRW: "\u20a9", IDR: "Rp ",
-  PHP: "\u20b1", VND: "\u20ab", THB: "\u0e3f", MYR: "RM ", SGD: "S$", PKR: "\u20a8 ",
-  BDT: "\u09f3", SAR: "SR ", AED: "AED ", ILS: "\u20aa", EGP: "E\u00a3", ZAR: "R ",
-  NGN: "\u20a6", KES: "KSh ", BRL: "R$", MXN: "Mex$", ARS: "AR$", CLP: "CL$",
-  COP: "CO$", PEN: "S/ ", NZD: "NZ$", ISK: "kr ",
-};
-
 function DashboardScreenBase({
   dialCountry,
   onLogout,
@@ -951,6 +899,11 @@ function DashboardScreenBase({
   // someone with a full history that they have never been paid.
   const [moneyStatus, setMoneyStatus] = useState("loading");
   const [moneyReload, setMoneyReload] = useState(0);
+  // The same fetch, kept in its raw form for the wallet card: the week's
+  // bars are grouped from these records, and the card's PAID / RECEIVED
+  // figures are the account's lifetime totals as the backend adds them up.
+  const [moneyTxns, setMoneyTxns] = useState([]);
+  const [moneyTotals, setMoneyTotals] = useState({ paid: 0, received: 0 });
 
   // Send Money renders as an overlay above this screen, so the dashboard
   // never unmounts and a fetch on mount alone would leave the Profile
@@ -962,9 +915,11 @@ function DashboardScreenBase({
     setMoneyStatus("loading");
     (async () => {
       try {
-        const txns = await getHistory(myGloobalId);
+        const { transactions, totalSent, totalReceived } = await getTransactionSummary(myGloobalId);
         if (cancelled) return;
-        setMoneyRows(txns.map(toMoneyRow));
+        setMoneyRows(transactions.map(toMoneyRow));
+        setMoneyTxns(transactions);
+        setMoneyTotals({ paid: totalSent, received: totalReceived });
         setMoneyStatus("ready");
       } catch {
         // Offline, or the backend is still waking up. Say so — an empty
@@ -1011,48 +966,39 @@ function DashboardScreenBase({
   const [showMyAssets, setShowMyAssets] = useState(false);
   // Live PayLater figures — limit is always the account's current total
   // assets (GET /api/assets/paylater/:symbolId), never a hardcoded number.
-  // Null until the fetch lands; the prototype demo limit is the fallback.
+  // Null until the fetch lands. Everything on the PayLater screen — the
+  // limit, the dues, and the activity list — comes from this one read; there
+  // is no demo ledger standing in behind it any more.
   const [paylaterLive, setPaylaterLive] = useState(null);
-  const PAYLATER_LIMIT = 500;
-  // Demo ledger, split by direction: "out" = sending (purchases charged
-  // to PayLater), "in" = receiving (repayments/refunds credited back).
-  // Dues derive only from pending outgoing entries, so balance, dues,
-  // and history can never disagree.
-  const paylaterHistory = [
-    { name: "Metro Recharge", date: "Jul 14", amount: 15.0, status: "pending", direction: "out" },
-    { name: "Grocery Mart", date: "Jul 8", amount: 42.5, status: "pending", direction: "out" },
-    { name: "Repayment — June dues", date: "Jul 1", amount: 68.75, status: "received", direction: "in" },
-    { name: "City Electricity", date: "Jun 28", amount: 60.0, status: "paid", direction: "out" },
-    { name: "Coffee Corner", date: "Jun 21", amount: 8.75, status: "paid", direction: "out" },
-    { name: "Refund — BookHouse", date: "Jun 15", amount: 31.25, status: "received", direction: "in" },
-  ];
-  const paylaterSending = paylaterHistory.filter((t) => t.direction === "out");
-  const paylaterReceiving = paylaterHistory.filter((t) => t.direction === "in");
-  const paylaterDue = paylaterSending.filter((t) => t.status === "pending").reduce((s, t) => s + t.amount, 0);
+  const [paylaterStatus, setPaylaterStatus] = useState("loading"); // loading | ready | error
+  const [paylaterReload, setPaylaterReload] = useState(0);
 
-  // Live limit tied to assets. When the fetch has landed, the limit and
-  // available balance come from the account's real total assets; until then
-  // (or if it fails) the prototype demo figures stand in so the screen is
-  // never blank.
   useEffect(() => {
     if (!showPayLater || !myGloobalId) return;
     let cancelled = false;
+    setPaylaterStatus("loading");
     (async () => {
       try {
         const data = await getPayLater(myGloobalId);
-        if (!cancelled) setPaylaterLive(data);
+        if (cancelled) return;
+        setPaylaterLive(data);
+        setPaylaterStatus("ready");
       } catch {
-        // offline / cold start — keep the demo fallback
+        // Offline, or the backend is still waking up. An empty list here
+        // would be a claim about the account; a retry is the honest answer.
+        if (cancelled) return;
+        setPaylaterStatus("error");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [showPayLater, myGloobalId]);
+  }, [showPayLater, myGloobalId, paylaterReload]);
 
-  const paylaterLimit = paylaterLive ? paylaterLive.limit : PAYLATER_LIMIT;
-  const paylaterAvailable = paylaterLive ? paylaterLive.available : PAYLATER_LIMIT - paylaterDue;
-  const paylaterPendingDues = paylaterLive ? paylaterLive.pendingDues : paylaterDue;
+  const paylaterLimit = paylaterLive ? paylaterLive.limit : 0;
+  const paylaterAvailable = paylaterLive ? paylaterLive.available : 0;
+  const paylaterPendingDues = paylaterLive ? paylaterLive.pendingDues : 0;
+  const paylaterActivity = Array.isArray(paylaterLive?.transactions) ? paylaterLive.transactions : [];
 
   // --- Gloobal Creators: cashback sharing --------------------------------
   // Tapping Receive leads with "Share with Gloobal users" — the Creator picks
@@ -1116,6 +1062,11 @@ function DashboardScreenBase({
   // was replaced — so there is a proper record of which ID belonged to them
   // when. Held locally and merged with whatever the backend has recorded.
   const [idHistory, setIdHistory] = useState([]);
+  // The history sheet, opened from the icon in the Change Gloobal ID header.
+  const [showIdHistory, setShowIdHistory] = useState(false);
+  // Only the five most recent are shown — enough to answer "what was I
+  // called before", short of turning into an archive of every rename.
+  const recentIdHistory = useMemo(() => idHistory.slice(0, 5), [idHistory]);
   // Renaming a Gloobal ID is confirmed with the device's own biometrics
   // before the API call goes out — never after, and never optionally.
   //   null | { stage: "prompt" | "pin" | "error", message } — see
@@ -1162,12 +1113,7 @@ function DashboardScreenBase({
     autopay: true,
   });
   const [profileLanguage, setProfileLanguage] = useState("English");
-  const [profileCurrency, setProfileCurrency] = useState(COUNTRY_CURRENCY[dialCountry.iso] || "USD");
   const flipToggle = (key) => setProfileToggles((t) => ({ ...t, [key]: !t[key] }));
-  // The Subscriptions catalogue is fully locked for now (no live billing
-  // APIs yet), so there's nothing to toggle per row — just a search query
-  // to filter the worldwide brand list.
-  const [subscriptionQuery, setSubscriptionQuery] = useState("");
   // The account's real Gloobal bank balance, off the profile read. Null until
   // it lands — rendered as a dash rather than as a number, because a
   // stand-in figure on a balance card is indistinguishable from the truth.
@@ -1177,8 +1123,10 @@ function DashboardScreenBase({
     : balanceValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   // The person's own currency symbol, from their registration country —
   // every amount on this screen renders in it (₹ for India, £ for the
-  // UK, and so on), instead of hardcoded dollars.
-  const ccy = CURRENCY_SYMBOL[COUNTRY_CURRENCY[dialCountry.iso] || "USD"] || "$";
+  // UK, and so on), instead of hardcoded dollars. One shared lookup
+  // (constants/finance) so the balance, Paid/Received, PayLater, My Assets
+  // and Send can never end up on two different symbols for one account.
+  const ccy = symbolForCountry(dialCountry.iso);
 
   // The one canonical Gloobal ID: the 12-symbol Secure ID set at
   // registration. This exact same value is what shows on the dashboard's
@@ -1313,7 +1261,7 @@ function DashboardScreenBase({
   // Two weeks of spending (this week + last week) shown as a swipeable mini
   // bar chart at the bottom of the wallet card — generated once per
   // session, same pattern as the referral network mock above.
-  const [dailySpending] = useState(() => generateDailySpending());
+  const dailySpending = useMemo(() => buildDailySpending(moneyTxns), [moneyTxns]);
 
   // Which profile this Gloobal ID is acting as when it's shared — "user"
   // for personal spending (bills, transfers to friends/family) or
@@ -1462,6 +1410,7 @@ function DashboardScreenBase({
     setChangeIdError(null);
     setBioConfirm(null);
     setBioPin("");
+    setShowIdHistory(false);
   };
 
   // The rename itself. Only ever reached once a device confirmation has come
@@ -1776,7 +1725,13 @@ function DashboardScreenBase({
                   reads as a distinct footer section of the wallet card
                   rather than competing with the balance above it. */}
               <div style={{ position: "relative", marginTop: 18, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.18)" }}>
-                <DailySpendingChart weeks={dailySpending.weeks} totals={dailySpending.totals} symbol={ccy} />
+                <DailySpendingChart
+                  weeks={dailySpending.weeks}
+                  totals={dailySpending.totals}
+                  lifetime={moneyTotals}
+                  status={moneyStatus}
+                  symbol={ccy}
+                />
               </div>
 
               {showIdTag && (
@@ -3166,68 +3121,79 @@ function DashboardScreenBase({
               </div>
             </div>
 
-            {/* History — split into the two directions of the ledger. */}
+            {/* Activity — the account's own PayLater records, newest first:
+                charges it put on PayLater, repayments against them, and the
+                cashback credits that raised the limit. */}
             <div>
               <div style={{ fontSize: 12.5, fontWeight: 800, color: T.inkSoft, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 2px 8px" }}>
-                Received
+                Activity
               </div>
               <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
-                {paylaterReceiving.map((t, i) => (
-                  <div
-                    key={`${t.name}-${t.date}`}
-                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderTop: i === 0 ? "none" : `1px solid ${T.line}` }}
-                  >
-                    <span
-                      style={{
-                        width: 36, height: 36, borderRadius: 11, flexShrink: 0,
-                        background: T.positiveSoft, display: "flex", alignItems: "center", justifyContent: "center",
-                      }}
-                    >
-                      <ArrowDownLeft size={17} color={T.positive} />
-                    </span>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
-                      <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 1 }}>{t.date}</span>
-                    </span>
-                    <span style={{ textAlign: "right", flexShrink: 0 }}>
-                      <span style={{ display: "block", fontSize: 13.5, fontWeight: 800, color: T.positive }}>+{ccy}{t.amount.toFixed(2)}</span>
-                      <span style={{ display: "block", fontSize: 10.5, fontWeight: 700, color: T.positive, marginTop: 1 }}>Received</span>
-                    </span>
+                {paylaterStatus === "loading" ? (
+                  <div data-testid="paylater-loading" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "26px 16px", fontSize: 12.5, fontWeight: 700, color: T.inkFaint }}>
+                    <RotateCw size={15} color={T.inkFaint} style={{ animation: "iconAttention 0.9s linear infinite" }} />
+                    Loading…
                   </div>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <div style={{ fontSize: 12.5, fontWeight: 800, color: T.inkSoft, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 2px 8px" }}>
-                Paid
-              </div>
-              <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
-                {paylaterSending.map((t, i) => (
-                  <div
-                    key={`${t.name}-${t.date}`}
-                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderTop: i === 0 ? "none" : `1px solid ${T.line}` }}
+                ) : paylaterStatus === "error" ? (
+                  <button
+                    type="button"
+                    data-testid="paylater-error"
+                    onClick={() => setPaylaterReload((n) => n + 1)}
+                    className="v2-row"
+                    style={{ width: "100%", border: "none", background: "none", padding: "24px 16px", fontSize: 12.5, fontWeight: 700, color: T.negative, cursor: "pointer" }}
                   >
-                    <span
-                      style={{
-                        width: 36, height: 36, borderRadius: 11, flexShrink: 0,
-                        background: T.accentSoft, display: "flex", alignItems: "center", justifyContent: "center",
-                      }}
-                    >
-                      <ArrowUpRight size={17} color={T.accent} />
-                    </span>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
-                      <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 1 }}>{t.date}</span>
-                    </span>
-                    <span style={{ textAlign: "right", flexShrink: 0 }}>
-                      <span style={{ display: "block", fontSize: 13.5, fontWeight: 800, color: T.ink }}>−{ccy}{t.amount.toFixed(2)}</span>
-                      <span style={{ display: "block", fontSize: 10.5, fontWeight: 700, color: t.status === "paid" ? T.positive : T.negative, marginTop: 1 }}>
-                        {t.status === "paid" ? "Paid" : "Pending"}
-                      </span>
-                    </span>
+                    Could not load history. Tap to retry.
+                  </button>
+                ) : paylaterActivity.length === 0 ? (
+                  <div data-testid="paylater-empty" style={{ padding: "26px 16px", textAlign: "center", fontSize: 12.5, fontWeight: 600, color: T.inkFaint }}>
+                    No PayLater activity yet.
                   </div>
-                ))}
+                ) : (
+                  paylaterActivity.map((t, i) => {
+                    // Charges take money out; repayments and cashback credits
+                    // put it back — colour and sign follow that, not the row's
+                    // position in the list.
+                    const isCharge = t.type === "charge";
+                    const isCredit = t.type === "credit";
+                    const tint = isCharge ? T.negative : isCredit ? T.accent : T.positive;
+                    const tintSoft = isCharge ? T.surfaceAlt : isCredit ? T.accentSoft : T.positiveSoft;
+                    const amount = Number(t.amount) || 0;
+                    return (
+                      <div
+                        key={t.id || `${t.description}-${t.createdAt}-${i}`}
+                        data-testid="paylater-row"
+                        style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderTop: i === 0 ? "none" : `1px solid ${T.line}` }}
+                      >
+                        <span
+                          style={{
+                            width: 36, height: 36, borderRadius: 11, flexShrink: 0,
+                            background: tintSoft, display: "flex", alignItems: "center", justifyContent: "center",
+                          }}
+                        >
+                          {isCharge ? <ArrowUpRight size={17} color={tint} />
+                            : isCredit ? <Sprout size={16} color={tint} />
+                            : <ArrowDownLeft size={17} color={tint} />}
+                        </span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {t.description}
+                          </span>
+                          <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 1 }}>
+                            {t.createdAt ? new Date(t.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}
+                          </span>
+                        </span>
+                        <span style={{ textAlign: "right", flexShrink: 0 }}>
+                          <span style={{ display: "block", fontSize: 13.5, fontWeight: 800, color: tint }}>
+                            {isCharge ? "−" : "+"}{ccy}{amount.toFixed(2)}
+                          </span>
+                          <span style={{ display: "block", fontSize: 10.5, fontWeight: 700, color: T.inkFaint, marginTop: 1, textTransform: "capitalize" }}>
+                            {t.type}
+                          </span>
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </div>
@@ -3391,101 +3357,6 @@ function DashboardScreenBase({
               />
             )}
 
-            {profileDetail === "Subscriptions" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                {/* Autopay itself is locked too, same as every row below —
-                    nothing on this screen is wired to live billing yet. */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: "16px 18px" }}>
-                  <span>
-                    <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>Autopay</div>
-                    <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 1 }}>
-                      Locked until live billing is connected
-                    </div>
-                  </span>
-                  <button
-                    onClick={() => showToast("Locked until live APIs connect")}
-                    aria-label="Autopay — locked"
-                    className="v2-tap"
-                    style={{ border: "none", background: "none", padding: 4, cursor: "pointer", display: "flex" }}
-                  >
-                    <ServiceLock size={18} />
-                  </button>
-                </div>
-
-                {/* Search over the full worldwide catalogue — streaming,
-                    music, gaming, cloud, news, wellness, delivery, and
-                    security brands from the US/EU through India, China,
-                    Japan, and Korea. */}
-                <div style={{ display: "flex", alignItems: "center", gap: 10, background: T.surface, border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: "12px 14px", boxShadow: T.shadowCard }}>
-                  <Search size={16} color={T.inkFaint} />
-                  <input
-                    value={subscriptionQuery}
-                    onChange={(e) => setSubscriptionQuery(e.target.value)}
-                    placeholder="Search subscriptions worldwide"
-                    style={{ flex: 1, border: "none", outline: "none", background: "none", fontSize: 13.5, color: T.ink, fontFamily: "inherit" }}
-                  />
-                  {subscriptionQuery && (
-                    <button onClick={() => setSubscriptionQuery("")} aria-label="Clear search" style={{ border: "none", background: "none", padding: 0, cursor: "pointer", display: "flex" }}>
-                      <X size={14} color={T.inkFaint} />
-                    </button>
-                  )}
-                </div>
-
-                <div>
-                  {(() => {
-                    const q = subscriptionQuery.trim().toLowerCase();
-                    const filtered = q
-                      ? SUBSCRIPTION_TOOLS.filter((s) => s.label.toLowerCase().includes(q) || s.category.toLowerCase().includes(q))
-                      : SUBSCRIPTION_TOOLS;
-                    return (
-                      <>
-                        <div style={{ fontSize: 11, fontWeight: 800, color: T.inkSoft, textTransform: "uppercase", letterSpacing: 0.4, margin: "2px 2px 8px" }}>
-                          {q ? `${filtered.length} result${filtered.length === 1 ? "" : "s"}` : `All subscriptions · ${filtered.length}`}
-                        </div>
-                        <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
-                          {filtered.length === 0 ? (
-                            <div style={{ padding: "20px 16px", textAlign: "center", fontSize: 12, color: T.inkFaint }}>No matches</div>
-                          ) : (
-                            filtered.map((s, i) => (
-                              <button
-                                key={s.key}
-                                onClick={() => showToast("Locked until live APIs connect")}
-                                aria-label={`${s.label} — locked`}
-                                className="v2-row"
-                                style={{
-                                  width: "100%",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 12,
-                                  padding: "13px 15px",
-                                  border: "none",
-                                  borderTop: i === 0 ? "none" : `1px solid ${T.line}`,
-                                  background: "none",
-                                  cursor: "pointer",
-                                  textAlign: "left",
-                                }}
-                              >
-                                <span style={{ width: 36, height: 36, borderRadius: 11, flexShrink: 0, background: T.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: T.inkFaint }}>
-                                  {s.chip}
-                                </span>
-                                <span style={{ flex: 1, minWidth: 0 }}>
-                                  <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.label}</span>
-                                  <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 1 }}>
-                                    {ccy}{s.price.toFixed(2)}/mo · {s.category}
-                                  </span>
-                                </span>
-                                <ServiceLock />
-                              </button>
-                            ))
-                          )}
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-            )}
-
             {profileDetail === "Language" && (
               <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
                 {PROFILE_LANGUAGES.map((lang, i) => (
@@ -3497,25 +3368,6 @@ function DashboardScreenBase({
                   >
                     <span style={{ fontSize: 13.5, fontWeight: profileLanguage === lang ? 800 : 600, color: profileLanguage === lang ? T.accent : T.ink }}>{lang}</span>
                     {profileLanguage === lang && <Check size={17} color={T.accent} />}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {profileDetail === "Currency" && (
-              <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
-                {PROFILE_CURRENCIES.map((code, i) => (
-                  <button
-                    key={code}
-                    onClick={() => setProfileCurrency(code)}
-                    className="v2-row"
-                    style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "15px 18px", border: "none", borderTop: i === 0 ? "none" : `1px solid ${T.line}`, background: "none", cursor: "pointer", textAlign: "left" }}
-                  >
-                    <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{ fontSize: 13.5, fontWeight: profileCurrency === code ? 800 : 600, color: profileCurrency === code ? T.accent : T.ink }}>{code}</span>
-                      {CURRENCIES[code] && <span style={{ fontSize: 13 }}>{CURRENCIES[code].flag}</span>}
-                    </span>
-                    {profileCurrency === code && <Check size={17} color={T.accent} />}
                   </button>
                 ))}
               </div>
@@ -3783,6 +3635,25 @@ function DashboardScreenBase({
               <ArrowLeft size={18} color={T.ink} />
             </button>
             <span style={{ fontSize: 16, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>Change Gloobal ID</span>
+
+            {/* The record of past IDs is reference material, not part of
+                choosing a new one — so it sits in the corner as a control
+                you open, rather than below the dial pad where it competes
+                with the ID being typed. */}
+            <button
+              onClick={() => setShowIdHistory(true)}
+              data-testid="id-history-button"
+              aria-label="ID history"
+              className="v2-tap"
+              style={{
+                marginLeft: "auto",
+                width: 34, height: 34, borderRadius: 12, flexShrink: 0,
+                border: `1px solid ${T.line}`, background: T.surface,
+                display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+              }}
+            >
+              <History size={17} color={T.ink} />
+            </button>
           </div>
 
           <div style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "6px 18px 30px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
@@ -3871,38 +3742,78 @@ function DashboardScreenBase({
               Cancel
             </button>
 
-            {/* Previous IDs — a dated record of which Gloobal ID belonged to
-                this account when, so a rename leaves a trail instead of
-                quietly overwriting the old identity. */}
-            <div style={{ width: "100%", maxWidth: 360, borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
-              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: T.inkFaint, padding: "14px 16px 10px" }}>
-                Previous IDs
-              </div>
-              {idHistory.length === 0 ? (
-                <div data-testid="id-history-empty" style={{ padding: "0 16px 16px", fontSize: 12, color: T.inkFaint, fontWeight: 600 }}>
-                  No previous IDs
-                </div>
-              ) : (
-                idHistory.map((entry, i) => (
-                  <div
-                    key={`${entry.symbolId}-${entry.changedAt}`}
-                    data-testid="id-history-row"
-                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderTop: `1px solid ${T.line}` }}
-                  >
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontSize: 13, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay, letterSpacing: 0.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {entry.symbolId}
-                      </span>
-                      <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 2 }}>
-                        changed on {formatIdChangedAt(entry.changedAt)}
-                      </span>
-                    </span>
-                    <span style={{ fontSize: 10.5, fontWeight: 700, color: T.inkFaint, flexShrink: 0 }}>#{idHistory.length - i}</span>
-                  </div>
-                ))
-              )}
-            </div>
           </div>
+
+          {/* ID History — a dated record of which Gloobal ID belonged to this
+              account when, so a rename leaves a trail instead of quietly
+              overwriting the old identity. Capped at the five most recent:
+              past that it stops being a reference and becomes an archive. */}
+          {showIdHistory && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="ID history"
+              onClick={() => setShowIdHistory(false)}
+              style={{
+                position: "fixed", inset: 0, zIndex: 320, background: "rgba(20,12,36,0.5)",
+                display: "flex", alignItems: "flex-end", justifyContent: "center",
+              }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  width: "100%", maxWidth: 440, background: T.bg,
+                  borderRadius: `${T.radiusLg}px ${T.radiusLg}px 0 0`,
+                  boxShadow: T.shadowFloat, padding: "18px 18px calc(24px + env(safe-area-inset-bottom, 0px))",
+                  maxHeight: "72vh", display: "flex", flexDirection: "column",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 12 }}>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>ID History</span>
+                  <button
+                    onClick={() => setShowIdHistory(false)}
+                    aria-label="Close ID history"
+                    className="v2-tap"
+                    style={{
+                      marginLeft: "auto", width: 30, height: 30, borderRadius: "50%",
+                      border: "none", background: T.surfaceAlt, display: "flex",
+                      alignItems: "center", justifyContent: "center", cursor: "pointer",
+                    }}
+                  >
+                    <X size={16} color={T.inkSoft} />
+                  </button>
+                </div>
+
+                <div style={{ overflowY: "auto", borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard }}>
+                  {recentIdHistory.length === 0 ? (
+                    <div data-testid="id-history-empty" style={{ padding: "18px 16px", fontSize: 12.5, color: T.inkFaint, fontWeight: 600 }}>
+                      No previous IDs
+                    </div>
+                  ) : (
+                    recentIdHistory.map((entry, i) => (
+                      <div
+                        key={`${entry.symbolId}-${entry.changedAt}`}
+                        data-testid="id-history-row"
+                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px", borderTop: i === 0 ? "none" : `1px solid ${T.line}` }}
+                      >
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          {/* Same symbol font as everywhere else the Gloobal
+                              ID is shown, so the glyphs render identically. */}
+                          <span style={{ display: "block", fontSize: 13, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay, letterSpacing: 0.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {entry.symbolId}
+                          </span>
+                          <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 2 }}>
+                            changed on {formatIdChangedAt(entry.changedAt)}
+                          </span>
+                        </span>
+                        <span style={{ fontSize: 10.5, fontWeight: 700, color: T.inkFaint, flexShrink: 0 }}>#{recentIdHistory.length - i}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Biometric confirmation — mandatory, and always ahead of the API
               call. Cancelling or failing here leaves the Gloobal ID alone. */}

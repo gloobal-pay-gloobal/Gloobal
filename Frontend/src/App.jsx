@@ -17,7 +17,8 @@ import { CyclingBadge, MaskEyeIcon, SubmitButton, SymbolChipRow } from "./compon
 import { PhoneDialPad, SymbolDialPad } from "./components/common/DialPads";
 import { FlagEmoji, FlagSignShape } from "./components/common/FlagComponents";
 import { IdSuggestionsPanel, LastLoginBar } from "./components/common/GapPanels";
-import { AddBankScreen, DashboardScreen, GloobalCoverageScreen, SendMoneyScreen } from "./lazyScreens";
+import { AddBankScreen, DashboardScreen, GloobalCoverageScreen, PaymentReceiptScreen, SendMoneyScreen } from "./lazyScreens";
+import { symbolForCountry } from "./constants/finance";
 import { ErrorBoundary } from "./pwa/ErrorBoundary";
 import { ScreenFallback } from "./pwa/ScreenFallback";
 import { ALL_COUNTRIES, TOP_COUNTRIES, dialCodeFromNumber, mobileDigitRange } from "./constants/countries";
@@ -242,6 +243,10 @@ function GloobalId() {
   // The last completed payment's receipt, handed from Send Money down to the
   // dashboard so the balance and My Assets reflect it without a round trip.
   const [paymentReceipt, setPaymentReceipt] = useState(null);
+  // Whether the receipt for that payment is on screen. Separate from the
+  // receipt itself, which the dashboard keeps reading after the screen is
+  // dismissed (it is what tells the balance card what just changed).
+  const [receiptOpen, setReceiptOpen] = useState(false);
   // Whether the entered Secure ID / Referral ID symbols are shown in the
   // clear or masked as dots — toggled by the eye button next to each.
   const [secureIdRevealed, setSecureIdRevealed] = useState(false);
@@ -913,6 +918,7 @@ function GloobalId() {
     // it is re-applied when the dashboard next mounts — so the next person to
     // sign in on this device sees the previous account's balance.
     setPaymentReceipt(null);
+    setReceiptOpen(false);
     setLoginError(null);
     setLoginAuthError(null);
     setLoginAuthStatus(null);
@@ -2017,8 +2023,13 @@ function GloobalId() {
                 onClose={() => setActiveScreen(null)}
                 // Send renders as an overlay above the dashboard, which never
                 // unmounts, so the receipt has to be handed across rather
-                // than picked up by a remount.
-                onPaymentComplete={setPaymentReceipt}
+                // than picked up by a remount. The payment then ends on the
+                // receipt, not back on the form that produced it.
+                onPaymentComplete={(receipt) => {
+                  setPaymentReceipt(receipt);
+                  setReceiptOpen(true);
+                  setActiveScreen(null);
+                }}
                 sender={{
                   ...dialCountry,
                   phoneNumber,
@@ -2029,6 +2040,21 @@ function GloobalId() {
             </Suspense>
           </ErrorBoundary>
         </div>
+      )}
+
+      {/* The record of the payment that just went through. Sits above the
+          dashboard, which has already taken the new balance off the same
+          receipt, so dismissing this lands on an up-to-date card. */}
+      {receiptOpen && paymentReceipt && (
+        <ErrorBoundary>
+          <Suspense fallback={<ScreenFallback />}>
+            <PaymentReceiptScreen
+              receipt={paymentReceipt}
+              ccy={symbolForCountry(dialCountry.iso)}
+              onDone={() => setReceiptOpen(false)}
+            />
+          </Suspense>
+        </ErrorBoundary>
       )}
 
       {activeScreen === "bank" && (
@@ -2234,6 +2260,21 @@ function GloobalId() {
         .v2-row { transition: background 0.15s ease; }
         .v2-row:hover { background: rgba(124,58,237,0.05); }
         .v2-row:active { background: rgba(124,58,237,0.09); }
+        /* Placeholder for a figure that is still being fetched — a moving
+           sheen, never a number, so a loading balance can't be misread as a
+           real one. */
+        .v2-shimmer {
+          background-image: linear-gradient(90deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.34) 50%, rgba(255,255,255,0.10) 100%);
+          background-size: 200% 100%;
+          animation: v2Shimmer 1.1s ease-in-out infinite;
+        }
+        @keyframes v2Shimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .v2-shimmer { animation: none; }
+        }
         @keyframes successPop {
           0% { transform: scale(0.5); opacity: 0; }
           60% { transform: scale(1.08); opacity: 1; }

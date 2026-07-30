@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ArrowLeft, PieChart, ShoppingBag, Sprout, User } from "lucide-react";
 import { T } from "../../styles/theme";
 import { setCashbackRate } from "../../services/api/creatorApi";
+import { symbolFor } from "../../constants/finance";
 
 // ---------------------------------------------------------------------------
 // "My Share" — the Creator side of cashback sharing.
@@ -32,7 +33,7 @@ export const MAX_SHARE_PERCENT = 7;
 // own currency, so the same number reads sensibly whatever ccy is.
 const EXAMPLE_AMOUNT = 1000;
 
-export function MyShareScreen({ ccy = "₹", symbolId, initialRate = 0, onSaved, onSkip, onClose, onOpenAssets }) {
+export function MyShareScreen({ ccy = symbolFor("USD"), symbolId, initialRate = 0, onSaved, onSkip, onClose, onOpenAssets }) {
   // Held as text, not as a number. A number state cannot represent "1." or a
   // cleared field mid-edit, so typing a decimal would fight the caret.
   const [rateText, setRateText] = useState(() => {

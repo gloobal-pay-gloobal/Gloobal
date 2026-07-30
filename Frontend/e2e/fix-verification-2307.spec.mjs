@@ -71,6 +71,9 @@ async function mockBackend(page, overrides = {}) {
     }
     if (url.includes("/api/profile/")) return route.fulfill(json({ user: USER }));
     if (url.includes("/api/transactions/history/")) return route.fulfill(json({ success: true, transactions: [], count: 0 }));
+    // The dashboard reads GET /api/transactions/:symbolId now (records plus
+    // lifetime totals); Send Money still reads /history for its own sheet.
+    if (url.includes("/api/transactions/")) return route.fulfill(json({ success: true, transactions: [], count: 0, totalSent: 0, totalReceived: 0 }));
     if (url.includes("/api/passkey/")) return route.fulfill(json({ hasPasskey: false }));
     return route.fulfill(json({}));
   });

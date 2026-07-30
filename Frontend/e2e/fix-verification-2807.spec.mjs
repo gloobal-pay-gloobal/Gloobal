@@ -55,6 +55,25 @@ const RECIPIENT = {
   hasPasskey: false,
 };
 
+// My Assets no longer invents seeds for an account that has none, so the
+// checks about how a portfolio is laid out are given a real one.
+const DAY = 24 * 60 * 60 * 1000;
+const WITH_SEEDS = {
+  "/api/assets/": (route) =>
+    route.request().url().includes("/paylater/")
+      ? null
+      : json({
+          totalAssets: 82.5,
+          futureAssets: 3500,
+          avgYearsToTarget: 30,
+          payLaterLimit: 82.5,
+          seeds: [
+            { _id: "s1", business: "Telecom Co", category: "Telecom", amountPaid: 1000, cashbackRate: 0.01, cashback: 10, currency: "INR", plantedAt: new Date(Date.now() - 30 * DAY).toISOString() },
+            { _id: "s2", business: "Power Board", category: "Electricity", amountPaid: 2500, cashbackRate: 0.02, cashback: 50, currency: "INR", plantedAt: new Date(Date.now() - 60 * DAY).toISOString() },
+          ],
+        }),
+};
+
 async function mockBackend(page, overrides = {}) {
   await page.route(`${BACKEND}/**`, async (route) => {
     const url = route.request().url();
@@ -91,6 +110,9 @@ async function mockBackend(page, overrides = {}) {
     }
     if (url.includes("/api/profile/")) return route.fulfill(json({ user: USER }));
     if (url.includes("/api/transactions/history/")) return route.fulfill(json({ success: true, transactions: [], count: 0 }));
+    // The dashboard reads GET /api/transactions/:symbolId now (records plus
+    // lifetime totals); Send Money still reads /history for its own sheet.
+    if (url.includes("/api/transactions/")) return route.fulfill(json({ success: true, transactions: [], count: 0, totalSent: 0, totalReceived: 0 }));
     if (url.includes("/api/passkey/")) return route.fulfill(json({ hasPasskey: false }));
     return route.fulfill(json({}));
   });
@@ -278,16 +300,18 @@ test("AC-B: My Assets navigation entry still present on Accounts tab", async ({ 
   await page.getByRole("button", { name: "Accounts", exact: true }).click();
   await expect(page.getByRole("button", { name: "My Assets", exact: true })).toBeVisible({ timeout: 30_000 });
 
-  // And it still leads to the full screen, where the demo seeds do live.
+  // And it still leads to the full screen — which now says plainly that
+  // there is nothing there, rather than filling itself with sample rows.
   await page.getByRole("button", { name: "My Assets", exact: true }).click();
-  await expect(page.getByText("Growing toward")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText("Demo data", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("assets-empty")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("No assets yet", { exact: true })).toBeVisible();
+  await expect(page.getByText("Demo data", { exact: true })).toHaveCount(0);
 });
 
 // ═══ TASK 4 — My Assets: graph top, data below ═════════════════════════════
 
 test("MA-LAYOUT-A: Growth chart appears above the seed list on My Assets screen", async ({ page }) => {
-  await gotoDashboard(page);
+  await gotoDashboard(page, WITH_SEEDS);
   await page.getByRole("button", { name: "Accounts", exact: true }).click();
   await page.getByRole("button", { name: "My Assets", exact: true }).click();
   await expect(page.getByText("Growing toward")).toBeVisible({ timeout: 30_000 });
@@ -358,9 +382,12 @@ test("PR-C: Tapping profile photo area triggers file input", async ({ page }) =>
 
 // ═══ TASK 6 — Change Gloobal ID: history + biometric confirmation ══════════
 
-test('CH-A: Change Gloobal ID screen shows "Previous IDs" / "ID History" section', async ({ page }) => {
+test("CH-A: ID history opens from the header control", async ({ page }) => {
+  // The record moved out of the screen body into a sheet behind the
+  // top-right history icon; the empty state it shows is unchanged.
   await gotoChangeId(page);
-  await expect(page.getByText("Previous IDs", { exact: true })).toBeVisible();
+  await page.getByTestId("id-history-button").click();
+  await expect(page.getByText("ID History", { exact: true })).toBeVisible();
   await expect(page.getByTestId("id-history-empty")).toHaveText("No previous IDs");
 });
 
@@ -399,6 +426,7 @@ test("CH-B: After a successful ID change, old ID appears in history", async ({ p
 
   // Back on Change Gloobal ID, the old ID is on the record with a timestamp.
   await page.getByRole("button", { name: "My Gloobal ID", exact: true }).click();
+  await page.getByTestId("id-history-button").click();
   const row = page.getByTestId("id-history-row").first();
   await expect(row).toBeVisible({ timeout: 30_000 });
   await expect(row).toContainText(SECURE_ID_STR);

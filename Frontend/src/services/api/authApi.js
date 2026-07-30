@@ -221,6 +221,21 @@ export async function getHistory(symbolId) {
   return Array.isArray(result.transactions) ? result.transactions : [];
 }
 
+/** GET /api/transactions/:symbolId — the same per-viewer projection as
+ * getHistory, plus the account's lifetime totals. One call, so the balance
+ * card's PAID and RECEIVED figures and the week's bars can never be built
+ * from three different reads of the ledger. */
+export async function getTransactionSummary(symbolId, type = "all") {
+  const result = await apiClient.get(
+    `/api/transactions/${encodeURIComponent(symbolId)}?type=${encodeURIComponent(type)}`
+  );
+  return {
+    transactions: Array.isArray(result.transactions) ? result.transactions : [],
+    totalSent: Number(result.totalSent) || 0,
+    totalReceived: Number(result.totalReceived) || 0,
+  };
+}
+
 // --- Passkey / WebAuthn device verification ---------------------------------
 
 export async function passkeyStatus(symbolId) {

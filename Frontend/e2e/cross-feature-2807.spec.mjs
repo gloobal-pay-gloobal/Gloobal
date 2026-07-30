@@ -77,6 +77,9 @@ async function mockBackend(page, overrides = {}) {
     }
     if (url.includes("/api/profile/")) return route.fulfill(json({ user: USER }));
     if (url.includes("/api/transactions/history/")) return route.fulfill(json({ success: true, transactions: [], count: 0 }));
+    // The dashboard reads GET /api/transactions/:symbolId now (records plus
+    // lifetime totals); Send Money still reads /history for its own sheet.
+    if (url.includes("/api/transactions/")) return route.fulfill(json({ success: true, transactions: [], count: 0, totalSent: 0, totalReceived: 0 }));
     if (url.includes("/api/passkey/")) return route.fulfill(json({ hasPasskey: false }));
     return route.fulfill(json({}));
   });
@@ -155,7 +158,9 @@ test("X1: all seven surfaces open and close in one session without stranding an 
   // Accounts -> My Assets -> back.
   await goAccounts(page);
   await page.getByRole("button", { name: "My Assets", exact: true }).click();
-  await expect(page.getByTestId("assets-growth-chart")).toBeVisible({ timeout: 30_000 });
+  // No seeds on this account, so the screen opens on its empty state — the
+  // point here is that it opens and closes without stranding an overlay.
+  await expect(page.getByTestId("assets-empty")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.getByRole("button", { name: "My Assets", exact: true })).toBeVisible();
 
@@ -168,7 +173,9 @@ test("X1: all seven surfaces open and close in one session without stranding an 
 
   // Profile -> Change Gloobal ID -> cancelled.
   await page.getByRole("button", { name: "My Gloobal ID", exact: true }).click();
-  await expect(page.getByText("Previous IDs", { exact: true })).toBeVisible({ timeout: 30_000 });
+  // The ID history moved into a sheet behind the header control; the screen
+  // itself is reached the same way.
+  await expect(page.getByTestId("id-history-button")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByTestId("profile-header")).toBeVisible();
 
@@ -247,7 +254,8 @@ test("X4: My Share cross-links into My Assets and back without stranding", async
   await expect(page.getByTestId("my-share-rate-input")).toBeVisible({ timeout: 30_000 });
 
   await page.getByTestId("my-share-assets-link").click();
-  await expect(page.getByText("Growing toward")).toBeVisible({ timeout: 30_000 });
+  // This account has no seeds, so My Assets opens on its empty state.
+  await expect(page.getByTestId("assets-empty")).toBeVisible({ timeout: 30_000 });
   // The My Share screen stepped aside rather than stacking underneath.
   await expect(page.getByTestId("my-share-rate-input")).toHaveCount(0);
 
@@ -328,7 +336,23 @@ test("X7: Send still resolves a recipient after a Gloobal ID change", async ({ p
 // ═══ X8 — Accounts / My Assets / PayLater triangle ═════════════════════════
 
 test("X8: My Assets and PayLater cross-link both ways with the graph intact", async ({ page }) => {
-  await boot(page);
+  // The graph and the per-seed rows only exist for an account that has
+  // seeds — My Assets no longer invents them for one that does not.
+  await boot(page, {
+    "/api/assets/": (route) =>
+      route.request().url().includes("/paylater/")
+        ? null
+        : json({
+            totalAssets: 60,
+            futureAssets: 3500,
+            avgYearsToTarget: 30,
+            payLaterLimit: 60,
+            seeds: [
+              { _id: "s1", business: "Telecom Co", category: "Telecom", amountPaid: 1000, cashbackRate: 0.01, cashback: 10, currency: "INR", plantedAt: new Date(Date.now() - 30 * 86_400_000).toISOString() },
+              { _id: "s2", business: "Power Board", category: "Electricity", amountPaid: 2500, cashbackRate: 0.02, cashback: 50, currency: "INR", plantedAt: new Date(Date.now() - 60 * 86_400_000).toISOString() },
+            ],
+          }),
+  });
   await goAccounts(page);
 
   await page.getByRole("button", { name: "PayLater", exact: true }).click();
@@ -400,7 +424,9 @@ test("X10: cancelling the confirmation leaves the ID, the history and the local 
 
   // Nothing sent, nothing recorded, nothing moved.
   expect(patched).toHaveLength(0);
+  await page.getByTestId("id-history-button").click();
   await expect(page.getByTestId("id-history-empty")).toHaveText("No previous IDs");
+  await page.getByRole("button", { name: "Close ID history" }).click();
   const stillThere = await page.evaluate((id) => window.localStorage.getItem(`gloobal.ghAnswers.${id}`), SECURE_ID_STR);
   expect(stillThere).toContain("self-rest");
 });

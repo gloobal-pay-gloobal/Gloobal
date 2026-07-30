@@ -23,7 +23,7 @@ import { PhoneDialPad, SymbolDialPad } from "../common/DialPads";
 import { Flag, FlagEmoji, countryGlowStyle } from "../common/FlagComponents";
 import { ALL_COUNTRIES, countryFromNumber, countryMatches, mobileDigitRange } from "../../constants/countries";
 import { ACTIVE_ISO_SET } from "../../constants/coverage";
-import { COUNTRY_CURRENCY, CURRENCIES, convert, fmt } from "../../constants/finance";
+import { COUNTRY_CURRENCY, CURRENCIES, convert, fmt, symbolFor } from "../../constants/finance";
 import { getHistory, resolveUser, sendTransaction } from "../../services/api/authApi";
 import { nextIdentityMode, IDENTITY_DISPLAY_LABEL, identityDisplayValue } from "../../constants/identity";
 import { History, Coins, Landmark, ChevronRight } from "lucide-react";
@@ -239,6 +239,9 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false, onPayme
           amount: amountNumber,
           pin,
           idempotencyKey,
+          // Recorded with the transaction so a payment put on PayLater shows
+          // up as a PayLater charge rather than having to be inferred later.
+          payMethod: payMethod || "Gloobal Bank",
         });
         if (cancelled) return;
         // The backend is the only place that knows the payee's cashback rate,
@@ -246,17 +249,35 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false, onPayme
         // recomputed here from a rate this screen never sees.
         const cashback = Number(receipt?.cashback) || 0;
         // Stamped with who paid, so a receipt can never be applied to a
-        // different account than the one it came from.
-        onPaymentComplete?.({ ...receipt, amount: amountNumber, symbolId: top.symbolId });
+        // different account than the one it came from. Everything the
+        // receipt screen shows is carried here rather than re-read: this is
+        // the one moment all of it is known at once.
+        onPaymentComplete?.({
+          ...receipt,
+          amount: amountNumber,
+          symbolId: top.symbolId,
+          recipient: bottom.symbolId || bottom.phone || "Gloobal user",
+          recipientName: idPreview?.user?.fullName || null,
+          cashback,
+          cashbackRate: Number(receipt?.cashbackRate) || 0,
+          amountPaid: amountNumber,
+          currency: top.currency,
+          transactionId: receipt?.transaction?.id || receipt?.transaction?._id || null,
+          referenceId: receipt?.transaction?.referenceId || null,
+          timestamp: receipt?.transaction?.createdAt || new Date().toISOString(),
+        });
         pinErrorTimer.current = setTimeout(() => {
           setPinOpen(false);
           setPin("");
           setSending(false);
-          const ccy = CURRENCIES[top.currency].label;
+          // The same symbol the dashboard prefixes its balance with, not the
+          // ISO code — one payment must not read as "INR 1,000" here and
+          // "₹1,000" on the card it just changed.
+          const ccy = symbolFor(top.currency);
           showToast(
             cashback > 0
-              ? `Paid ${ccy} ${fmt(amountNumber)}. You earned ${ccy} ${fmt(cashback)} as an asset! 🌱`
-              : `Paid ${ccy} ${fmt(amountNumber)} to ${bottom.country} · via ${payMethod || "Gloobal Bank"}`
+              ? `Paid ${ccy}${fmt(amountNumber)}. You earned ${ccy}${fmt(cashback)} as an asset! 🌱`
+              : `Paid ${ccy}${fmt(amountNumber)} to ${bottom.country} · via ${payMethod || "Gloobal Bank"}`
           );
         }, 280);
       } catch (err) {
@@ -1409,7 +1430,7 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false, onPayme
             </button>
             <h3 className="pin-title">Pay with</h3>
             <p className="pin-sub">
-              {CURRENCIES[top.currency].label} {fmt(parseFloat(amount) || 0)} to {bottom.phone}
+              {symbolFor(top.currency)}{fmt(parseFloat(amount) || 0)} to {bottom.phone}
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 6, textAlign: "left" }}>
               {[
@@ -1482,7 +1503,7 @@ function SendMoneyScreenBase({ onClose, sender, autoOpenHistory = false, onPayme
                 ? "Confirming with the server…"
                 : pinErrorMessage || (
                     <>
-                      Confirm sending {CURRENCIES[top.currency].label} {fmt(parseFloat(amount) || 0)} to{" "}
+                      Confirm sending {symbolFor(top.currency)}{fmt(parseFloat(amount) || 0)} to{" "}
                       {bottom.phone}
                       {payMethod ? ` · via ${payMethod}` : ""}
                     </>
