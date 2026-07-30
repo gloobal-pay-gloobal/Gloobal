@@ -44,7 +44,7 @@ import { GHScoreScreen } from "../profile/GHScoreScreen";
 import { generateIdSuggestions } from "../../lib/idSuggestions";
 import { T } from "../../styles/theme";
 import { Plane, Building2, TrainFront, Bus, Car, Ship, RefreshCw, Coins, CreditCard, Landmark, Smartphone, Zap, ChevronUp, ChevronDown, History, ArrowUp, ArrowDown, ArrowDownLeft, ArrowUpRight, RotateCw, Check, Sprout } from "lucide-react";
-import { COUNTRY_CURRENCY, CURRENCIES } from "../../constants/finance";
+import { symbolForCountry } from "../../constants/finance";
 import { nextIdentityMode, IDENTITY_DISPLAY_LABEL, identityDisplayValue } from "../../constants/identity";
 
 // Where a referral link points.
@@ -154,95 +154,6 @@ const TOP_BUSINESSES = [
   { key: "ikea", label: "IKEA", chip: "IK" },
   { key: "zara", label: "Zara", chip: "ZA" },
   { key: "appleStore", label: "Apple Store", chip: "AP" },
-];
-
-// Global auto-pay subscription catalogue for Profile → Subscriptions.
-// Every brand here is real, spanning streaming, music, gaming, cloud/
-// productivity, news, wellness, delivery, and security — the kind of
-// worldwide spread (US/EU alongside India, China, Japan, Korea, ...) that
-// makes the search list actually useful. Demo prices only (prototype
-// stage); every row renders locked (red ServiceLock) until live billing
-// APIs are connected, so there's no "active" state to track yet.
-const SUBSCRIPTION_TOOLS = [
-  // Streaming & entertainment
-  { key: "netflix", label: "Netflix", price: 15.49, chip: "NF", category: "Streaming" },
-  { key: "primeVideo", label: "Amazon Prime", price: 14.99, chip: "AP", category: "Streaming" },
-  { key: "disneyPlus", label: "Disney+", price: 9.99, chip: "D+", category: "Streaming" },
-  { key: "disneyHotstar", label: "Disney+ Hotstar", price: 3.99, chip: "DH", category: "Streaming" },
-  { key: "appleTvPlus", label: "Apple TV+", price: 9.99, chip: "TV", category: "Streaming" },
-  { key: "hboMax", label: "Max (HBO)", price: 15.99, chip: "MX", category: "Streaming" },
-  { key: "hulu", label: "Hulu", price: 9.99, chip: "HU", category: "Streaming" },
-  { key: "paramountPlus", label: "Paramount+", price: 7.99, chip: "P+", category: "Streaming" },
-  { key: "peacock", label: "Peacock", price: 7.99, chip: "PK", category: "Streaming" },
-  { key: "zee5", label: "ZEE5", price: 3.49, chip: "Z5", category: "Streaming" },
-  { key: "sonyliv", label: "SonyLIV", price: 2.99, chip: "SL", category: "Streaming" },
-  { key: "jiocinema", label: "JioCinema", price: 1.99, chip: "JC", category: "Streaming" },
-  { key: "iqiyi", label: "iQIYI", price: 5.99, chip: "IQ", category: "Streaming" },
-  { key: "tencentVideo", label: "Tencent Video", price: 5.49, chip: "TX", category: "Streaming" },
-  { key: "youku", label: "Youku VIP", price: 4.99, chip: "YK", category: "Streaming" },
-  { key: "bilibili", label: "Bilibili VIP", price: 2.49, chip: "BL", category: "Streaming" },
-  { key: "viu", label: "Viu", price: 2.99, chip: "VU", category: "Streaming" },
-  { key: "coupangPlay", label: "Coupang Play", price: 3.99, chip: "CP", category: "Streaming" },
-  { key: "mubi", label: "MUBI", price: 12.99, chip: "MB", category: "Streaming" },
-  { key: "britbox", label: "BritBox", price: 8.99, chip: "BB", category: "Streaming" },
-  { key: "crunchyroll", label: "Crunchyroll", price: 7.99, chip: "CR", category: "Streaming" },
-  { key: "dazn", label: "DAZN", price: 19.99, chip: "DZ", category: "Sports" },
-  { key: "espnPlus", label: "ESPN+", price: 11.99, chip: "ES", category: "Sports" },
-  { key: "f1tv", label: "F1 TV", price: 9.99, chip: "F1", category: "Sports" },
-  { key: "nbaLeaguePass", label: "NBA League Pass", price: 14.99, chip: "NB", category: "Sports" },
-
-  // Music & audio
-  { key: "spotify", label: "Spotify", price: 11.99, chip: "SP", category: "Music" },
-  { key: "appleMusic", label: "Apple Music", price: 10.99, chip: "AM", category: "Music" },
-  { key: "youtubeMusic", label: "YouTube Music", price: 10.99, chip: "YM", category: "Music" },
-  { key: "youtubePremium", label: "YouTube Premium", price: 13.99, chip: "YT", category: "Music" },
-  { key: "amazonMusic", label: "Amazon Music Unlimited", price: 9.99, chip: "AZ", category: "Music" },
-  { key: "tidal", label: "Tidal", price: 10.99, chip: "TD", category: "Music" },
-  { key: "deezer", label: "Deezer", price: 10.99, chip: "DZR", category: "Music" },
-  { key: "audible", label: "Audible", price: 14.95, chip: "AU", category: "Music" },
-
-  // Gaming
-  { key: "xboxGamePass", label: "Xbox Game Pass", price: 16.99, chip: "XB", category: "Gaming" },
-  { key: "playstationPlus", label: "PlayStation Plus", price: 17.99, chip: "PS", category: "Gaming" },
-  { key: "nintendoOnline", label: "Nintendo Switch Online", price: 3.99, chip: "NS", category: "Gaming" },
-  { key: "eaPlay", label: "EA Play", price: 4.99, chip: "EA", category: "Gaming" },
-  { key: "ubisoftPlus", label: "Ubisoft+", price: 17.99, chip: "UB", category: "Gaming" },
-
-  // Cloud & productivity
-  { key: "icloudPlus", label: "iCloud+", price: 2.99, chip: "IC", category: "Productivity" },
-  { key: "googleOne", label: "Google One", price: 2.99, chip: "GO", category: "Productivity" },
-  { key: "dropboxPlus", label: "Dropbox Plus", price: 11.99, chip: "DB", category: "Productivity" },
-  { key: "microsoft365", label: "Microsoft 365", price: 9.99, chip: "M3", category: "Productivity" },
-  { key: "adobeCC", label: "Adobe Creative Cloud", price: 59.99, chip: "AD", category: "Productivity" },
-  { key: "canvaPro", label: "Canva Pro", price: 12.99, chip: "CV", category: "Productivity" },
-  { key: "notionPlus", label: "Notion Plus", price: 10.0, chip: "NT", category: "Productivity" },
-  { key: "chatgptPlus", label: "ChatGPT Plus", price: 20.0, chip: "GP", category: "Productivity" },
-  { key: "grammarly", label: "Grammarly Premium", price: 12.0, chip: "GR", category: "Productivity" },
-  { key: "zoomPro", label: "Zoom Pro", price: 15.99, chip: "ZM", category: "Productivity" },
-  { key: "slackPro", label: "Slack Pro", price: 8.75, chip: "SK", category: "Productivity" },
-
-  // News & learning
-  { key: "nytimes", label: "The New York Times", price: 6.0, chip: "NY", category: "News" },
-  { key: "wsj", label: "The Wall Street Journal", price: 8.0, chip: "WJ", category: "News" },
-  { key: "economist", label: "The Economist", price: 14.0, chip: "EC", category: "News" },
-  { key: "duolingo", label: "Duolingo Super", price: 12.99, chip: "DL", category: "Learning" },
-  { key: "linkedinPremium", label: "LinkedIn Premium", price: 39.99, chip: "LI", category: "Learning" },
-
-  // Wellness & fitness
-  { key: "headspace", label: "Headspace", price: 12.99, chip: "HD", category: "Wellness" },
-  { key: "calm", label: "Calm", price: 14.99, chip: "CL", category: "Wellness" },
-  { key: "strava", label: "Strava", price: 11.99, chip: "ST", category: "Wellness" },
-  { key: "peloton", label: "Peloton App", price: 12.99, chip: "PL", category: "Wellness" },
-
-  // Delivery & membership
-  { key: "uberOne", label: "Uber One", price: 9.99, chip: "UO", category: "Delivery" },
-  { key: "dashpass", label: "DoorDash DashPass", price: 9.99, chip: "DP", category: "Delivery" },
-  { key: "instacartPlus", label: "Instacart+", price: 9.99, chip: "IN", category: "Delivery" },
-  { key: "costco", label: "Costco Membership", price: 5.42, chip: "CO", category: "Membership" },
-
-  // Security
-  { key: "nordvpn", label: "NordVPN", price: 5.99, chip: "NV", category: "Security" },
-  { key: "expressvpn", label: "ExpressVPN", price: 8.32, chip: "EV", category: "Security" },
 ];
 
 // Mobile operators per country, keyed by ISO-2 the same way the banks
@@ -459,13 +370,12 @@ function toMoneyRow(txn) {
 // "Nothing here yet" state for that.
 const NO_MONEY_ROWS = [];
 
-// Languages and currencies offered in the profile's basic settings. Purely
-// client-side selections for now (prototype stage) — picking one updates
-// the selected state so the UI behaves like the real thing, without any
-// backend or i18n plumbing behind it yet.
+// Languages offered in the profile's basic settings. Purely a client-side
+// selection for now (prototype stage) — picking one updates the selected
+// state so the UI behaves like the real thing, without any i18n plumbing
+// behind it yet. Currency is not offered here: it follows the account's
+// registration country (see symbolForCountry).
 const PROFILE_LANGUAGES = ["English", "Español", "Français", "العربية", "हिन्दी", "中文"];
-
-const PROFILE_CURRENCIES = ["USD", "EUR", "GBP", "INR", "PKR", "PHP", "MXN", "NGN", "BRL", "JPY"];
 
 // Tiny inline bar chart for the Profile's Paid / Received panels — no
 // charting dependency, just SVG rects sized against the row amounts, so
@@ -905,19 +815,6 @@ function DailySpendingChart({ weeks, totals, symbol = "$" }) {
   );
 }
 
-// Display symbol for every supported currency — used anywhere an amount
-// is shown, so an Indian user sees ₹, a British user £, and so on,
-// following COUNTRY_CURRENCY from the registration country.
-const CURRENCY_SYMBOL = {
-  USD: "$", EUR: "\u20ac", GBP: "\u00a3", CAD: "C$", AUD: "A$", CHF: "CHF ",
-  SEK: "kr ", NOK: "kr ", DKK: "kr ", PLN: "z\u0142 ", RUB: "\u20bd", TRY: "\u20ba",
-  UAH: "\u20b4", INR: "\u20b9", CNY: "\u00a5", JPY: "\u00a5", KRW: "\u20a9", IDR: "Rp ",
-  PHP: "\u20b1", VND: "\u20ab", THB: "\u0e3f", MYR: "RM ", SGD: "S$", PKR: "\u20a8 ",
-  BDT: "\u09f3", SAR: "SR ", AED: "AED ", ILS: "\u20aa", EGP: "E\u00a3", ZAR: "R ",
-  NGN: "\u20a6", KES: "KSh ", BRL: "R$", MXN: "Mex$", ARS: "AR$", CLP: "CL$",
-  COP: "CO$", PEN: "S/ ", NZD: "NZ$", ISK: "kr ",
-};
-
 function DashboardScreenBase({
   dialCountry,
   onLogout,
@@ -1162,12 +1059,7 @@ function DashboardScreenBase({
     autopay: true,
   });
   const [profileLanguage, setProfileLanguage] = useState("English");
-  const [profileCurrency, setProfileCurrency] = useState(COUNTRY_CURRENCY[dialCountry.iso] || "USD");
   const flipToggle = (key) => setProfileToggles((t) => ({ ...t, [key]: !t[key] }));
-  // The Subscriptions catalogue is fully locked for now (no live billing
-  // APIs yet), so there's nothing to toggle per row — just a search query
-  // to filter the worldwide brand list.
-  const [subscriptionQuery, setSubscriptionQuery] = useState("");
   // The account's real Gloobal bank balance, off the profile read. Null until
   // it lands — rendered as a dash rather than as a number, because a
   // stand-in figure on a balance card is indistinguishable from the truth.
@@ -1177,8 +1069,10 @@ function DashboardScreenBase({
     : balanceValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   // The person's own currency symbol, from their registration country —
   // every amount on this screen renders in it (₹ for India, £ for the
-  // UK, and so on), instead of hardcoded dollars.
-  const ccy = CURRENCY_SYMBOL[COUNTRY_CURRENCY[dialCountry.iso] || "USD"] || "$";
+  // UK, and so on), instead of hardcoded dollars. One shared lookup
+  // (constants/finance) so the balance, Paid/Received, PayLater, My Assets
+  // and Send can never end up on two different symbols for one account.
+  const ccy = symbolForCountry(dialCountry.iso);
 
   // The one canonical Gloobal ID: the 12-symbol Secure ID set at
   // registration. This exact same value is what shows on the dashboard's
@@ -3391,101 +3285,6 @@ function DashboardScreenBase({
               />
             )}
 
-            {profileDetail === "Subscriptions" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                {/* Autopay itself is locked too, same as every row below —
-                    nothing on this screen is wired to live billing yet. */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: "16px 18px" }}>
-                  <span>
-                    <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>Autopay</div>
-                    <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 1 }}>
-                      Locked until live billing is connected
-                    </div>
-                  </span>
-                  <button
-                    onClick={() => showToast("Locked until live APIs connect")}
-                    aria-label="Autopay — locked"
-                    className="v2-tap"
-                    style={{ border: "none", background: "none", padding: 4, cursor: "pointer", display: "flex" }}
-                  >
-                    <ServiceLock size={18} />
-                  </button>
-                </div>
-
-                {/* Search over the full worldwide catalogue — streaming,
-                    music, gaming, cloud, news, wellness, delivery, and
-                    security brands from the US/EU through India, China,
-                    Japan, and Korea. */}
-                <div style={{ display: "flex", alignItems: "center", gap: 10, background: T.surface, border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: "12px 14px", boxShadow: T.shadowCard }}>
-                  <Search size={16} color={T.inkFaint} />
-                  <input
-                    value={subscriptionQuery}
-                    onChange={(e) => setSubscriptionQuery(e.target.value)}
-                    placeholder="Search subscriptions worldwide"
-                    style={{ flex: 1, border: "none", outline: "none", background: "none", fontSize: 13.5, color: T.ink, fontFamily: "inherit" }}
-                  />
-                  {subscriptionQuery && (
-                    <button onClick={() => setSubscriptionQuery("")} aria-label="Clear search" style={{ border: "none", background: "none", padding: 0, cursor: "pointer", display: "flex" }}>
-                      <X size={14} color={T.inkFaint} />
-                    </button>
-                  )}
-                </div>
-
-                <div>
-                  {(() => {
-                    const q = subscriptionQuery.trim().toLowerCase();
-                    const filtered = q
-                      ? SUBSCRIPTION_TOOLS.filter((s) => s.label.toLowerCase().includes(q) || s.category.toLowerCase().includes(q))
-                      : SUBSCRIPTION_TOOLS;
-                    return (
-                      <>
-                        <div style={{ fontSize: 11, fontWeight: 800, color: T.inkSoft, textTransform: "uppercase", letterSpacing: 0.4, margin: "2px 2px 8px" }}>
-                          {q ? `${filtered.length} result${filtered.length === 1 ? "" : "s"}` : `All subscriptions · ${filtered.length}`}
-                        </div>
-                        <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
-                          {filtered.length === 0 ? (
-                            <div style={{ padding: "20px 16px", textAlign: "center", fontSize: 12, color: T.inkFaint }}>No matches</div>
-                          ) : (
-                            filtered.map((s, i) => (
-                              <button
-                                key={s.key}
-                                onClick={() => showToast("Locked until live APIs connect")}
-                                aria-label={`${s.label} — locked`}
-                                className="v2-row"
-                                style={{
-                                  width: "100%",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 12,
-                                  padding: "13px 15px",
-                                  border: "none",
-                                  borderTop: i === 0 ? "none" : `1px solid ${T.line}`,
-                                  background: "none",
-                                  cursor: "pointer",
-                                  textAlign: "left",
-                                }}
-                              >
-                                <span style={{ width: 36, height: 36, borderRadius: 11, flexShrink: 0, background: T.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: T.inkFaint }}>
-                                  {s.chip}
-                                </span>
-                                <span style={{ flex: 1, minWidth: 0 }}>
-                                  <span style={{ display: "block", fontSize: 13.5, fontWeight: 700, color: T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.label}</span>
-                                  <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 1 }}>
-                                    {ccy}{s.price.toFixed(2)}/mo · {s.category}
-                                  </span>
-                                </span>
-                                <ServiceLock />
-                              </button>
-                            ))
-                          )}
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-            )}
-
             {profileDetail === "Language" && (
               <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
                 {PROFILE_LANGUAGES.map((lang, i) => (
@@ -3497,25 +3296,6 @@ function DashboardScreenBase({
                   >
                     <span style={{ fontSize: 13.5, fontWeight: profileLanguage === lang ? 800 : 600, color: profileLanguage === lang ? T.accent : T.ink }}>{lang}</span>
                     {profileLanguage === lang && <Check size={17} color={T.accent} />}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {profileDetail === "Currency" && (
-              <div style={{ borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
-                {PROFILE_CURRENCIES.map((code, i) => (
-                  <button
-                    key={code}
-                    onClick={() => setProfileCurrency(code)}
-                    className="v2-row"
-                    style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "15px 18px", border: "none", borderTop: i === 0 ? "none" : `1px solid ${T.line}`, background: "none", cursor: "pointer", textAlign: "left" }}
-                  >
-                    <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{ fontSize: 13.5, fontWeight: profileCurrency === code ? 800 : 600, color: profileCurrency === code ? T.accent : T.ink }}>{code}</span>
-                      {CURRENCIES[code] && <span style={{ fontSize: 13 }}>{CURRENCIES[code].flag}</span>}
-                    </span>
-                    {profileCurrency === code && <Check size={17} color={T.accent} />}
                   </button>
                 ))}
               </div>
