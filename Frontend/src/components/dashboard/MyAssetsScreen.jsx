@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Sprout, Clock, TrendingUp } from "lucide-react";
 import { T } from "../../styles/theme";
 import { getAssets } from "../../services/api/assetsApi";
+import { symbolFor } from "../../constants/finance";
 
 // Cashback planted at payment time grows 1%/month, compounded, toward the
 // original amount paid. Same formulas the backend uses (Backend/server.js
@@ -22,46 +23,30 @@ function computeSeed(seed) {
   return { ...seed, cashback, amountPaid, planted, yearsAccrued, currentValue, yearsToTarget };
 }
 
-// Shown only when the account has no real seeds yet, so the founder can see
-// the whole feature working without needing live payments. Displayed with a
-// "Demo data" chip and never stored anywhere.
-const DEMO_SEEDS = [
-  { id: "d1", business: "Airtel", category: "Telecom", amountPaid: 1000, cashbackRate: 0.01, cashback: 10, plantedAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), currency: "INR" },
-  { id: "d2", business: "BESCOM", category: "Electricity", amountPaid: 2500, cashbackRate: 0.02, cashback: 50, plantedAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000), currency: "INR" },
-  { id: "d3", business: "Swiggy", category: "Food", amountPaid: 450, cashbackRate: 0.05, cashback: 22.5, plantedAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000), currency: "INR" },
-  { id: "d4", business: "BookMyShow", category: "Entertainment", amountPaid: 800, cashbackRate: 0.07, cashback: 56, plantedAt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000), currency: "INR" },
-  { id: "d5", business: "Jio", category: "Telecom", amountPaid: 599, cashbackRate: 0.01, cashback: 5.99, plantedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000), currency: "INR" },
-];
-
 const fmtDate = (d) =>
   new Date(d).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 const yr = (n) => `${(Number(n) || 0).toFixed(1)} yr`;
 
-export function MyAssetsScreen({ ccy = "₹", symbolId, onClose, onOpenPayLater }) {
+export function MyAssetsScreen({ ccy = symbolFor("USD"), symbolId, onClose, onOpenPayLater }) {
   const [raw, setRaw] = useState(null); // { seeds, ... } from API, or null while loading
-  const [isDemo, setIsDemo] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [detailSeed, setDetailSeed] = useState(null);
 
+  // Only ever what the account actually has. An empty result is a real
+  // answer — "you have not earned cashback yet" — and gets the empty state
+  // below, never stand-in businesses that would read as someone's own
+  // spending history.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const data = symbolId ? await getAssets(symbolId) : { seeds: [] };
         if (cancelled) return;
-        if (!data.seeds || data.seeds.length === 0) {
-          setRaw({ seeds: DEMO_SEEDS });
-          setIsDemo(true);
-        } else {
-          setRaw(data);
-          setIsDemo(false);
-        }
+        setRaw(data && Array.isArray(data.seeds) ? data : { seeds: [] });
       } catch {
-        // Offline or backend waking up — still show the feature with demo
-        // seeds rather than an empty screen.
+        // Offline or backend waking up — an empty portfolio, not invented one.
         if (cancelled) return;
-        setRaw({ seeds: DEMO_SEEDS });
-        setIsDemo(true);
+        setRaw({ seeds: [] });
       }
     })();
     return () => {
@@ -84,25 +69,48 @@ export function MyAssetsScreen({ ccy = "₹", symbolId, onClose, onOpenPayLater 
     return <AssetDetail seed={detailSeed} money={money} onBack={() => setDetailSeed(null)} />;
   }
 
+  const header = (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "calc(18px + env(safe-area-inset-top, 0px)) 18px 14px", flexShrink: 0 }}>
+      <button
+        onClick={onClose}
+        aria-label="Back"
+        className="v2-tap"
+        style={{ width: 40, height: 40, borderRadius: "50%", border: "none", background: T.surface, boxShadow: T.shadowCard, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+      >
+        <ArrowLeft size={18} color={T.ink} />
+      </button>
+      <span style={{ fontSize: 16, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>My Assets</span>
+    </div>
+  );
+
+  // Nothing planted yet. Said plainly, with the one action that changes it —
+  // rather than a portfolio of zeroes, which reads as a broken screen.
+  if (raw && seeds.length === 0) {
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 300, background: T.bg, display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: T.fontBody }}>
+        {header}
+        <div
+          data-testid="assets-empty"
+          style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "0 34px 60px", gap: 8 }}
+        >
+          <span style={{ fontSize: 48, lineHeight: 1 }} role="img" aria-label="Seedling">🌱</span>
+          <div style={{ fontSize: 17, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay, marginTop: 6 }}>
+            No assets yet
+          </div>
+          <div style={{ fontSize: 13, color: T.inkFaint, fontWeight: 600, lineHeight: 1.5 }}>
+            Pay a business to earn cashback and start growing your assets.
+          </div>
+          <div style={{ fontSize: 12, color: T.inkFaint, fontWeight: 600, marginTop: 2 }}>
+            Your PayLater limit will grow here too.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 300, background: T.bg, display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: T.fontBody }}>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "calc(18px + env(safe-area-inset-top, 0px)) 18px 14px", flexShrink: 0 }}>
-        <button
-          onClick={onClose}
-          aria-label="Back"
-          className="v2-tap"
-          style={{ width: 40, height: 40, borderRadius: "50%", border: "none", background: T.surface, boxShadow: T.shadowCard, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
-        >
-          <ArrowLeft size={18} color={T.ink} />
-        </button>
-        <span style={{ fontSize: 16, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>My Assets</span>
-        {isDemo && (
-          <span style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 800, color: T.accent, background: T.accentSoft, borderRadius: 999, padding: "4px 10px", letterSpacing: 0.3 }}>
-            Demo data
-          </span>
-        )}
-      </div>
+      {header}
 
       <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "6px 18px 30px", display: "flex", flexDirection: "column", gap: 16 }}>
         {/* 1 — Total card */}
