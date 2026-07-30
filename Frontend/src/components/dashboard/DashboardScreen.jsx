@@ -1013,6 +1013,11 @@ function DashboardScreenBase({
   // was replaced — so there is a proper record of which ID belonged to them
   // when. Held locally and merged with whatever the backend has recorded.
   const [idHistory, setIdHistory] = useState([]);
+  // The history sheet, opened from the icon in the Change Gloobal ID header.
+  const [showIdHistory, setShowIdHistory] = useState(false);
+  // Only the five most recent are shown — enough to answer "what was I
+  // called before", short of turning into an archive of every rename.
+  const recentIdHistory = useMemo(() => idHistory.slice(0, 5), [idHistory]);
   // Renaming a Gloobal ID is confirmed with the device's own biometrics
   // before the API call goes out — never after, and never optionally.
   //   null | { stage: "prompt" | "pin" | "error", message } — see
@@ -1356,6 +1361,7 @@ function DashboardScreenBase({
     setChangeIdError(null);
     setBioConfirm(null);
     setBioPin("");
+    setShowIdHistory(false);
   };
 
   // The rename itself. Only ever reached once a device confirmation has come
@@ -3563,6 +3569,25 @@ function DashboardScreenBase({
               <ArrowLeft size={18} color={T.ink} />
             </button>
             <span style={{ fontSize: 16, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>Change Gloobal ID</span>
+
+            {/* The record of past IDs is reference material, not part of
+                choosing a new one — so it sits in the corner as a control
+                you open, rather than below the dial pad where it competes
+                with the ID being typed. */}
+            <button
+              onClick={() => setShowIdHistory(true)}
+              data-testid="id-history-button"
+              aria-label="ID history"
+              className="v2-tap"
+              style={{
+                marginLeft: "auto",
+                width: 34, height: 34, borderRadius: 12, flexShrink: 0,
+                border: `1px solid ${T.line}`, background: T.surface,
+                display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+              }}
+            >
+              <History size={17} color={T.ink} />
+            </button>
           </div>
 
           <div style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "6px 18px 30px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
@@ -3651,38 +3676,78 @@ function DashboardScreenBase({
               Cancel
             </button>
 
-            {/* Previous IDs — a dated record of which Gloobal ID belonged to
-                this account when, so a rename leaves a trail instead of
-                quietly overwriting the old identity. */}
-            <div style={{ width: "100%", maxWidth: 360, borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, overflow: "hidden" }}>
-              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: T.inkFaint, padding: "14px 16px 10px" }}>
-                Previous IDs
-              </div>
-              {idHistory.length === 0 ? (
-                <div data-testid="id-history-empty" style={{ padding: "0 16px 16px", fontSize: 12, color: T.inkFaint, fontWeight: 600 }}>
-                  No previous IDs
-                </div>
-              ) : (
-                idHistory.map((entry, i) => (
-                  <div
-                    key={`${entry.symbolId}-${entry.changedAt}`}
-                    data-testid="id-history-row"
-                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderTop: `1px solid ${T.line}` }}
-                  >
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontSize: 13, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay, letterSpacing: 0.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {entry.symbolId}
-                      </span>
-                      <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 2 }}>
-                        changed on {formatIdChangedAt(entry.changedAt)}
-                      </span>
-                    </span>
-                    <span style={{ fontSize: 10.5, fontWeight: 700, color: T.inkFaint, flexShrink: 0 }}>#{idHistory.length - i}</span>
-                  </div>
-                ))
-              )}
-            </div>
           </div>
+
+          {/* ID History — a dated record of which Gloobal ID belonged to this
+              account when, so a rename leaves a trail instead of quietly
+              overwriting the old identity. Capped at the five most recent:
+              past that it stops being a reference and becomes an archive. */}
+          {showIdHistory && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="ID history"
+              onClick={() => setShowIdHistory(false)}
+              style={{
+                position: "fixed", inset: 0, zIndex: 320, background: "rgba(20,12,36,0.5)",
+                display: "flex", alignItems: "flex-end", justifyContent: "center",
+              }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  width: "100%", maxWidth: 440, background: T.bg,
+                  borderRadius: `${T.radiusLg}px ${T.radiusLg}px 0 0`,
+                  boxShadow: T.shadowFloat, padding: "18px 18px calc(24px + env(safe-area-inset-bottom, 0px))",
+                  maxHeight: "72vh", display: "flex", flexDirection: "column",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 12 }}>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>ID History</span>
+                  <button
+                    onClick={() => setShowIdHistory(false)}
+                    aria-label="Close ID history"
+                    className="v2-tap"
+                    style={{
+                      marginLeft: "auto", width: 30, height: 30, borderRadius: "50%",
+                      border: "none", background: T.surfaceAlt, display: "flex",
+                      alignItems: "center", justifyContent: "center", cursor: "pointer",
+                    }}
+                  >
+                    <X size={16} color={T.inkSoft} />
+                  </button>
+                </div>
+
+                <div style={{ overflowY: "auto", borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard }}>
+                  {recentIdHistory.length === 0 ? (
+                    <div data-testid="id-history-empty" style={{ padding: "18px 16px", fontSize: 12.5, color: T.inkFaint, fontWeight: 600 }}>
+                      No previous IDs
+                    </div>
+                  ) : (
+                    recentIdHistory.map((entry, i) => (
+                      <div
+                        key={`${entry.symbolId}-${entry.changedAt}`}
+                        data-testid="id-history-row"
+                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px", borderTop: i === 0 ? "none" : `1px solid ${T.line}` }}
+                      >
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          {/* Same symbol font as everywhere else the Gloobal
+                              ID is shown, so the glyphs render identically. */}
+                          <span style={{ display: "block", fontSize: 13, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay, letterSpacing: 0.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {entry.symbolId}
+                          </span>
+                          <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 2 }}>
+                            changed on {formatIdChangedAt(entry.changedAt)}
+                          </span>
+                        </span>
+                        <span style={{ fontSize: 10.5, fontWeight: 700, color: T.inkFaint, flexShrink: 0 }}>#{recentIdHistory.length - i}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Biometric confirmation — mandatory, and always ahead of the API
               call. Cancelling or failing here leaves the Gloobal ID alone. */}
