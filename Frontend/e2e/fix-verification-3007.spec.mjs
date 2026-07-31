@@ -430,7 +430,10 @@ test("T6-B: Tapping it opens the sheet with the previous ID and its date", async
   const row = page.getByTestId("id-history-row").first();
   await expect(row).toBeVisible();
   await expect(row).toContainText(seed.arg.entries[0].symbolId);
-  await expect(row).toContainText(/changed on \d{2} \w{3} \d{4}/);
+  // Format changed 2026-07-31: rows now carry an action label and a full
+  // timestamp down to the second, not "changed on <date>".
+  await expect(row).toContainText(/Changed from:/);
+  await expect(row).toContainText(/\d{2} \w{3} \d{4} · \d{2}:\d{2}:\d{2}/);
 });
 
 test("T6-C: The sheet shows at most five entries, newest first", async ({ page }) => {

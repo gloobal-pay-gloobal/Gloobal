@@ -25,13 +25,29 @@ const userSchema = new mongoose.Schema({
     unique: true,
     trim: true
   },
-  // Every Gloobal ID this account has used before, with the moment it was
-  // replaced. The ID is the identity every other route keys off, so a rename
-  // has to leave a dated record rather than silently overwriting the old one.
+  // Every Gloobal ID this account has ever had, with the moment it came in
+  // or was replaced. The ID is the identity every other route keys off, so
+  // a rename has to leave a dated record rather than silently overwriting
+  // the old one — and the *first* ID has to be in that record too, or the
+  // trail starts mid-story.
+  //
+  // `createdAt` is the timestamp field; `changedAt` is its predecessor,
+  // written alongside it so documents saved by this version stay readable
+  // to a client built before it. Full datetime, not a date — two renames a
+  // minute apart are otherwise indistinguishable.
   symbolIdHistory: [{
     symbolId: {
       type: String,
       required: true
+    },
+    action: {
+      type: String,
+      enum: ['created', 'changed'],
+      default: 'changed'
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
     },
     changedAt: {
       type: Date,
