@@ -936,6 +936,7 @@ function DashboardScreenBase({
   referralCount,
   onGloobalIdChange,
   paymentReceipt,
+  openAssetsToken = 0,
 }) {
   // Hidden on every open, deliberately never remembered. Persisting "shown"
   // would mean the balance is on screen the instant the app is opened —
@@ -1022,6 +1023,12 @@ function DashboardScreenBase({
   // seed planted by a payment is already there the next time it is opened,
   // with nothing to invalidate.
   const [showMyAssets, setShowMyAssets] = useState(false);
+  // The receipt screen sits above the dashboard and can't reach this state
+  // directly, so it asks by incrementing a token. Zero is the initial value
+  // and deliberately opens nothing — only a bump is a request.
+  useEffect(() => {
+    if (openAssetsToken > 0) setShowMyAssets(true);
+  }, [openAssetsToken]);
   // Live PayLater figures — limit is always the account's current total
   // assets (GET /api/assets/paylater/:symbolId), never a hardcoded number.
   // Null until the fetch lands. Everything on the PayLater screen — the

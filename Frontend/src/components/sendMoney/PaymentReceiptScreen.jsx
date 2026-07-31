@@ -20,13 +20,27 @@ const RECEIPT_STYLE = `
   }
 `;
 
-/** "30 Jul 2026 · 14:58" */
-function formatStamp(value) {
+// Date and time are two rows on the receipt, not one line, so each reads
+// as its own fact — and the time carries seconds, which is what makes a
+// receipt quotable when two payments went out in the same minute.
+
+/** "30 Jul 2026" */
+function formatDate(value) {
   const d = value ? new Date(value) : new Date();
   if (Number.isNaN(d.getTime())) return "";
-  const date = d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
-  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
-  return `${date} · ${time}`;
+  return d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+}
+
+/** "14:58:07" */
+function formatTime(value) {
+  const d = value ? new Date(value) : new Date();
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
 }
 
 /** The tail of the transaction id — long enough to be unique in a support
@@ -56,7 +70,7 @@ function Row({ label, value, color, testId }) {
   );
 }
 
-export function PaymentReceiptScreen({ receipt, ccy, onDone }) {
+export function PaymentReceiptScreen({ receipt, ccy, onDone, onViewAssets }) {
   const [shareNote, setShareNote] = useState(null);
 
   useEffect(() => {
@@ -81,11 +95,19 @@ export function PaymentReceiptScreen({ receipt, ccy, onDone }) {
     receipt.transaction?.to?.symbolId ||
     receipt.transaction?.to?.fullName ||
     "Gloobal user";
-  const stamp = formatStamp(receipt.timestamp || receipt.transaction?.createdAt);
+  const when = receipt.timestamp || receipt.transaction?.createdAt;
+  const dateText = formatDate(when);
+  const timeText = formatTime(when);
   const txnId = shortId(receipt);
+  // Money that left a PayLater line is not the same event as money that
+  // left the balance, and the receipt is the one place that distinction
+  // has to survive.
+  const paidWithPayLater =
+    (receipt.payMethod || receipt.metadata?.payMethod || receipt.transaction?.metadata?.payMethod) === "paylater";
 
   const summary =
-    `Paid ${money(amount)} to ${recipient} on ${stamp}.` + (txnId ? ` Transaction ${txnId}` : "");
+    `Paid ${money(amount)} to ${recipient} on ${dateText} at ${timeText}.` +
+    (txnId ? ` Transaction ${txnId}` : "");
 
   const handleShare = async () => {
     try {
@@ -136,6 +158,19 @@ export function PaymentReceiptScreen({ receipt, ccy, onDone }) {
           <Check size={32} color="#fff" strokeWidth={3} />
         </span>
 
+        {/* The outcome and the number, before any of the detail. Someone
+            checking a payment went through is answering two questions and
+            should not have to read a table to answer either. */}
+        <span data-testid="receipt-headline" style={{ fontSize: 18, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>
+          Payment Successful
+        </span>
+        <span
+          data-testid="receipt-hero-amount"
+          style={{ fontSize: 32, fontWeight: 800, color: T.accent, fontFamily: T.fontDisplay, marginTop: -8 }}
+        >
+          {money(amount)}
+        </span>
+
         <div style={{ width: "100%", maxWidth: 380, borderRadius: T.radiusLg, background: T.surface, boxShadow: T.shadowCard, padding: 20 }}>
           <Row label="To" value={recipient} testId="receipt-to" />
           <div style={{ height: 1, background: T.line }} />
@@ -152,7 +187,17 @@ export function PaymentReceiptScreen({ receipt, ccy, onDone }) {
             </>
           )}
           <div style={{ height: 1, background: T.line }} />
-          <Row label="Date & Time" value={stamp} testId="receipt-stamp" />
+          <Row label="Via" value="Gloobal Bank" testId="receipt-via" />
+          {paidWithPayLater && (
+            <>
+              <div style={{ height: 1, background: T.line }} />
+              <Row label="Paid via" value="PayLater" color={T.accent} testId="receipt-pay-method" />
+            </>
+          )}
+          <div style={{ height: 1, background: T.line }} />
+          <Row label="Date" value={dateText} testId="receipt-date" />
+          <div style={{ height: 1, background: T.line }} />
+          <Row label="Time" value={timeText} testId="receipt-time" />
           {txnId && (
             <>
               <div style={{ height: 1, background: T.line }} />
@@ -160,7 +205,7 @@ export function PaymentReceiptScreen({ receipt, ccy, onDone }) {
             </>
           )}
           <div style={{ height: 1, background: T.line }} />
-          <Row label="Status" value="Completed ✓" color={T.positive} testId="receipt-status" />
+          <Row label="Status" value="✓ Completed" color={T.positive} testId="receipt-status" />
         </div>
 
         {/* Only when something was actually planted — on a plain person-to-
@@ -169,11 +214,31 @@ export function PaymentReceiptScreen({ receipt, ccy, onDone }) {
           <div
             data-testid="receipt-asset-note"
             style={{
-              width: "100%", maxWidth: 380, borderRadius: T.radiusMd, background: T.accentSoft,
-              padding: "12px 14px", fontSize: 12.5, fontWeight: 700, color: T.positive, lineHeight: 1.5,
+              width: "100%", maxWidth: 380, borderRadius: T.radiusSm, background: "rgba(15,163,114,0.08)",
+              padding: 12, lineHeight: 1.5, display: "flex", gap: 9, alignItems: "flex-start",
             }}
           >
-            🌱 {money(cashback)} planted as an asset — growing toward {money(amountPaid)}
+            <span aria-hidden="true" style={{ fontSize: 15, lineHeight: 1.3 }}>🌱</span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: T.positive }}>
+                {money(cashback)} planted as an asset · growing toward {money(amountPaid)}
+              </span>
+              {/* The seed is only meaningful if it can be found again. */}
+              {onViewAssets && (
+                <button
+                  type="button"
+                  onClick={onViewAssets}
+                  data-testid="receipt-view-assets"
+                  className="v2-tap"
+                  style={{
+                    border: "none", background: "none", padding: "4px 0 0", cursor: "pointer",
+                    fontSize: 11.5, fontWeight: 800, color: T.accent, fontFamily: T.fontBody,
+                  }}
+                >
+                  View in My Assets →
+                </button>
+              )}
+            </span>
           </div>
         )}
 

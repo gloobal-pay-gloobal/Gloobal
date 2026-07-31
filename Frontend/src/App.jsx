@@ -261,6 +261,9 @@ function GloobalId() {
   const [loginCountrySearch, setLoginCountrySearch] = useState("");
   const [countrySearch, setCountrySearch] = useState("");
   const [activeScreen, setActiveScreen] = useState(null); // null | "send" | "bank" | "coverage"
+  // Bumped to ask the dashboard to open My Assets. A counter rather than a
+  // boolean so a second request after the screen was closed still lands.
+  const [assetsRequest, setAssetsRequest] = useState(0);
   // The last completed payment's receipt, handed from Send Money down to the
   // dashboard so the balance and My Assets reflect it without a round trip.
   const [paymentReceipt, setPaymentReceipt] = useState(null);
@@ -2136,6 +2139,7 @@ function GloobalId() {
               phoneNumber={phoneNumber}
               fullName={registeredUser?.fullName}
               paymentReceipt={paymentReceipt}
+              openAssetsToken={assetsRequest}
               // A renamed Gloobal ID has to land here, not just inside the
               // dashboard: `registeredUser` is what every other screen and
               // the persisted session read from, and `secureId` is the
@@ -2187,6 +2191,13 @@ function GloobalId() {
               receipt={paymentReceipt}
               ccy={symbolForCountry(dialCountry.iso)}
               onDone={() => setReceiptOpen(false)}
+              // The receipt sits above the dashboard, and My Assets lives
+              // inside it — so "view the seed I just planted" is a request
+              // passed down rather than a screen opened from here.
+              onViewAssets={() => {
+                setReceiptOpen(false);
+                setAssetsRequest((n) => n + 1);
+              }}
             />
           </Suspense>
         </ErrorBoundary>
