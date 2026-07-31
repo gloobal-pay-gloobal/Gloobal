@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(rm -rf ~)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(mongosh --eval db.dropDatabase():*)",
+      "Bash(mongosh --eval db.*drop*:*)",
+      "Bash(curl -X POST https://api.stripe.com:*)",
+      "Bash(curl -X POST https://api.twilio.com:*)",
+      "Edit(.env)",
+      "Bash(git config user.name:*)",
+      "Bash(git config user.email:*)",
+      "Bash(git config --local user.name:*)",
+      "Bash(git config --local user.email:*)",
+      "Bash(git config --global user.name:*)",
+      "Bash(git config --global user.email:*)"
+    ]
+  }
+}
