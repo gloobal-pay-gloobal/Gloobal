@@ -349,7 +349,12 @@ export function ensureIdCreatedEntry(symbolId, createdAt) {
 // silently wipes your GH Score answers and your profile photo — same person,
 // same device, but the app looks under a key nobody wrote to. Renaming carries
 // them across.
-const ID_SCOPED_LOCAL_KEYS = ["gloobal.ghAnswers", "gloobal.profilePhoto"];
+//
+// Anything new that gets filed under a symbolId belongs in this list. The GH
+// Score port added `gloobal.ghColors` and it was missed here first time round,
+// so a rename kept somebody's check-in answers and threw away the colours
+// they had picked for them.
+const ID_SCOPED_LOCAL_KEYS = ["gloobal.ghAnswers", "gloobal.ghColors", "gloobal.profilePhoto"];
 
 function migrateIdScopedStorage(oldSymbolId, newSymbolId) {
   if (!oldSymbolId || !newSymbolId || oldSymbolId === newSymbolId) return;

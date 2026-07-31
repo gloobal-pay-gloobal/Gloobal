@@ -124,9 +124,9 @@ const goAccounts = (page) => page.getByRole("button", { name: "Accounts", exact:
 /** Answers one Self check-in from the GH Score categories screen. */
 async function answerSelfRest(page) {
   await page.getByTestId("gh-category-self").click();
-  await page.getByTestId("gh-item-self-rest").click();
+  await page.getByTestId("gh-item-self-health").click();
   await page.getByTestId("gh-answer-yes").click();
-  await expect(page.getByTestId("gh-answered-self-rest")).toBeVisible();
+  await expect(page.getByTestId("gh-answered-self-health")).toBeVisible();
 }
 
 /** Drives Change Gloobal ID all the way through the confirmation gate. */
@@ -204,7 +204,7 @@ test("X2: GH Score answers survive a Gloobal ID change", async ({ page }) => {
   await page.getByRole("button", { name: "My GH Score", exact: true }).click();
   await answerSelfRest(page);
   await page.getByRole("button", { name: "Back", exact: true }).click();
-  await expect(page.getByTestId("gh-progress-self")).toHaveText("1/3");
+  await expect(page.getByTestId("gh-progress-self")).toHaveText("1/5");
   await page.getByRole("button", { name: "Back", exact: true }).click();
 
   await renameTo(page, NEW_ID);
@@ -212,13 +212,32 @@ test("X2: GH Score answers survive a Gloobal ID change", async ({ page }) => {
   // Same person, same device — the answer is still there under the new ID.
   await goProfile(page);
   await page.getByRole("button", { name: "My GH Score", exact: true }).click();
-  await expect(page.getByTestId("gh-progress-self")).toHaveText("1/3");
-  await expect(page.getByTestId("gh-progress")).toContainText("1 of 12");
+  await expect(page.getByTestId("gh-progress-self")).toHaveText("1/5");
+  await expect(page.getByTestId("gh-progress")).toContainText("1/20");
 
   const stored = await page.evaluate((id) => window.localStorage.getItem(`gloobal.ghAnswers.${id}`), NEW_ID_STR);
-  expect(stored).toContain("self-rest");
+  expect(stored).toContain("self.health");
   const orphaned = await page.evaluate((id) => window.localStorage.getItem(`gloobal.ghAnswers.${id}`), SECURE_ID_STR);
   expect(orphaned).toBeNull();
+
+  // No *account data* may be left behind under the old ID. Asserted over
+  // every key rather than the one this test happened to write, because the
+  // failure mode is a new key being added to the app and forgotten in
+  // ID_SCOPED_LOCAL_KEYS — which is exactly how gloobal.ghColors was missed
+  // when the GH Score screen was ported.
+  //
+  // gloobal.lastLogin is excluded deliberately: it is a record of when an ID
+  // was last signed in with, not data belonging to the person, and it has
+  // never been migrated. Carrying it across would be a change to the login
+  // screen's behaviour, which is not what a rename should decide.
+  const strays = await page.evaluate(
+    (id) =>
+      Object.keys(window.localStorage).filter(
+        (k) => k.startsWith("gloobal.") && k.endsWith(`.${id}`) && !k.startsWith("gloobal.lastLogin.")
+      ),
+    SECURE_ID_STR
+  );
+  expect(strays).toEqual([]);
 });
 
 // ═══ X3 — Profile photo vs. Change Gloobal ID ══════════════════════════════
@@ -433,5 +452,5 @@ test("X10: cancelling the confirmation leaves the ID, the history and the local 
   await expect(page.getByTestId("id-history-empty")).toHaveText("No previous IDs");
   await page.getByRole("button", { name: "Close ID history" }).click();
   const stillThere = await page.evaluate((id) => window.localStorage.getItem(`gloobal.ghAnswers.${id}`), SECURE_ID_STR);
-  expect(stillThere).toContain("self-rest");
+  expect(stillThere).toContain("self.health");
 });
