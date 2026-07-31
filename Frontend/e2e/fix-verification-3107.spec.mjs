@@ -335,91 +335,72 @@ test("T2-G: registration offers biometrics after the PIN, before the dashboard",
 
 // ═══ TASK 3 — GH Score ═════════════════════════════════════════════════════
 //
-// PARTIAL. GHScore_jsx__1_.txt has still not been delivered, so the port did
-// not happen and there is no colour wheel to open — that check lives, still
-// skipped, in fix-verification-3007. What is below covers the behaviour the
-// component in the repo does have, plus the auto-reveal added on 2026-07-31.
+// The port landed: GHScore.jsx arrived mid-session and replaced the previous
+// GH screen. The five checks that were skipped across two sessions waiting
+// for it now run for real in fix-verification-3007 (T8-A..E), including the
+// colour wheel. What is here is the integration angle those don't cover —
+// that the ported screen still lives behind Profile, and still keeps its
+// answers per account.
 
-// The real item keys, straight out of GH_CATEGORIES. Finance is the only
-// pillar whose items are math rather than yes/no, and its answers are shaped
-// differently, so the two are seeded separately.
-const GH_YESNO_KEYS = [
-  "self-rest", "self-movement", "self-mind",
-  "community-contact", "community-help", "community-local",
-  "environment-travel", "environment-waste", "environment-energy",
-];
-const GH_MATH_KEYS = ["finance-budget", "finance-saving", "finance-repay"];
-
-/** Marks every check-in answered for today, so the score is complete. */
-const seedAllAnswers = (symbolId) => ({
-  fn: (payload) => {
-    // Mirrors the component's own day index: whole days since the epoch.
-    const day = Math.floor(Date.now() / 86_400_000);
-    const at = new Date().toISOString();
-    const answers = {};
-    for (const key of payload.yesno) answers[key] = { type: "yesno", value: true, day, at };
-    for (const key of payload.math) answers[key] = { type: "math", value: 1, correct: true, day, at };
-    window.localStorage.setItem(`gloobal.ghAnswers.${payload.symbolId}`, JSON.stringify(answers));
-  },
-  arg: { symbolId, yesno: GH_YESNO_KEYS, math: GH_MATH_KEYS },
-});
-
-test("T3-A: the categories screen draws the score ring", async ({ page }) => {
-  await gotoGHScore(page);
-  const ring = page.locator('svg[role="img"][aria-label*="out of 100"]');
-  await expect(ring.first()).toBeVisible();
-  // An arc, not a bare circle: the progress track is stroke-dashed.
-  await expect(ring.first().locator("circle[stroke-dasharray]")).toHaveCount(1);
-});
-
-test("T3-B: all four pillars are listed, each with its own progress", async ({ page }) => {
-  await gotoGHScore(page);
-  for (const key of ["self", "community", "environment", "finance"]) {
-    await expect(page.getByTestId(`gh-category-${key}`)).toBeVisible();
-    await expect(page.getByTestId(`gh-progress-${key}`)).toContainText("/3");
-  }
-  await expect(page.getByTestId("gh-progress")).toContainText("of 12");
-});
-
-test("T3-C: BLOCKED — no colour wheel exists to open", async ({ page }) => {
-  await gotoGHScore(page);
-  // Asserting the gap rather than pretending it is closed. When
-  // GHScore_jsx__1_.txt lands and the wheel is ported, this check flips to
-  // opening it and T8-C in fix-verification-3007 comes off skip.
-  await expect(page.getByTestId("gh-color-wheel")).toHaveCount(0);
-});
-
-test("T3-D: a Finance check-in locks permanently, and stays locked over a reload", async ({ page }) => {
-  await gotoGHScore(page);
-  await page.getByTestId("gh-category-finance").click();
-  await page.getByTestId("gh-item-finance-budget").click();
-  // Finance check-ins are arithmetic, not yes/no — the answer's correctness
-  // affects the score but not the lock, which is what is under test here.
-  await page.getByLabel("Your answer").fill("1234");
-  await page.getByTestId("gh-submit-math").click();
-
-  await expect(page.getByTestId("gh-lock-finance-budget")).toBeVisible();
-  await expect(page.getByTestId("gh-item-finance-budget")).toBeDisabled();
-
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await unlockRestoredSession(page, PIN);
-  await page.getByRole("button", { name: "Profile", exact: true }).click();
-  await page.getByRole("button", { name: "My GH Score", exact: true }).click();
-  await page.getByTestId("gh-category-finance").click();
-
-  await expect(page.getByTestId("gh-lock-finance-budget")).toBeVisible();
-  await expect(page.getByTestId("gh-item-finance-budget")).toBeDisabled();
-});
-
-test("T3-E: the score reveals itself, with no Generate button anywhere", async ({ page }) => {
-  await gotoProfile(page, undefined, seedAllAnswers(SECURE_ID_STR));
+test("T3-A: the ported GH screen opens from Profile", async ({ page }) => {
+  await gotoProfile(page);
   await page.getByRole("button", { name: "My GH Score", exact: true }).click();
 
-  // Straight to the result — nothing was tapped to ask for it.
-  await expect(page.getByTestId("gh-tier")).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('svg[role="img"][aria-label*="out of 100"]').first()).toBeVisible();
-  await expect(page.getByTestId("gh-generate")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Generate/i })).toHaveCount(0);
+  await expect(page.getByTestId("gh-score-screen")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("gh-ring")).toBeVisible();
+  // Twenty check-ins across four pillars — the new model, not the old twelve.
+  await expect(page.getByTestId("gh-progress")).toContainText("0/20");
+});
+
+test("T3-B: its keyframes are injected once, not once per open", async ({ page }) => {
+  await gotoProfile(page);
+  const open = async () => {
+    await page.getByRole("button", { name: "My GH Score", exact: true }).click();
+    await expect(page.getByTestId("gh-score-screen")).toBeVisible({ timeout: 30_000 });
+  };
+  await open();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await open();
+
+  const count = await page.locator("style#gh-score-styles").count();
+  expect(count).toBe(1);
+});
+
+test("T3-C: answers are stored against the account, in the ported shape", async ({ page }) => {
+  await gotoProfile(page);
+  await page.getByRole("button", { name: "My GH Score", exact: true }).click();
+  await page.getByTestId("gh-category-self").click();
+  await page.getByTestId("gh-item-self-health").click();
+  await page.getByTestId("gh-answer-yes").click();
+
+  const stored = await page.evaluate(
+    (id) => JSON.parse(localStorage.getItem(`gloobal.ghAnswers.${id}`) || "{}"),
+    SECURE_ID_STR
+  );
+  // Dotted "<pillar>.<item>" keys carrying points — the shape GHScoreScreen
+  // reads back, not the flat keys the previous screen wrote.
+  expect(stored["self.health"]).toMatchObject({ type: "yesno", value: "yes", points: 25 });
+});
+
+test("T3-D: a saved pillar colour survives closing and reopening the screen", async ({ page }) => {
+  await gotoProfile(page);
+  await page.getByRole("button", { name: "My GH Score", exact: true }).click();
+  await page.getByTestId("gh-color-open").click();
+  await expect(page.getByTestId("gh-color-wheel")).toBeVisible();
+
+  // Drag to a definite point on the wheel, then save.
+  const wheel = await page.getByTestId("gh-color-wheel").boundingBox();
+  await page.mouse.move(wheel.x + wheel.width * 0.85, wheel.y + wheel.height / 2);
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.getByTestId("gh-color-save").click();
+
+  const saved = await page.evaluate(
+    (id) => JSON.parse(localStorage.getItem(`gloobal.ghColors.${id}`) || "{}"),
+    SECURE_ID_STR
+  );
+  expect(saved.self).toMatch(/^#[0-9a-f]{6}$/i);
+  expect(saved.self.toLowerCase()).not.toBe("#7c3aed");
 });
 
 // ═══ TASK 4 — ID history ═══════════════════════════════════════════════════
@@ -493,6 +474,25 @@ test("T4-D: both kinds sort together, newest first", async ({ page }) => {
   // The 30 Jul rename is newer than the 28 Jul creation.
   await expect(rows.nth(0)).toHaveAttribute("data-history-action", "changed");
   await expect(rows.nth(1)).toHaveAttribute("data-history-action", "created");
+});
+
+test("T4-F: one creation event renders as one row, however many sources record it", async ({ page }) => {
+  // The backend stamps its own 'created' entry at registration; the client
+  // synthesises one from the account's join date when the backend has none.
+  // Both describe the same event and their timestamps can disagree by
+  // milliseconds, which would otherwise print "Created" twice.
+  const remoteCreated = { ...CREATED_ENTRY, createdAt: "2026-07-28T09:05:41.123Z" };
+  const localCreated = { ...CREATED_ENTRY, createdAt: "2026-07-28T09:05:41.987Z" };
+
+  await gotoChangeId(
+    page,
+    { "/api/profile/": () => json({ user: { ...USER, symbolIdHistory: [remoteCreated] } }) },
+    seedHistory(SECURE_ID_STR, [localCreated])
+  );
+  await page.getByTestId("id-history-button").click();
+
+  await expect(page.getByTestId("id-history-row")).toHaveCount(1);
+  await expect(page.locator('[data-history-action="created"]')).toHaveCount(1);
 });
 
 test('T4-E: past five entries, the rest are behind "View all"', async ({ page }) => {

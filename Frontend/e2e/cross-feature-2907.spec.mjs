@@ -303,6 +303,8 @@ test("X5: a revealed balance survives tab navigation but not a reload", async ({
   await expect(page.getByTestId("balance-amount")).toContainText("5,000.00");
 
   await page.reload({ waitUntil: "domcontentloaded" });
+  // A reload re-enters through the lock screen, same as a real relaunch.
+  await unlockRestoredSession(page);
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("balance-amount")).toContainText("•••••••");
 });

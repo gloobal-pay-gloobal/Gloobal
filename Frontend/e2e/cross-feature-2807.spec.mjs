@@ -237,6 +237,8 @@ test("X3: the profile photo survives a Gloobal ID change", async ({ page }) => {
     [SECURE_ID_STR, PHOTO]
   );
   await page.reload({ waitUntil: "domcontentloaded" });
+  // A reload re-enters through the lock screen, same as a real relaunch.
+  await unlockRestoredSession(page);
   await goProfile(page);
   await expect(page.getByTestId("profile-photo-default")).toHaveCount(0);
 

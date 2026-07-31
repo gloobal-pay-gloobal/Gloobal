@@ -265,13 +265,26 @@ function readIdHistory(symbolId) {
   }
 }
 
-/** Union of two history lists, newest first, deduped on (symbolId, action, timestamp). */
+/** Union of two history lists, newest first, first occurrence winning.
+ *
+ * A rename is deduped on (symbolId, action, timestamp) — the same ID can
+ * legitimately be renamed away from more than once if it is later reclaimed.
+ * A *creation* is deduped on (symbolId, created) with the timestamp left
+ * out, because an ID is only ever created once. Two records of that one
+ * event can disagree by milliseconds — the backend stamps the registration
+ * write, the local fallback reads the account's createdAt — and without
+ * this they would render as two "Created" rows for the same moment.
+ */
 function mergeIdHistory(a, b) {
   const seen = new Set();
   return [...(a || []), ...(b || [])]
     .filter((entry) => entry && entry.symbolId)
     .filter((entry) => {
-      const key = `${entry.symbolId}@${idHistoryAction(entry)}@${idHistoryAt(entry)}`;
+      const action = idHistoryAction(entry);
+      const key =
+        action === "created"
+          ? `${entry.symbolId}@created`
+          : `${entry.symbolId}@changed@${idHistoryAt(entry)}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -1268,14 +1281,17 @@ function DashboardScreenBase({
         if (cancelled || !user) return;
         setCreatorRate(Number(user.cashbackRate) || 0);
         if (Number.isFinite(Number(user.balance))) setBalanceValue(Number(user.balance));
-        // The account's join date is when its first Gloobal ID came into
-        // existence, so it is what dates the "created" entry for accounts
-        // that predate this record being kept.
-        const seeded = ensureIdCreatedEntry(myGloobalId, user.createdAt || user.joinedDate);
-        if (Array.isArray(user.symbolIdHistory) || seeded) {
-          setIdHistory((local) =>
-            mergeIdHistory(local, [...(user.symbolIdHistory || []), ...(seeded ? [seeded] : [])])
-          );
+        // The backend's record is the authoritative one, so it goes first
+        // into the merge and its timestamps win. The local fallback below
+        // only fills a gap the backend left: the account's join date is
+        // when its first Gloobal ID came into existence, which dates the
+        // "created" entry for accounts that predate this being recorded.
+        const remote = Array.isArray(user.symbolIdHistory) ? user.symbolIdHistory : [];
+        const seeded = remote.some((entry) => idHistoryAction(entry) === "created")
+          ? null
+          : ensureIdCreatedEntry(myGloobalId, user.createdAt || user.joinedDate);
+        if (remote.length || seeded) {
+          setIdHistory((local) => mergeIdHistory(remote, [...local, ...(seeded ? [seeded] : [])]));
         }
       })
       .catch(() => {

@@ -185,30 +185,30 @@ test("GH-B: Tapping GH Score opens the categories screen with all 4 pillars", as
 
 test("GH-C: Answering a Self question and returning shows progress", async ({ page }) => {
   await gotoGHScore(page);
-  await expect(page.getByTestId("gh-progress-self")).toHaveText("0/3");
+  await expect(page.getByTestId("gh-progress-self")).toHaveText("0/5");
 
   await page.getByTestId("gh-category-self").click();
-  await page.getByTestId("gh-item-self-rest").click();
+  await page.getByTestId("gh-item-self-health").click();
   await expect(page.getByTestId("gh-question-text")).toBeVisible();
   await page.getByTestId("gh-answer-yes").click();
 
   // Back on the items list, that check-in reads as answered.
-  await expect(page.getByTestId("gh-answered-self-rest")).toBeVisible();
+  await expect(page.getByTestId("gh-answered-self-health")).toBeVisible();
 
   await page.getByRole("button", { name: "Back", exact: true }).click();
-  await expect(page.getByTestId("gh-progress-self")).toHaveText("1/3");
+  await expect(page.getByTestId("gh-progress-self")).toHaveText("1/5");
 });
 
 test("GH-D: Finance item locks after answering", async ({ page }) => {
   await gotoGHScore(page);
   await page.getByTestId("gh-category-finance").click();
-  await page.getByTestId("gh-item-finance-budget").click();
+  await page.getByTestId("gh-item-finance-budgeting").click();
   await page.getByLabel("Your answer").fill("1234");
   await page.getByTestId("gh-submit-math").click();
 
   // A lock, not a chevron — and the row can no longer be opened.
-  await expect(page.getByTestId("gh-lock-finance-budget")).toBeVisible();
-  await expect(page.getByTestId("gh-item-finance-budget")).toBeDisabled();
+  await expect(page.getByTestId("gh-lock-finance-budgeting")).toBeVisible();
+  await expect(page.getByTestId("gh-item-finance-budgeting")).toBeDisabled();
 });
 
 // Updated 2026-07-31: the "Generate Score" button is gone. The score is
@@ -219,24 +219,26 @@ test("GH-E: no Generate button, and progress is shown until every check-in is an
   await gotoGHScore(page);
   await expect(page.getByTestId("gh-generate")).toHaveCount(0);
   await expect(page.getByTestId("gh-view-score")).toHaveCount(0);
-  await expect(page.getByTestId("gh-progress")).toContainText("0 of 12");
+  await expect(page.getByTestId("gh-progress")).toContainText("0/20");
 });
 
 test("GH-F: GH answers persist across page reload", async ({ page }) => {
   await gotoGHScore(page);
   await page.getByTestId("gh-category-self").click();
-  await page.getByTestId("gh-item-self-rest").click();
+  await page.getByTestId("gh-item-self-health").click();
   await page.getByTestId("gh-answer-yes").click();
-  await expect(page.getByTestId("gh-answered-self-rest")).toBeVisible();
+  await expect(page.getByTestId("gh-answered-self-health")).toBeVisible();
 
   await page.reload({ waitUntil: "domcontentloaded" });
+  // A reload re-enters through the lock screen, same as a real relaunch.
+  await unlockRestoredSession(page);
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Profile", exact: true }).click();
   await page.getByRole("button", { name: "My GH Score", exact: true }).click();
 
-  await expect(page.getByTestId("gh-progress-self")).toHaveText("1/3");
+  await expect(page.getByTestId("gh-progress-self")).toHaveText("1/5");
   await page.getByTestId("gh-category-self").click();
-  await expect(page.getByTestId("gh-answered-self-rest")).toBeVisible();
+  await expect(page.getByTestId("gh-answered-self-health")).toBeVisible();
 });
 
 // ═══ TASK 2 — Creator cashback sharing ═════════════════════════════════════
@@ -438,7 +440,10 @@ test("CH-B: After a successful ID change, old ID appears in history", async ({ p
   const row = page.getByTestId("id-history-row").first();
   await expect(row).toBeVisible({ timeout: 30_000 });
   await expect(row).toContainText(SECURE_ID_STR);
-  await expect(row).toContainText(/changed on \d{2} \w{3} \d{4}, \d{2}:\d{2}/);
+  // Format changed 2026-07-31: an action label plus a full timestamp down to
+  // the second, replacing "changed on <date>, <hh:mm>".
+  await expect(row).toContainText(/Changed from:/);
+  await expect(row).toContainText(/\d{2} \w{3} \d{4} · \d{2}:\d{2}:\d{2}/);
 });
 
 test('CH-C: "Update ID" triggers biometric confirmation before API call', async ({ page }) => {
