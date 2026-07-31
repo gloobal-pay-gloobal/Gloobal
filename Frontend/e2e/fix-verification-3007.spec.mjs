@@ -13,6 +13,7 @@
 // Every stub is scoped to the backend origin. A broader glob would also match
 // the app's own Vite module URLs and break the module graph.
 import { test, expect } from "@playwright/test";
+import { unlockRestoredSession } from "./helpers/unlock.mjs";
 
 const BACKEND = "https://gloobal-pay.onrender.com";
 const SYMBOLS = ["−", "+", "×", "=", "○", "□", "●", "■"];
@@ -130,6 +131,8 @@ async function gotoDashboard(page, overrides, initScript, sessionUser = USER, ph
   if (typeof initScript === "function") await page.addInitScript(initScript);
   else if (initScript) await page.addInitScript(initScript.fn, initScript.arg);
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  // A restored session now opens the lock screen, not the dashboard.
+  await unlockRestoredSession(page);
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
 }
 

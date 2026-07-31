@@ -9,6 +9,7 @@
 // tab, My Assets, the Profile header, Change Gloobal ID (history + biometric
 // gate), and Send's recipient-country flag.
 import { test, expect } from "@playwright/test";
+import { unlockRestoredSession } from "./helpers/unlock.mjs";
 
 const BACKEND = "https://gloobal-pay.onrender.com";
 const SYMBOLS = ["−", "+", "×", "=", "○", "□", "●", "■"];
@@ -108,6 +109,8 @@ async function boot(page, overrides, { initScript, sessionUser = USER } = {}) {
   }, sessionUser);
   if (initScript) await page.addInitScript(initScript);
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  // A restored session now opens the lock screen, not the dashboard.
+  await unlockRestoredSession(page);
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
 }
 

@@ -24,11 +24,16 @@ const RECEIPT_STYLE = `
 // as its own fact — and the time carries seconds, which is what makes a
 // receipt quotable when two payments went out in the same minute.
 
-/** "30 Jul 2026" */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "30 Jul 2026" — built from parts, not toLocaleDateString, which reorders
+ *  to "Jul 30, 2026" under an en-US locale. Every other dated surface in the
+ *  app (joined date, ID history) reads day-first; a receipt that alone reads
+ *  month-first looks like it came from somewhere else. */
 function formatDate(value) {
   const d = value ? new Date(value) : new Date();
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+  return `${String(d.getDate()).padStart(2, "0")} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 /** "14:58:07" */
