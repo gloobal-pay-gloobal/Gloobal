@@ -206,8 +206,6 @@ test('T1-B: Registration Gloobal ID card carries a REGISTER badge', async ({ pag
   await gotoRegistrationSecureId(page);
   const badge = page.getByTestId("secureid-badge");
   await expect(badge).toBeVisible();
-  // The visible word rotates, so the stable accessible name is what is
-  // asserted — catching the cycle mid-turn would otherwise read "Id".
   await expect(badge).toHaveAttribute("data-badge-mode", "register");
   await expect(badge).toHaveAttribute("aria-label", "Register · Gloobal ID");
 });

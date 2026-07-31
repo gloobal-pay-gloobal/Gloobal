@@ -13,7 +13,8 @@ import { PhoneConnector } from "./components/auth/PhoneConnector";
 import { PinScreen } from "./components/auth/PinScreen";
 import { GROWTH_START_SCALE, MAX_PARTICLES, makeParticle } from "./components/backgrounds/FlagParticleField";
 import { OTP_LENGTH } from "./components/bank/LinkAccountFlow";
-import { CyclingBadge, MaskEyeIcon, SubmitButton, SymbolChipRow } from "./components/common/CodeEntry";
+import { MaskEyeIcon, SubmitButton, SymbolChipRow } from "./components/common/CodeEntry";
+import { ReauthScreen } from "./components/auth/ReauthScreen";
 import { PhoneDialPad, SymbolDialPad } from "./components/common/DialPads";
 import { FlagEmoji, FlagSignShape } from "./components/common/FlagComponents";
 import { IdSuggestionsPanel, LastLoginBar } from "./components/common/GapPanels";
@@ -44,6 +45,7 @@ import {
   passkeyAuthOptions,
   passkeyAuthVerify,
   passkeyStatus,
+  verifyPin as apiVerifyPin,
 } from "./services/api/authApi";
 import { ApiError } from "./services/httpClient";
 
@@ -77,15 +79,14 @@ function countryFromMobile(mobileNumber) {
   return TOP_COUNTRIES.find((c) => c.dialCode === dial) || ALL_COUNTRIES.find((c) => c.dialCode === dial) || null;
 }
 
-// Hoisted to module scope (not recreated inline at each call site) so
-// these stay the same array reference across renders — required for
-// CyclingBadge's React.memo to actually skip re-renders instead of seeing
-// a "new" words array every time.
-const LOGIN_BADGE_WORDS = ["Login", "Gloobal", "Id"];
-// Mirrors LOGIN_BADGE_WORDS word-for-word past the first slot: the two
-// screens are the same card doing opposite jobs, so only the verb should
-// differ. "Create Secure Gloobal Id" read as a different feature.
-const CREATE_BADGE_WORDS = ["Register", "Gloobal", "Id"];
+// The verb on the Secure ID card's corner badge. This used to cycle
+// through ["Login"/"Register", "Gloobal", "Id"] one word at a time, which
+// meant the verb — the only part that tells you which job the card is
+// doing — was on screen a third of the time. Two sessions of "the
+// Register badge is missing" reports were really "I looked while it said
+// Gloobal". The word is now fixed, and the "Gloobal ID" wordmark above
+// the card carries the branding it used to share.
+const SECURE_ID_BADGE_LABEL = { login: "Login", register: "Register" };
 
 // Shown when a mobile-number login can't be matched to a registered
 // account under the selected flag. Deliberately names the country code:
@@ -138,15 +139,20 @@ function GloobalId() {
   const frameRef = useRef(0);
 
   // Restore a persisted session once, at first render. If someone was
-  // signed in last time, this puts them straight back on the dashboard
-  // instead of the phone screen — the fix for "refresh / relaunch logs me
-  // out." The function-reference initializer makes React read localStorage
-  // exactly once (lazy init), not on every render.
+  // signed in last time this remembers *which* account, so the next open
+  // asks them to unlock it instead of restarting at the phone screen —
+  // the fix for "refresh / relaunch logs me out." The function-reference
+  // initializer makes React read localStorage exactly once (lazy init),
+  // not on every render.
   const [restoredSession] = useState(loadSession);
 
   const [, forceRender] = useState(0);
   const [verifying, setVerifying] = useState(false);
-  const [stage, setStage] = useState(restoredSession ? "dashboard" : "phone"); // phone -> otp -> secureId -> referral -> pin -> deviceSetup -> dashboard (registration); secureId -> loginAuth (-> loginBiometric) -> dashboard (login)
+  // A restored session opens the lock screen, never the dashboard. The
+  // stored blob is not proof of anything — it is editable in devtools and
+  // survives handing the unlocked phone to someone else — so it names the
+  // account and this stage makes them prove it's theirs.
+  const [stage, setStage] = useState(restoredSession ? "reauth" : "phone"); // phone -> otp -> secureId -> referral -> pin -> deviceSetup -> dashboard (registration); secureId -> loginAuth (-> loginBiometric) -> dashboard (login); reauth -> dashboard (restored session)
   const [flipping, setFlipping] = useState(false);
   const [secureId, setSecureId] = useState("");
   // A referral code carried in on the URL is pre-filled here at first
@@ -230,6 +236,21 @@ function GloobalId() {
   // "Submit" and, on success, goes straight to the dashboard instead of
   // continuing on to the Referral step.
   const [isLoginAttempt, setIsLoginAttempt] = useState(false);
+  // --- Lock screen (restored session) ----------------------------------
+  const [reauthPin, setReauthPin] = useState("");
+  const [reauthError, setReauthError] = useState(null);
+  const [reauthStatus, setReauthStatus] = useState(null);
+  const [reauthBusy, setReauthBusy] = useState(false);
+  // null while the capability probe is in flight. The lock screen treats
+  // null as "don't know yet" rather than "unavailable", so a slow probe
+  // never flashes the device-lock message at someone who has Face ID.
+  const [platformAuthAvailable, setPlatformAuthAvailable] = useState(null);
+  // Whether a passkey was registered on this device. Persisted with the
+  // session so the next open knows to fire the passkey prompt straight
+  // away instead of opening on a PIN pad the person never needs.
+  const [biometricEnrolled, setBiometricEnrolled] = useState(
+    Boolean(restoredSession?.biometricEnrolled)
+  );
   // Login can flip between Secure ID and mobile number via the refresh
   // icon on the card — its own buffer/country, separate from the main
   // registration phone number.
@@ -601,6 +622,9 @@ function GloobalId() {
       if (!verify.verified) throw new Error("Device authentication setup failed.");
       setDeviceSetupBusy(false);
       setDeviceSetupStatus("Device authentication enabled.");
+      // Remembered so the lock screen opens on a passkey prompt next time
+      // rather than a PIN pad.
+      setBiometricEnrolled(true);
       setTimeout(() => flipTo("dashboard"), 500);
     } catch (err) {
       setDeviceSetupBusy(false);
@@ -608,6 +632,85 @@ function GloobalId() {
       setDeviceSetupError(friendlyPasskeyMessage(err instanceof Error ? err.message : "Device authentication setup failed."));
     }
   };
+
+  // --- Lock screen handlers --------------------------------------------
+  //
+  // The account is already known (it came from the restored session), so
+  // unlocking is only ever "prove you are the person who left this device
+  // signed in" — no Secure ID entry, no country picker, no OTP.
+
+  // Passkey unlock. Fires automatically on mount when this device enrolled
+  // one, and again on every tap of Face ID / Fingerprint. A failure is not
+  // a dead end: the error is shown and the PIN pad below stays live.
+  const handleReauthBiometric = async () => {
+    const symbolId = restoredSession?.user?.symbolId;
+    if (!symbolId || reauthBusy) return;
+    setReauthError(null);
+    setReauthBusy(true);
+    setReauthStatus("Requesting device authentication…");
+    try {
+      const options = await passkeyAuthOptions(symbolId);
+      const authResponse = await startAuthentication({ optionsJSON: options });
+      const verify = await passkeyAuthVerify(symbolId, authResponse);
+      if (!verify.verified) throw new Error("Device authentication failed.");
+      setReauthBusy(false);
+      setReauthStatus(null);
+      setReauthPin("");
+      recordLastLogin(symbolId);
+      flipTo("dashboard");
+    } catch (err) {
+      // Cancelled, declined, timed out, or unsupported — all land here and
+      // all mean the same thing to the person holding the phone: use the
+      // PIN instead.
+      setReauthBusy(false);
+      setReauthStatus(null);
+      setReauthError(friendlyPasskeyMessage(err instanceof Error ? err.message : "Device authentication failed."));
+    }
+  };
+
+  // PIN unlock — POST /api/pin/verify. Deliberately not /api/login: the
+  // Secure ID is not being re-entered here, so there is nothing to log in
+  // with, only a PIN to confirm against an account already identified.
+  const handleReauthPin = async () => {
+    const symbolId = restoredSession?.user?.symbolId;
+    if (!symbolId || reauthPin.length !== PIN_LENGTH || reauthBusy) return;
+    setReauthError(null);
+    setReauthBusy(true);
+    try {
+      await apiVerifyPin(symbolId, reauthPin);
+      setReauthBusy(false);
+      setReauthPin("");
+      recordLastLogin(symbolId);
+      flipTo("dashboard");
+    } catch (err) {
+      setReauthBusy(false);
+      setReauthPin("");
+      setReauthError(err instanceof Error ? err.message : "That PIN wasn't recognized.");
+    }
+  };
+
+  // Does this device have a screen-lock-backed authenticator at all? Drives
+  // the difference between offering a PIN fallback and telling someone with
+  // neither option to set up a device lock.
+  useEffect(() => {
+    if (stage !== "reauth") return;
+    let cancelled = false;
+    const probe = async () => {
+      try {
+        const available =
+          typeof window !== "undefined" &&
+          window.PublicKeyCredential &&
+          (await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable());
+        if (!cancelled) setPlatformAuthAvailable(Boolean(available));
+      } catch {
+        if (!cancelled) setPlatformAuthAvailable(false);
+      }
+    };
+    probe();
+    return () => {
+      cancelled = true;
+    };
+  }, [stage]);
 
   // Fire the moment the app opens, well before anyone has typed a phone
   // number and hit submit — so a cold Render backend has a head start
@@ -626,9 +729,9 @@ function GloobalId() {
   // clears the stored session in handleStartOver.
   useEffect(() => {
     if (stage === "dashboard" && registeredUser?.symbolId) {
-      saveSession(registeredUser, phoneNumber);
+      saveSession(registeredUser, phoneNumber, biometricEnrolled);
     }
-  }, [stage, registeredUser, phoneNumber]);
+  }, [stage, registeredUser, phoneNumber, biometricEnrolled]);
 
   // Settle the registered country as soon as a complete number has been
   // dialled — the equivalent of "on blur" for a screen whose number field
@@ -929,6 +1032,13 @@ function GloobalId() {
     setIdAvailability(null);
     setIdSuggestions([]);
     setLastLoginInfo(null);
+    // Also the "sign in with a different account" exit from the lock
+    // screen, so none of its state survives into the next account.
+    setReauthPin("");
+    setReauthError(null);
+    setReauthStatus(null);
+    setReauthBusy(false);
+    setBiometricEnrolled(false);
     resetLoginMobileResolution();
     flipTo("phone");
   };
@@ -1287,11 +1397,11 @@ function GloobalId() {
 
               {stage === "secureId" && (
                 <span
-                  // The visible word rotates, so it is never a reliable
-                  // name for this badge — a screen reader (or a test)
-                  // catching it mid-cycle would hear "Id". The accessible
-                  // name states the whole thing and never changes; the
-                  // rotating half is hidden from the tree.
+                  // The accessible name states the whole thing ("Register ·
+                  // Gloobal ID") while the visible text is just the verb —
+                  // the wordmark directly above the card already says
+                  // "Gloobal ID", so repeating it inside the badge would
+                  // print it twice on one screen.
                   data-testid="secureid-badge"
                   data-badge-mode={isLoginAttempt ? "login" : "register"}
                   role="img"
@@ -1315,11 +1425,7 @@ function GloobalId() {
                   }}
                 >
                   <span aria-hidden="true">
-                    {isLoginAttempt ? (
-                      <CyclingBadge words={LOGIN_BADGE_WORDS} intervalMs={2600} />
-                    ) : (
-                      <CyclingBadge words={CREATE_BADGE_WORDS} intervalMs={2600} />
-                    )}
+                    {isLoginAttempt ? SECURE_ID_BADGE_LABEL.login : SECURE_ID_BADGE_LABEL.register}
                   </span>
                 </span>
               )}
@@ -1941,7 +2047,13 @@ function GloobalId() {
           scanning={deviceSetupBusy}
           error={deviceSetupError}
           status={deviceSetupStatus}
-          onSkip={() => flipTo("dashboard")}
+          onSkip={() => {
+            // Declining is a real answer, not "unknown" — recorded so the
+            // lock screen opens straight on the PIN pad instead of firing a
+            // passkey prompt this device has nothing to answer with.
+            setBiometricEnrolled(false);
+            flipTo("dashboard");
+          }}
         />
       )}
 
@@ -1969,6 +2081,26 @@ function GloobalId() {
         />
       )}
 
+      {/* The lock screen for a restored session. Rendered before the
+          dashboard block below, and mutually exclusive with it, so there is
+          no frame where dashboard content is on screen unverified. */}
+      {stage === "reauth" && restoredSession?.user && (
+        <ReauthScreen
+          user={restoredSession.user}
+          countryEmoji={dialCountry?.flag}
+          biometricEnrolled={restoredSession.biometricEnrolled}
+          platformAuthenticatorAvailable={platformAuthAvailable}
+          pin={reauthPin}
+          onPinChange={setReauthPin}
+          onSubmitPin={handleReauthPin}
+          onBiometric={handleReauthBiometric}
+          onDifferentAccount={handleStartOver}
+          scanning={reauthBusy}
+          error={reauthError}
+          status={reauthStatus}
+        />
+      )}
+
       {stage === "deviceSetup" && (
         <LoginAuthScreen
           mode="setup"
@@ -1983,7 +2115,10 @@ function GloobalId() {
           scanning={deviceSetupBusy}
           error={deviceSetupError}
           status={deviceSetupStatus}
-          onSkip={() => flipTo("dashboard")}
+          onSkip={() => {
+            setBiometricEnrolled(false);
+            flipTo("dashboard");
+          }}
         />
       )}
 
