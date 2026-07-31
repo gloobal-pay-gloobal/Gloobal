@@ -240,6 +240,20 @@ const ELECTRICITY_BY_COUNTRY = {
 // on another device still shows up here.
 const idHistoryKey = (symbolId) => `gloobal.idHistory.${symbolId}`;
 
+// An entry is one of two things:
+//   action "created" — the first ID this account ever had. No replacedBy.
+//   action "changed" — an ID that was renamed away from, and what to.
+// The timestamp field is `createdAt`. Entries written before this existed
+// carry `changedAt` instead and no action, so both are read through the
+// two accessors below rather than touched directly anywhere else.
+export function idHistoryAt(entry) {
+  return entry?.createdAt || entry?.changedAt || null;
+}
+
+export function idHistoryAction(entry) {
+  return entry?.action === "created" ? "created" : "changed";
+}
+
 function readIdHistory(symbolId) {
   if (!symbolId) return [];
   try {
@@ -251,24 +265,46 @@ function readIdHistory(symbolId) {
   }
 }
 
-/** Union of two history lists, newest first, deduped on (symbolId, changedAt). */
+/** Union of two history lists, newest first, first occurrence winning.
+ *
+ * A rename is deduped on (symbolId, action, timestamp) — the same ID can
+ * legitimately be renamed away from more than once if it is later reclaimed.
+ * A *creation* is deduped on (symbolId, created) with the timestamp left
+ * out, because an ID is only ever created once. Two records of that one
+ * event can disagree by milliseconds — the backend stamps the registration
+ * write, the local fallback reads the account's createdAt — and without
+ * this they would render as two "Created" rows for the same moment.
+ */
 function mergeIdHistory(a, b) {
   const seen = new Set();
   return [...(a || []), ...(b || [])]
     .filter((entry) => entry && entry.symbolId)
     .filter((entry) => {
-      const key = `${entry.symbolId}@${entry.changedAt}`;
+      const action = idHistoryAction(entry);
+      const key =
+        action === "created"
+          ? `${entry.symbolId}@created`
+          : `${entry.symbolId}@changed@${idHistoryAt(entry)}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     })
-    .sort((x, y) => new Date(y.changedAt || 0) - new Date(x.changedAt || 0));
+    .sort((x, y) => new Date(idHistoryAt(y) || 0) - new Date(idHistoryAt(x) || 0));
 }
 
 /** Records `oldSymbolId` as replaced by `newSymbolId`, moving the whole
  * history onto the new ID's key. Returns the updated list. */
 function recordIdChange(oldSymbolId, newSymbolId) {
-  const entry = { symbolId: oldSymbolId, changedAt: new Date().toISOString(), replacedBy: newSymbolId };
+  const now = new Date().toISOString();
+  const entry = {
+    symbolId: oldSymbolId,
+    action: "changed",
+    createdAt: now,
+    // Written alongside createdAt so a build of the app from before this
+    // change still reads the entry rather than showing it undated.
+    changedAt: now,
+    replacedBy: newSymbolId,
+  };
   const next = mergeIdHistory([entry], readIdHistory(oldSymbolId));
   try {
     window.localStorage.setItem(idHistoryKey(newSymbolId), JSON.stringify(next));
@@ -279,12 +315,46 @@ function recordIdChange(oldSymbolId, newSymbolId) {
   return next;
 }
 
+/**
+ * Writes the "created" entry for an account's first Gloobal ID, if one
+ * isn't already recorded.
+ *
+ * Until now only *changes* were tracked, so the history of an account that
+ * had never been renamed was empty and the original ID — the one the
+ * founder specifically asked to see dated — appeared nowhere. Idempotent:
+ * called on every dashboard mount, writes at most once per account.
+ */
+export function ensureIdCreatedEntry(symbolId, createdAt) {
+  if (!symbolId || !createdAt) return null;
+  const existing = readIdHistory(symbolId);
+  if (existing.some((entry) => idHistoryAction(entry) === "created")) return null;
+  const stamp = new Date(createdAt);
+  if (Number.isNaN(stamp.getTime())) return null;
+  const entry = {
+    symbolId,
+    action: "created",
+    createdAt: stamp.toISOString(),
+    replacedBy: null,
+  };
+  try {
+    window.localStorage.setItem(idHistoryKey(symbolId), JSON.stringify(mergeIdHistory([entry], existing)));
+  } catch {
+    // storage unavailable — the entry still merges into this session's list
+  }
+  return entry;
+}
+
 // Everything this app keeps locally is filed under the account's Gloobal ID,
 // which is exactly the thing a rename changes. Without this, changing your ID
 // silently wipes your GH Score answers and your profile photo — same person,
 // same device, but the app looks under a key nobody wrote to. Renaming carries
 // them across.
-const ID_SCOPED_LOCAL_KEYS = ["gloobal.ghAnswers", "gloobal.profilePhoto"];
+//
+// Anything new that gets filed under a symbolId belongs in this list. The GH
+// Score port added `gloobal.ghColors` and it was missed here first time round,
+// so a rename kept somebody's check-in answers and threw away the colours
+// they had picked for them.
+const ID_SCOPED_LOCAL_KEYS = ["gloobal.ghAnswers", "gloobal.ghColors", "gloobal.profilePhoto"];
 
 function migrateIdScopedStorage(oldSymbolId, newSymbolId) {
   if (!oldSymbolId || !newSymbolId || oldSymbolId === newSymbolId) return;
@@ -300,8 +370,13 @@ function migrateIdScopedStorage(oldSymbolId, newSymbolId) {
   }
 }
 
-// "22 Jul 2026, 14:05" — the timestamp beside a previous Gloobal ID. Built
-// from explicit parts for the same reason formatJoinedDate is.
+// "22 Jul 2026 · 14:05:33" — the timestamp beside a Gloobal ID in the
+// history sheet. Built from explicit parts for the same reason
+// formatJoinedDate is.
+//
+// Seconds are shown, not rounded away. Two IDs created or replaced in the
+// same minute are indistinguishable without them, and a rename is exactly
+// the kind of thing someone does twice in a row while deciding.
 function formatIdChangedAt(value) {
   const date = new Date(value);
   if (!value || Number.isNaN(date.getTime())) return "—";
@@ -309,7 +384,8 @@ function formatIdChangedAt(value) {
   const mon = JOINED_MONTHS[date.getMonth()];
   const hh = String(date.getHours()).padStart(2, "0");
   const mm = String(date.getMinutes()).padStart(2, "0");
-  return `${dd} ${mon} ${date.getFullYear()}, ${hh}:${mm}`;
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  return `${dd} ${mon} ${date.getFullYear()} · ${hh}:${mm}:${ss}`;
 }
 
 function AccountsTabIcon({ active }) {
@@ -878,6 +954,7 @@ function DashboardScreenBase({
   referralCount,
   onGloobalIdChange,
   paymentReceipt,
+  openAssetsToken = 0,
 }) {
   // Hidden on every open, deliberately never remembered. Persisting "shown"
   // would mean the balance is on screen the instant the app is opened —
@@ -964,6 +1041,12 @@ function DashboardScreenBase({
   // seed planted by a payment is already there the next time it is opened,
   // with nothing to invalidate.
   const [showMyAssets, setShowMyAssets] = useState(false);
+  // The receipt screen sits above the dashboard and can't reach this state
+  // directly, so it asks by incrementing a token. Zero is the initial value
+  // and deliberately opens nothing — only a bump is a request.
+  useEffect(() => {
+    if (openAssetsToken > 0) setShowMyAssets(true);
+  }, [openAssetsToken]);
   // Live PayLater figures — limit is always the account's current total
   // assets (GET /api/assets/paylater/:symbolId), never a hardcoded number.
   // Null until the fetch lands. Everything on the PayLater screen — the
@@ -1065,8 +1148,13 @@ function DashboardScreenBase({
   // The history sheet, opened from the icon in the Change Gloobal ID header.
   const [showIdHistory, setShowIdHistory] = useState(false);
   // Only the five most recent are shown — enough to answer "what was I
-  // called before", short of turning into an archive of every rename.
-  const recentIdHistory = useMemo(() => idHistory.slice(0, 5), [idHistory]);
+  // called before", short of turning into an archive of every rename. The
+  // rest are one tap away rather than gone.
+  const [idHistoryExpanded, setIdHistoryExpanded] = useState(false);
+  const recentIdHistory = useMemo(
+    () => (idHistoryExpanded ? idHistory : idHistory.slice(0, 5)),
+    [idHistory, idHistoryExpanded]
+  );
   // Renaming a Gloobal ID is confirmed with the device's own biometrics
   // before the API call goes out — never after, and never optionally.
   //   null | { stage: "prompt" | "pin" | "error", message } — see
@@ -1198,8 +1286,17 @@ function DashboardScreenBase({
         if (cancelled || !user) return;
         setCreatorRate(Number(user.cashbackRate) || 0);
         if (Number.isFinite(Number(user.balance))) setBalanceValue(Number(user.balance));
-        if (Array.isArray(user.symbolIdHistory)) {
-          setIdHistory((local) => mergeIdHistory(local, user.symbolIdHistory));
+        // The backend's record is the authoritative one, so it goes first
+        // into the merge and its timestamps win. The local fallback below
+        // only fills a gap the backend left: the account's join date is
+        // when its first Gloobal ID came into existence, which dates the
+        // "created" entry for accounts that predate this being recorded.
+        const remote = Array.isArray(user.symbolIdHistory) ? user.symbolIdHistory : [];
+        const seeded = remote.some((entry) => idHistoryAction(entry) === "created")
+          ? null
+          : ensureIdCreatedEntry(myGloobalId, user.createdAt || user.joinedDate);
+        if (remote.length || seeded) {
+          setIdHistory((local) => mergeIdHistory(remote, [...local, ...(seeded ? [seeded] : [])]));
         }
       })
       .catch(() => {
@@ -1866,17 +1963,22 @@ function DashboardScreenBase({
 
         {activeTab === "accounts" && (
           <div style={{ padding: "12px 18px 30px", display: "flex", flexDirection: "column", gap: 22 }}>
-            {/* Four account tiles — same square, ambient-field tile shape
-                as the dashboard's Send / Add Bank / Scanner / Receive
-                grid. Locks follow the red/green service system: Coin is
-                still red-locked; Bank, PayLater, and Linked Banks are
-                live. */}
+            {/* The account tiles — same square, ambient-field tile shape as
+                the dashboard's Send / Add Bank / Scanner / Receive grid.
+                Locks follow the red/green service system: Coin is still
+                red-locked; Bank, PayLater, My Assets, and Linked Banks are
+                live.
+
+                Order is the list itself, so changing it is a one-line
+                move. Gloobal's own accounts come first, in the order the
+                founder asked for — Bank, PayLater, Coin — with My Assets
+                after them and external linked banks always last. */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
               {[
                 { key: "gbank", label: "Gloobal Bank", locked: false, onClick: () => showToast("Gloobal Bank — your primary account") },
-                { key: "gassets", label: "My Assets", locked: false, onClick: () => setShowMyAssets(true) },
-                { key: "gcoin", label: "Gloobal Coin", locked: true, onClick: () => showToast("Locked until live APIs connect") },
                 { key: "gpaylater", label: "PayLater", locked: false, onClick: () => setShowPayLater(true) },
+                { key: "gcoin", label: "Gloobal Coin", locked: true, onClick: () => showToast("Locked until live APIs connect") },
+                { key: "gassets", label: "My Assets", locked: false, onClick: () => setShowMyAssets(true) },
                 { key: "linked", label: "Linked Banks", locked: false, onClick: onOpenBank },
               ].map(({ key, label, locked, onClick }) => (
                 <div key={key} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
@@ -3641,7 +3743,12 @@ function DashboardScreenBase({
                 you open, rather than below the dial pad where it competes
                 with the ID being typed. */}
             <button
-              onClick={() => setShowIdHistory(true)}
+              onClick={() => {
+                // Each open starts at the five most recent again, so
+                // "View all" is a deliberate act rather than sticky state.
+                setIdHistoryExpanded(false);
+                setShowIdHistory(true);
+              }}
               data-testid="id-history-button"
               aria-label="ID history"
               className="v2-tap"
@@ -3790,27 +3897,70 @@ function DashboardScreenBase({
                       No previous IDs
                     </div>
                   ) : (
-                    recentIdHistory.map((entry, i) => (
-                      <div
-                        key={`${entry.symbolId}-${entry.changedAt}`}
-                        data-testid="id-history-row"
-                        style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px", borderTop: i === 0 ? "none" : `1px solid ${T.line}` }}
-                      >
-                        <span style={{ flex: 1, minWidth: 0 }}>
-                          {/* Same symbol font as everywhere else the Gloobal
-                              ID is shown, so the glyphs render identically. */}
-                          <span style={{ display: "block", fontSize: 13, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay, letterSpacing: 0.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {entry.symbolId}
+                    recentIdHistory.map((entry, i) => {
+                      const action = idHistoryAction(entry);
+                      const created = action === "created";
+                      return (
+                        <div
+                          key={`${entry.symbolId}-${action}-${idHistoryAt(entry)}`}
+                          data-testid="id-history-row"
+                          data-history-action={action}
+                          style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "13px 16px", borderTop: i === 0 ? "none" : `1px solid ${T.line}` }}
+                        >
+                          {/* Green for the ID this account started with,
+                              purple for every rename after it — the two
+                              kinds of entry are answering different
+                              questions and shouldn't scan as one list. */}
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              width: 8, height: 8, borderRadius: "50%", flexShrink: 0, marginTop: 5,
+                              background: created ? T.positive : T.accent,
+                            }}
+                          />
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            {/* Same symbol font as everywhere else the Gloobal
+                                ID is shown, so the glyphs render identically. */}
+                            <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay, letterSpacing: 0.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {entry.symbolId}
+                            </span>
+                            <span style={{ display: "block", fontSize: 14, color: T.inkFaint, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {created ? "Created" : `Changed from: ${entry.symbolId}`}
+                            </span>
+                            {!created && entry.replacedBy && (
+                              <span style={{ display: "block", fontSize: 14, color: T.inkFaint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                Replaced by: {entry.replacedBy}
+                              </span>
+                            )}
+                            <span style={{ display: "block", fontSize: 12, color: T.inkFaint, marginTop: 2 }}>
+                              {formatIdChangedAt(idHistoryAt(entry))}
+                            </span>
                           </span>
-                          <span style={{ display: "block", fontSize: 11, color: T.inkFaint, marginTop: 2 }}>
-                            changed on {formatIdChangedAt(entry.changedAt)}
-                          </span>
-                        </span>
-                        <span style={{ fontSize: 10.5, fontWeight: 700, color: T.inkFaint, flexShrink: 0 }}>#{recentIdHistory.length - i}</span>
-                      </div>
-                    ))
+                          <span style={{ fontSize: 10.5, fontWeight: 700, color: T.inkFaint, flexShrink: 0 }}>#{recentIdHistory.length - i}</span>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
+
+                {/* The cap is a default, not a ceiling. Someone who has
+                    renamed more than five times still has a way to see the
+                    whole trail. */}
+                {!idHistoryExpanded && idHistory.length > 5 && (
+                  <button
+                    type="button"
+                    data-testid="id-history-view-all"
+                    onClick={() => setIdHistoryExpanded(true)}
+                    className="v2-tap"
+                    style={{
+                      marginTop: 10, border: "none", background: "none", color: T.accent,
+                      fontSize: 12.5, fontWeight: 800, cursor: "pointer", padding: "6px 4px",
+                      alignSelf: "center",
+                    }}
+                  >
+                    View all ({idHistory.length})
+                  </button>
+                )}
               </div>
             </div>
           )}

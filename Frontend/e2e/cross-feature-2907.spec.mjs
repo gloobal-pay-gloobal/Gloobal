@@ -18,6 +18,7 @@
 // Every stub is scoped to the backend origin. A broader glob would also match
 // the app's own Vite module URLs and break the module graph.
 import { test, expect } from "@playwright/test";
+import { unlockRestoredSession } from "./helpers/unlock.mjs";
 
 const BACKEND = "https://gloobal-pay.onrender.com";
 const SYMBOLS = ["−", "+", "×", "=", "○", "□", "●", "■"];
@@ -134,6 +135,8 @@ async function boot(page, overrides, sessionUser = USER) {
     );
   }, sessionUser);
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  // A restored session now opens the lock screen, not the dashboard.
+  await unlockRestoredSession(page);
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
 }
 
@@ -300,6 +303,8 @@ test("X5: a revealed balance survives tab navigation but not a reload", async ({
   await expect(page.getByTestId("balance-amount")).toContainText("5,000.00");
 
   await page.reload({ waitUntil: "domcontentloaded" });
+  // A reload re-enters through the lock screen, same as a real relaunch.
+  await unlockRestoredSession(page);
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("balance-amount")).toContainText("•••••••");
 });
@@ -396,6 +401,8 @@ test("X10: a saved rate arriving late still lands in My Share, and is not overwr
     );
   }, USER);
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  // A restored session now opens the lock screen, not the dashboard.
+  await unlockRestoredSession(page);
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
 
   // Straight into Receive, ahead of the profile read.

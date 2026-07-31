@@ -79,6 +79,44 @@ const findUserByNationalNumber = async (mobileNumber) => {
   });
 };
 
+// The ID trail, newest first, always including the ID this account started
+// with.
+//
+// Only renames were ever recorded, so an account that has never been
+// renamed had an empty history and the original ID — the one the founder
+// asked to see dated — appeared nowhere. The original is derivable rather
+// than lost: it is the oldest entry's symbolId if there are renames, or the
+// current symbolId if there are none, and it came into existence when the
+// account did. That derivation runs only when no 'created' entry is
+// already stored, so a real recorded one always wins.
+const serializeSymbolIdHistory = (user) => {
+  const stored = Array.isArray(user.symbolIdHistory) ? user.symbolIdHistory : [];
+
+  const entries = stored.map((entry) => ({
+    symbolId: entry.symbolId,
+    action: entry.action === 'created' ? 'created' : 'changed',
+    createdAt: entry.createdAt || entry.changedAt || null,
+    // Kept in the payload for clients built before createdAt existed.
+    changedAt: entry.changedAt || entry.createdAt || null,
+    replacedBy: entry.replacedBy || null
+  }));
+
+  if (!entries.some((entry) => entry.action === 'created') && user.createdAt) {
+    const oldest = entries.length
+      ? entries.reduce((a, b) => (new Date(a.createdAt || 0) <= new Date(b.createdAt || 0) ? a : b))
+      : null;
+    entries.push({
+      symbolId: oldest ? oldest.symbolId : user.symbolId,
+      action: 'created',
+      createdAt: user.createdAt,
+      changedAt: user.createdAt,
+      replacedBy: null
+    });
+  }
+
+  return entries.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+};
+
 const publicUserPayload = async (user) => {
   const hasPin = Boolean(await Pin.exists({ userId: user._id }));
   const hasPasskey = Array.isArray(user.passkeys) && user.passkeys.length > 0;
@@ -96,13 +134,7 @@ const publicUserPayload = async (user) => {
     // and `undefined` would render as a blank balance card rather than a
     // number. They open at the same float a new account does.
     balance: Number.isFinite(Number(user.balance)) ? Number(user.balance) : DEFAULT_ACCOUNT_BALANCE,
-    symbolIdHistory: Array.isArray(user.symbolIdHistory)
-      ? user.symbolIdHistory.map((entry) => ({
-          symbolId: entry.symbolId,
-          changedAt: entry.changedAt,
-          replacedBy: entry.replacedBy || null
-        }))
-      : [],
+    symbolIdHistory: serializeSymbolIdHistory(user),
     hasPin,
     hasPasskey,
     createdAt: joinedDate,
@@ -620,12 +652,20 @@ app.post('/api/register-symbol', async (req, res) => {
       }
     }
 
+    // The ID trail starts here, not at the first rename. Without this
+    // opening entry the history of an account that has never been renamed
+    // is empty, and the ID the person actually chose has no recorded
+    // moment of creation anywhere.
+    const createdAt = new Date();
     const newUser = new User({
       fullName: cleanFullName,
       mobileNumber: cleanMobileNumber,
       symbolId: cleanSymbolId,
       referredBy: validReferrerId,
-      referralChain
+      referralChain,
+      symbolIdHistory: [
+        { symbolId: cleanSymbolId, action: 'created', createdAt, changedAt: createdAt, replacedBy: null }
+      ]
     });
 
     await newUser.save();
@@ -928,9 +968,16 @@ app.patch('/api/profile/change-symbol-id', async (req, res) => {
 
     // Record which ID this account used to be known by, and when — before
     // the new one is written, so the trail is complete and correctly dated.
+    const changedAt = new Date();
     user.symbolIdHistory = [
       ...(Array.isArray(user.symbolIdHistory) ? user.symbolIdHistory : []),
-      { symbolId: currentSymbolId, changedAt: new Date(), replacedBy: newSymbolId }
+      {
+        symbolId: currentSymbolId,
+        action: 'changed',
+        createdAt: changedAt,
+        changedAt,
+        replacedBy: newSymbolId
+      }
     ];
     user.symbolId = newSymbolId;
     // fullName mirrors the mobile number for these prototype accounts, so

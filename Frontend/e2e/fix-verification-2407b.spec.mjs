@@ -21,6 +21,7 @@
 // /src/services/api/authApi.js under Vite — fulfilling that with JSON
 // breaks the module graph and the app never mounts.
 import { test, expect } from "@playwright/test";
+import { unlockRestoredSession } from "./helpers/unlock.mjs";
 
 const BACKEND = "https://gloobal-pay.onrender.com";
 const SYMBOLS = ["−", "+", "×", "=", "○", "□", "●", "■"];
@@ -70,6 +71,7 @@ async function mockBackend(page, overrides = {}, user = USER) {
     if (url.includes("/api/otp/verify")) return route.fulfill(json({ verified: true }));
     if (url.includes("/api/register-symbol")) return route.fulfill(json({ user, referralApplied: true }, 201));
     if (url.includes("/api/pin/set")) return route.fulfill(json({ user }));
+    if (url.includes("/api/pin/verify")) return route.fulfill(json({ verified: true, user }));
     if (url.includes("/api/login")) return route.fulfill(json({ user }));
     if (url.includes("/api/referrals/")) return route.fulfill(json({ referrals: [], total: 0 }));
     if (url.includes("/api/users/resolve")) {
@@ -104,6 +106,8 @@ async function gotoDashboard(page, overrides, user = USER) {
     );
   }, user);
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  // A restored session now opens the lock screen, not the dashboard.
+  await unlockRestoredSession(page);
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
 }
 

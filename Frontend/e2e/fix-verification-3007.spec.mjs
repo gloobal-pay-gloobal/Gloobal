@@ -13,6 +13,7 @@
 // Every stub is scoped to the backend origin. A broader glob would also match
 // the app's own Vite module URLs and break the module graph.
 import { test, expect } from "@playwright/test";
+import { unlockRestoredSession } from "./helpers/unlock.mjs";
 
 const BACKEND = "https://gloobal-pay.onrender.com";
 const SYMBOLS = ["−", "+", "×", "=", "○", "□", "●", "■"];
@@ -130,6 +131,8 @@ async function gotoDashboard(page, overrides, initScript, sessionUser = USER, ph
   if (typeof initScript === "function") await page.addInitScript(initScript);
   else if (initScript) await page.addInitScript(initScript.fn, initScript.arg);
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  // A restored session now opens the lock screen, not the dashboard.
+  await unlockRestoredSession(page);
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
 }
 
@@ -430,7 +433,10 @@ test("T6-B: Tapping it opens the sheet with the previous ID and its date", async
   const row = page.getByTestId("id-history-row").first();
   await expect(row).toBeVisible();
   await expect(row).toContainText(seed.arg.entries[0].symbolId);
-  await expect(row).toContainText(/changed on \d{2} \w{3} \d{4}/);
+  // Format changed 2026-07-31: rows now carry an action label and a full
+  // timestamp down to the second, not "changed on <date>".
+  await expect(row).toContainText(/Changed from:/);
+  await expect(row).toContainText(/\d{2} \w{3} \d{4} · \d{2}:\d{2}:\d{2}/);
 });
 
 test("T6-C: The sheet shows at most five entries, newest first", async ({ page }) => {
@@ -448,6 +454,30 @@ test("T6-D: With no history the sheet says so", async ({ page }) => {
   await page.getByTestId("id-history-button").click();
   await expect(page.getByText("ID History", { exact: true })).toBeVisible();
   await expect(page.getByTestId("id-history-empty")).toHaveText("No previous IDs");
+});
+
+// Every check-in answered for today. The keys are `<pillar>.<item>` and the
+// answers carry points, matching what GHScoreScreen persists.
+const GH_ANSWER_KEYS = [
+  ["self.health", "yesno"], ["self.education", "math"], ["self.food", "yesno"], ["self.mental", "yesno"], ["self.sleep", "yesno"],
+  ["community.belonging", "yesno"], ["community.support", "yesno"], ["community.trust", "yesno"], ["community.voice", "math"], ["community.family", "yesno"],
+  ["environment.recycling", "yesno"], ["environment.energy", "yesno"], ["environment.nature", "yesno"], ["environment.awareness", "math"], ["environment.water", "yesno"],
+  ["finance.savings", "yesno"], ["finance.budgeting", "math"], ["finance.debt", "yesno"], ["finance.security", "yesno"], ["finance.insurance", "yesno"],
+];
+
+const seedEveryGHAnswer = (symbolId) => ({
+  fn: (payload) => {
+    const day = new Date().toISOString().slice(0, 10);
+    const answers = {};
+    for (const [key, type] of payload.keys) {
+      answers[key] =
+        type === "yesno"
+          ? { type: "yesno", value: "yes", points: 25, day }
+          : { type: "math", value: "42", correct: true, points: 25, day };
+    }
+    window.localStorage.setItem(`gloobal.ghAnswers.${payload.symbolId}`, JSON.stringify(answers));
+  },
+  arg: { symbolId, keys: GH_ANSWER_KEYS },
 });
 
 // ═══ TASK 7 — Profile rows ═════════════════════════════════════════════════
@@ -472,12 +502,80 @@ test("T7-C: The rows either side of them are untouched", async ({ page }) => {
 });
 
 // ═══ TASK 8 — new GH Score component ═══════════════════════════════════════
-// GHScore_jsx__1_.txt is not in the repo, on the Desktop, or in Downloads.
-// These stay skipped until the file arrives — a passing check written against
-// the component that is already there would say nothing about the new one.
+// UNBLOCKED 2026-07-31. The founder's GHScore.jsx arrived and was ported into
+// components/profile/GHScoreScreen.jsx, replacing the previous screen. These
+// five ran skipped across two sessions waiting for it; they now drive the
+// ported component for real.
 
-test.skip("T8-A: GH Score categories screen shows the segmented ring", async () => {});
-test.skip("T8-B: All four pillars are visible", async () => {});
-test.skip("T8-C: The colour sheet opens from the header", async () => {});
-test.skip("T8-D: Finance locks permanently after answering", async () => {});
-test.skip("T8-E: The score auto-reveals once every check-in is done", async () => {});
+async function gotoGHScore(page, overrides, initScript) {
+  await gotoProfile(page, overrides, initScript);
+  await page.getByRole("button", { name: "My GH Score", exact: true }).click();
+  await expect(page.getByTestId("gh-category-self")).toBeVisible({ timeout: 30_000 });
+}
+
+test("T8-A: GH Score categories screen shows the segmented ring", async ({ page }) => {
+  await gotoGHScore(page);
+  const ring = page.getByTestId("gh-ring");
+  await expect(ring).toBeVisible();
+  // Four coloured quadrants, one per pillar, drawn as a conic gradient.
+  const background = await ring.locator("div").first().evaluate((el) => getComputedStyle(el).backgroundImage);
+  expect(background).toContain("conic-gradient");
+  for (const color of ["124, 58, 237", "249, 115, 22", "20, 184, 166", "236, 72, 153"]) {
+    expect(background).toContain(color);
+  }
+});
+
+test("T8-B: All four pillars are visible", async ({ page }) => {
+  await gotoGHScore(page);
+  for (const [key, label] of [["self", "Self"], ["community", "Community"], ["environment", "Environment"], ["finance", "Finance"]]) {
+    await expect(page.getByTestId(`gh-category-${key}`)).toContainText(label);
+    await expect(page.getByTestId(`gh-progress-${key}`)).toHaveText("0/5");
+  }
+  await expect(page.getByTestId("gh-progress")).toContainText("0/20");
+});
+
+test("T8-C: The colour sheet opens from the header", async ({ page }) => {
+  await gotoGHScore(page);
+  await expect(page.getByTestId("gh-color-sheet")).toHaveCount(0);
+
+  await page.getByTestId("gh-color-open").click();
+
+  await expect(page.getByTestId("gh-color-sheet")).toBeVisible();
+  await expect(page.getByTestId("gh-color-wheel")).toBeVisible();
+  // A tab per pillar, and a way to put every colour back.
+  for (const key of ["self", "community", "environment", "finance"]) {
+    await expect(page.getByTestId(`gh-color-tab-${key}`)).toBeVisible();
+  }
+  await expect(page.getByTestId("gh-color-reset")).toBeVisible();
+  await expect(page.getByTestId("gh-color-save")).toBeVisible();
+});
+
+test("T8-D: Finance locks permanently after answering", async ({ page }) => {
+  await gotoGHScore(page);
+  await page.getByTestId("gh-category-finance").click();
+  await page.getByTestId("gh-item-finance-savings").click();
+  await page.getByTestId("gh-answer-yes").click();
+
+  await expect(page.getByTestId("gh-lock-finance-savings")).toBeVisible();
+  await expect(page.getByTestId("gh-item-finance-savings")).toBeDisabled();
+
+  // Still locked after a reload — "permanently" has to survive the process.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await unlockRestoredSession(page);
+  await page.getByRole("button", { name: "Profile", exact: true }).click();
+  await page.getByRole("button", { name: "My GH Score", exact: true }).click();
+  await page.getByTestId("gh-category-finance").click();
+  await expect(page.getByTestId("gh-lock-finance-savings")).toBeVisible();
+  await expect(page.getByTestId("gh-item-finance-savings")).toBeDisabled();
+});
+
+test("T8-E: The score auto-reveals once every check-in is done", async ({ page }) => {
+  await gotoGHScore(page, undefined, seedEveryGHAnswer(SECURE_ID_STR));
+
+  // No Generate button was ever tapped — the ring already carries the number.
+  await expect(page.getByTestId("gh-progress")).toContainText("All check-ins complete");
+  await expect(page.getByTestId("gh-tier")).toBeVisible();
+  await expect(page.getByTestId("gh-score-value")).toHaveText(/^\d+$/);
+  await expect(page.getByTestId("gh-generate")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Generate/i })).toHaveCount(0);
+});

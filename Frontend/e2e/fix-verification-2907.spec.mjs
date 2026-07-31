@@ -13,6 +13,7 @@
 // Every stub is scoped to the backend origin. A broader glob would also match
 // the app's own Vite module URLs and break the module graph.
 import { test, expect } from "@playwright/test";
+import { unlockRestoredSession } from "./helpers/unlock.mjs";
 
 const BACKEND = "https://gloobal-pay.onrender.com";
 const SYMBOLS = ["−", "+", "×", "=", "○", "□", "●", "■"];
@@ -152,6 +153,8 @@ async function gotoDashboard(page, overrides, sessionUser = USER) {
     );
   }, sessionUser);
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  // A restored session now opens the lock screen, not the dashboard.
+  await unlockRestoredSession(page);
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
 }
 
@@ -206,8 +209,6 @@ test('T1-B: Registration Gloobal ID card carries a REGISTER badge', async ({ pag
   await gotoRegistrationSecureId(page);
   const badge = page.getByTestId("secureid-badge");
   await expect(badge).toBeVisible();
-  // The visible word rotates, so the stable accessible name is what is
-  // asserted — catching the cycle mid-turn would otherwise read "Id".
   await expect(badge).toHaveAttribute("data-badge-mode", "register");
   await expect(badge).toHaveAttribute("aria-label", "Register · Gloobal ID");
 });
@@ -316,6 +317,8 @@ test("T4-D: The balance is masked again after a reload", async ({ page }) => {
   await expect(page.getByTestId("balance-amount")).toContainText("5,000.00");
 
   await page.reload({ waitUntil: "domcontentloaded" });
+  // A reload re-enters through the lock screen, same as a real relaunch.
+  await unlockRestoredSession(page);
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("balance-amount")).toContainText("•••••••");
 });

@@ -5,8 +5,15 @@
 // so any remount (a plain page reload, a PWA relaunch, a service-worker
 // update reload) reset the app to the phone screen — experienced as
 // "it logs me out on refresh" / "it auto-logs-out". These tests reload
-// mid-session and assert the dashboard is restored, and that an explicit
+// mid-session and assert the session is restored, and that an explicit
 // logout is NOT restored.
+//
+// Updated 2026-07-31: a restored session now reopens on the lock screen
+// ("Verify it's you") rather than the dashboard — restoring *which*
+// account is signed in is not the same as proving it is still the same
+// person holding the phone. "Restored" below therefore means "reaches the
+// lock screen naming this account", and the dashboard assertions moved
+// behind a PIN unlock.
 import { test, expect } from "@playwright/test";
 
 const BACKEND = "https://gloobal-pay.onrender.com";
@@ -27,6 +34,7 @@ async function mockBackend(page) {
     if (u.includes("/api/register-symbol")) return r.fulfill(json({ user: USER }, 201));
     if (u.includes("/api/pin/set")) return r.fulfill(json({ user: USER }));
     if (u.includes("/api/login")) return r.fulfill(json({ user: USER }));
+    if (u.includes("/api/pin/verify")) return r.fulfill(json({ verified: true }));
     if (u.includes("/api/profile/")) return r.fulfill(json({ user: USER }));
     if (u.includes("/api/transactions/history/")) return r.fulfill(json({ success: true, transactions: [], count: 0 }));
     return r.fulfill(json({}));
@@ -58,28 +66,41 @@ async function registerToDashboard(page) {
   await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
 }
 
+/** Unlocks the lock screen with the PIN and waits for the dashboard. */
+async function unlockWithPin(page) {
+  await expect(page.getByText("Verify it's you")).toBeVisible({ timeout: 30_000 });
+  await digits(page, PIN);
+  await page.getByRole("button", { name: "Log in", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
+}
+
 test.describe("session persistence", () => {
   test.beforeEach(async ({ page }) => {
     await mockBackend(page);
   });
 
-  test("dashboard survives a page reload", async ({ page }) => {
+  test("the session survives a page reload and reopens on the lock screen", async ({ page }) => {
     await registerToDashboard(page);
 
     const stored = await page.evaluate(() => localStorage.getItem("gloobal.session.v1"));
     expect(stored).toContain(SECURE_ID.join(""));
 
     await page.reload({ waitUntil: "domcontentloaded" });
-    // The bug: this used to show the phone screen.
-    await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
+    // The original bug: this used to show the phone screen, throwing away
+    // the session entirely. It must not do that — but it must not hand
+    // over the dashboard either.
+    await expect(page.getByTestId("reauth-screen")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole("button", { name: /Phone number/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Profile", exact: true })).toHaveCount(0);
+
+    await unlockWithPin(page);
   });
 
-  test("dashboard survives repeated reloads", async ({ page }) => {
+  test("the session survives repeated reloads", async ({ page }) => {
     await registerToDashboard(page);
     for (let i = 0; i < 3; i++) {
       await page.reload({ waitUntil: "domcontentloaded" });
-      await expect(page.getByRole("button", { name: "Profile", exact: true })).toBeVisible({ timeout: 30_000 });
+      await unlockWithPin(page);
     }
   });
 
