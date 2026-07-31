@@ -475,9 +475,20 @@ test("T7-C: The rows either side of them are untouched", async ({ page }) => {
 });
 
 // ═══ TASK 8 — new GH Score component ═══════════════════════════════════════
-// GHScore_jsx__1_.txt is not in the repo, on the Desktop, or in Downloads.
-// These stay skipped until the file arrives — a passing check written against
+// Still blocked on 2026-07-31. GHScore_jsx__1_.txt is not in the repo, on the
+// Desktop, or anywhere under the user profile — searched again this session.
+//
+// Four of these five describe behaviour the component already in the repo
+// has, or has been given since: the ring, the four pillars, the permanent
+// Finance lock, and the auto-revealing score are all covered by real checks
+// in fix-verification-3107.spec.mjs (T3-A, T3-B, T3-D, T3-E) and by GH-A..F
+// in fix-verification-2807.spec.mjs. They are left skipped *here* because
+// this block exists to verify the ported file, and a check written against
 // the component that is already there would say nothing about the new one.
+//
+// T8-C is the genuinely missing feature: nothing in the app has a colour
+// wheel, and what it recolours is not specified anywhere but the undelivered
+// file.
 
 test.skip("T8-A: GH Score categories screen shows the segmented ring", async () => {});
 test.skip("T8-B: All four pillars are visible", async () => {});

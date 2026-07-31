@@ -208,9 +208,14 @@ test("GH-D: Finance item locks after answering", async ({ page }) => {
   await expect(page.getByTestId("gh-item-finance-budget")).toBeDisabled();
 });
 
-test("GH-E: Generate Score button is disabled until all check-ins answered", async ({ page }) => {
+// Updated 2026-07-31: the "Generate Score" button is gone. The score is
+// derived from the answers, so there was nothing to generate — it now
+// reveals itself when the last check-in lands, and until then the only
+// thing on screen is the progress count.
+test("GH-E: no Generate button, and progress is shown until every check-in is answered", async ({ page }) => {
   await gotoGHScore(page);
-  await expect(page.getByTestId("gh-generate")).toBeDisabled();
+  await expect(page.getByTestId("gh-generate")).toHaveCount(0);
+  await expect(page.getByTestId("gh-view-score")).toHaveCount(0);
   await expect(page.getByTestId("gh-progress")).toContainText("0 of 12");
 });
 

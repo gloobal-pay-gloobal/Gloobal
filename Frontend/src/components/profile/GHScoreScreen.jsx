@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Check,
@@ -383,6 +383,27 @@ export function GHScoreScreen({ symbolId, onClose }) {
   const canGenerate = answered === ghTotalQuestions;
   const tier = ghTier(overall);
 
+  // The score reveals itself the moment the last check-in lands. There used
+  // to be a "Generate Score" button here, which was a button that computed
+  // nothing — the score was already derived from the answers and already on
+  // the gauge above it. All it did was make the person ask for a number the
+  // app had.
+  //
+  // The ref is what stops it becoming a trap: after "Back to check-ins" the
+  // state is still complete, so without it every render would bounce
+  // straight back to the result. One reveal per completion run; answering
+  // tomorrow's rotated questions re-arms it.
+  const autoRevealed = useRef(false);
+  useEffect(() => {
+    if (!canGenerate) {
+      autoRevealed.current = false;
+      return;
+    }
+    if (autoRevealed.current) return;
+    autoRevealed.current = true;
+    setGhScreen("result");
+  }, [canGenerate]);
+
   const ghOpenCategory = (category) => {
     setGhCategory(category);
     setGhScreen("items");
@@ -493,26 +514,29 @@ export function GHScoreScreen({ symbolId, onClose }) {
           })}
         </div>
 
-        <button
-          type="button"
-          data-testid="gh-generate"
-          disabled={!canGenerate}
-          onClick={() => setGhScreen("result")}
-          className="v2-tap"
-          style={{
-            border: "none",
-            borderRadius: T.radiusMd,
-            padding: "15px 0",
-            fontSize: 14,
-            fontWeight: 800,
-            color: canGenerate ? "#fff" : T.inkFaint,
-            background: canGenerate ? T.gradButton : T.line,
-            boxShadow: canGenerate ? "0 8px 20px rgba(124,58,237,0.32)" : "none",
-            cursor: canGenerate ? "pointer" : "not-allowed",
-          }}
-        >
-          {canGenerate ? "Generate Score" : `Generate Score · ${answered}/${ghTotalQuestions}`}
-        </button>
+        {/* Once every pillar is done this screen is reachable again only by
+            coming back from the result, so the way back to the score has to
+            stay in reach. */}
+        {canGenerate && (
+          <button
+            type="button"
+            data-testid="gh-view-score"
+            onClick={() => setGhScreen("result")}
+            className="v2-tap"
+            style={{
+              border: `1px solid ${T.line}`,
+              borderRadius: T.radiusMd,
+              background: T.surface,
+              padding: "13px 0",
+              fontSize: 13,
+              fontWeight: 800,
+              color: T.accent,
+              cursor: "pointer",
+            }}
+          >
+            View your score
+          </button>
+        )}
 
         <p style={{ margin: "0 2px", fontSize: 11.5, color: T.inkFaint, lineHeight: 1.5 }}>
           Self, Community, and Environment check-ins refresh with a new question every day. Finance
