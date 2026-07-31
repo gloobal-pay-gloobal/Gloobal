@@ -1942,17 +1942,22 @@ function DashboardScreenBase({
 
         {activeTab === "accounts" && (
           <div style={{ padding: "12px 18px 30px", display: "flex", flexDirection: "column", gap: 22 }}>
-            {/* Four account tiles — same square, ambient-field tile shape
-                as the dashboard's Send / Add Bank / Scanner / Receive
-                grid. Locks follow the red/green service system: Coin is
-                still red-locked; Bank, PayLater, and Linked Banks are
-                live. */}
+            {/* The account tiles — same square, ambient-field tile shape as
+                the dashboard's Send / Add Bank / Scanner / Receive grid.
+                Locks follow the red/green service system: Coin is still
+                red-locked; Bank, PayLater, My Assets, and Linked Banks are
+                live.
+
+                Order is the list itself, so changing it is a one-line
+                move. Gloobal's own accounts come first, in the order the
+                founder asked for — Bank, PayLater, Coin — with My Assets
+                after them and external linked banks always last. */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
               {[
                 { key: "gbank", label: "Gloobal Bank", locked: false, onClick: () => showToast("Gloobal Bank — your primary account") },
-                { key: "gassets", label: "My Assets", locked: false, onClick: () => setShowMyAssets(true) },
-                { key: "gcoin", label: "Gloobal Coin", locked: true, onClick: () => showToast("Locked until live APIs connect") },
                 { key: "gpaylater", label: "PayLater", locked: false, onClick: () => setShowPayLater(true) },
+                { key: "gcoin", label: "Gloobal Coin", locked: true, onClick: () => showToast("Locked until live APIs connect") },
+                { key: "gassets", label: "My Assets", locked: false, onClick: () => setShowMyAssets(true) },
                 { key: "linked", label: "Linked Banks", locked: false, onClick: onOpenBank },
               ].map(({ key, label, locked, onClick }) => (
                 <div key={key} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
