@@ -642,6 +642,29 @@ function GloobalId() {
   // unlocking is only ever "prove you are the person who left this device
   // signed in" — no Secure ID entry, no country picker, no OTP.
 
+  // The lock screen names an account using nothing but the persisted blob.
+  // If that blob ever drifts from the account the backend actually has,
+  // someone unlocks while looking at an ID that isn't theirs and nothing
+  // downstream notices — every later call just passes the same wrong
+  // symbolId along. This is the tripwire for that: once an unlock has
+  // succeeded, ask the backend who this ID belongs to and say so loudly if
+  // the two disagree. Fire-and-forget and never blocking — a failed lookup
+  // is not evidence of a mismatch, and must not hold up the dashboard.
+  const assertSessionMatchesProfile = async (symbolId) => {
+    try {
+      const profile = await getProfile(symbolId);
+      const backendSymbolId = profile?.symbolId;
+      if (backendSymbolId && backendSymbolId !== symbolId) {
+        console.error(
+          `[gloobal] symbolId mismatch: the restored session says ${symbolId}, ` +
+            `GET /api/profile says ${backendSymbolId}. The lock screen named the wrong account.`
+        );
+      }
+    } catch {
+      // Offline, cold start, 404 — no answer at all, so nothing to assert.
+    }
+  };
+
   // Passkey unlock. Fires automatically on mount when this device enrolled
   // one, and again on every tap of Face ID / Fingerprint. A failure is not
   // a dead end: the error is shown and the PIN pad below stays live.
@@ -660,6 +683,7 @@ function GloobalId() {
       setReauthStatus(null);
       setReauthPin("");
       recordLastLogin(symbolId);
+      assertSessionMatchesProfile(symbolId);
       flipTo("dashboard");
     } catch (err) {
       // Cancelled, declined, timed out, or unsupported — all land here and
@@ -684,6 +708,7 @@ function GloobalId() {
       setReauthBusy(false);
       setReauthPin("");
       recordLastLogin(symbolId);
+      assertSessionMatchesProfile(symbolId);
       flipTo("dashboard");
     } catch (err) {
       setReauthBusy(false);
@@ -1202,13 +1227,18 @@ function GloobalId() {
         </button>
       )}
 
-      {/* Back navigation for the two steps that previously had none:
-          Secure ID goes back to the OTP step it came from, and Referral
-          goes back to the Secure ID step. Both sit opposite the info
-          corner so neither control crowds the other. */}
-      {(stage === "secureId" || stage === "referral") && (
+      {/* Back navigation for the steps that previously had none: OTP goes
+          back to the phone step, Secure ID goes back to the OTP step it
+          came from, and Referral goes back to the Secure ID step. All sit
+          opposite the info corner so neither control crowds the other.
+          None of them clears the session — going back a step is navigation,
+          never a logout. */}
+      {(stage === "otp" || stage === "secureId" || stage === "referral") && (
         <button
           onClick={() => {
+            // Same destination as the card's own "Edit number" link; this
+            // is the labelled Back control for people who look for one.
+            if (stage === "otp") return flipTo("phone");
             if (stage === "referral") return flipTo("secureId");
             // Registration reached this card from the OTP step, so that's
             // where back belongs. A login attempt never passed through
@@ -1775,7 +1805,21 @@ function GloobalId() {
                 stay fully visible together on one screen. */}
             {stage === "secureId" && (!isLoginAttempt || loginEntryMode === "id") && (
               <div style={{ marginTop: 32, position: "relative", zIndex: 1, width: "100%" }}>
-                <SymbolDialPad value={secureId} onChange={setSecureId} length={SECURE_ID_LENGTH} />
+                {/* The dial is a two-sided coin: idle for a moment and it
+                    flips over to a Gloobal logo face. That flip is off on
+                    the registration face. Creating an ID is the one screen
+                    where the mark is pure decoration — the wordmark above
+                    the card and the REGISTER badge on it already say whose
+                    app this is — and a dial that turns into a logo while
+                    someone is part-way through choosing twelve symbols
+                    reads as the keypad disappearing. The login face keeps
+                    it. */}
+                <SymbolDialPad
+                  value={secureId}
+                  onChange={setSecureId}
+                  length={SECURE_ID_LENGTH}
+                  showLogo={isLoginAttempt}
+                />
               </div>
             )}
 

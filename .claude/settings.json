@@ -5,7 +5,7 @@
       "Bash(rm -rf ~)",
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
-      "Bash(mongosh --eval db.dropDatabase():*)",
+      "Bash(mongosh --eval db.dropDatabase*)",
       "Bash(mongosh --eval db.*drop*:*)",
       "Bash(curl -X POST https://api.stripe.com:*)",
       "Bash(curl -X POST https://api.twilio.com:*)",

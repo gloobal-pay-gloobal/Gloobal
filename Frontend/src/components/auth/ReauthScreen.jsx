@@ -26,6 +26,20 @@ import { PinScreenHeader, PinChipCard } from "./PinScreenShell";
 
 const PIN_LENGTH = 6;
 const VISIBLE_ID_SYMBOLS = 4;
+const MASKED_TAIL_LENGTH = 8;
+
+// The character standing in for a hidden symbol. It must not be one of the
+// eight Gloobal Symbols, and this is the whole bug it fixes: the mask used
+// to be "●", which is the *dot* symbol — a legal part of every Gloobal ID.
+// An account whose real ID was −+×=○□●■−+×= therefore rendered here as
+// −+×=●●●●●●●●, which is not a masked ID at all but a different, perfectly
+// valid-looking one. The founder read it as exactly that and reported the
+// lock screen was naming the wrong account.
+//
+// "•" (U+2022 BULLET) is the same stand-in SymbolChipRow already uses for
+// every other masked code in the app, so the lock screen now hides symbols
+// the way the rest of the app does.
+const MASK_CHAR = "•";
 
 // Shows enough of the ID to confirm "yes, that's my account" and no more.
 // The tail length is fixed rather than derived from the real ID's length,
@@ -33,7 +47,7 @@ const VISIBLE_ID_SYMBOLS = 4;
 export function maskSymbolId(symbolId) {
   const id = String(symbolId || "");
   if (!id) return "";
-  return id.slice(0, VISIBLE_ID_SYMBOLS) + "●●●●●●●●";
+  return id.slice(0, VISIBLE_ID_SYMBOLS) + MASK_CHAR.repeat(MASKED_TAIL_LENGTH);
 }
 
 // Android exposes a settings deep link; nothing equivalent exists on iOS
@@ -89,7 +103,14 @@ export function ReauthScreen({
         fontFamily: T.fontBody,
       }}
     >
-      <PinScreenHeader onBack={onDifferentAccount} title="Verify it's you" />
+      {/* No back button. There is nowhere behind this screen: it is the
+          first thing a restored session sees, and the only ways out are
+          authenticating or the explicit "Sign in with a different account"
+          link at the bottom, which clears the session on purpose. The
+          header's arrow used to be wired straight to that link, so tapping
+          back read as "go back one step" and silently logged the person
+          out instead. */}
+      <PinScreenHeader title="Verify it's you" />
 
       <div
         style={{

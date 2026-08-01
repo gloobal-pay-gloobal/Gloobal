@@ -270,7 +270,14 @@ test("T2-B: the lock screen names the account without spelling out the ID", asyn
   const shown = (await masked.innerText()).trim();
   // First four symbols, then dots — enough to recognise, not enough to copy.
   expect(shown.startsWith(SECURE_ID_STR.slice(0, 4))).toBe(true);
-  expect(shown).toContain("●");
+  // The tail is masked with "•", not "●". This assertion used to require
+  // "●" and so pinned the 2026-08-01 bug in place: "●" is the dot symbol, a
+  // legal character in a Gloobal ID, which made the masked string read as a
+  // different real ID. It was weak as well as wrong — SECURE_ID_STR itself
+  // contains "●", so the old check passed even against an unmasked ID.
+  // See fix-verification-0108 B1-A for the full character-class check.
+  expect(shown).toContain("•");
+  expect(shown).not.toContain("●");
   expect(shown).not.toBe(SECURE_ID_STR);
 });
 
