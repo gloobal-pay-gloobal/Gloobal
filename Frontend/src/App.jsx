@@ -1805,7 +1805,21 @@ function GloobalId() {
                 stay fully visible together on one screen. */}
             {stage === "secureId" && (!isLoginAttempt || loginEntryMode === "id") && (
               <div style={{ marginTop: 32, position: "relative", zIndex: 1, width: "100%" }}>
-                <SymbolDialPad value={secureId} onChange={setSecureId} length={SECURE_ID_LENGTH} />
+                {/* The dial is a two-sided coin: idle for a moment and it
+                    flips over to a Gloobal logo face. That flip is off on
+                    the registration face. Creating an ID is the one screen
+                    where the mark is pure decoration — the wordmark above
+                    the card and the REGISTER badge on it already say whose
+                    app this is — and a dial that turns into a logo while
+                    someone is part-way through choosing twelve symbols
+                    reads as the keypad disappearing. The login face keeps
+                    it. */}
+                <SymbolDialPad
+                  value={secureId}
+                  onChange={setSecureId}
+                  length={SECURE_ID_LENGTH}
+                  showLogo={isLoginAttempt}
+                />
               </div>
             )}
 
