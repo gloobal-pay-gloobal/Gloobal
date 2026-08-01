@@ -213,12 +213,30 @@ test.describe("Screen 5 — Gloobal ID creation", () => {
     expect(b.y).toBeLessThan(100);
   });
 
-  test("2c: the dial's brand mark is a restrained watermark", async ({ page }) => {
+  // This used to assert the creation dial's mark was a restrained watermark
+  // (60–110px). The 2026-08-01 founder pass asked for that mark to come off
+  // the creation screen altogether, which is the opposite requirement on the
+  // same element — so the size check moved to the login dial below, where the
+  // mark still lives, and this one now polices the removal instead.
+  test("2c: the creation dial carries no brand mark at all", async ({ page }) => {
     await gotoSecureIdCreation(page);
+    await expect(page.locator('img[aria-hidden="true"]')).toHaveCount(0);
+  });
+});
+
+test.describe("Screen 5 (login face) — Secure ID dial", () => {
+  test("2c-login: the dial's brand mark is a restrained watermark", async ({ page }) => {
+    await gotoHome(page);
+    await page.getByRole("button", { name: /Flip to log in/i }).click();
+    await expect(page.getByRole("button", { name: "Symbol −", exact: true })).toBeVisible({ timeout: 30_000 });
+
     // The flip coin's back face carries the mark; it is in the DOM even
     // while the dial face is showing.
-    const mark = page.locator('img[aria-hidden="true"]').first();
-    const width = await mark.evaluate((el) => el.getBoundingClientRect().width || parseFloat(el.style.width));
+    const marks = page.locator('img[aria-hidden="true"]');
+    await expect(marks).toHaveCount(1);
+    const width = await marks
+      .first()
+      .evaluate((el) => el.getBoundingClientRect().width || parseFloat(el.style.width));
     // housingSize is 222px: the old 0.74 factor gave ~164px, the new 0.40
     // gives ~89px. Assert it landed nearer the latter.
     expect(width).toBeLessThan(110);
