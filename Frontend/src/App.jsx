@@ -1443,16 +1443,23 @@ function GloobalId() {
                     position: "absolute",
                     top: -11,
                     left: 16,
-                    background: T.surface,
-                    border: `1px solid ${T.line}`,
+                    // A filled purple pill, not purple text on white. The
+                    // outline version was the same colour but read as part of
+                    // the card's own chrome at 10px, and "the Register badge
+                    // is missing" came back four times against a badge that
+                    // was demonstrably on screen. Solid fill is the thing
+                    // that actually gets seen. Login and Register share this
+                    // block, so the two stay identical by construction.
+                    background: T.accent,
+                    border: `1px solid ${T.accent}`,
                     borderRadius: 7,
-                    padding: "3px 9px",
-                    fontSize: 10,
+                    padding: "4px 11px",
+                    fontSize: 11,
                     fontWeight: 800,
-                    letterSpacing: 0.4,
+                    letterSpacing: 0.6,
                     textTransform: "uppercase",
-                    color: T.accent,
-                    boxShadow: T.shadowCard,
+                    color: "#FFFFFF",
+                    boxShadow: T.shadowRaised,
                     minWidth: 44,
                     textAlign: "center",
                   }}

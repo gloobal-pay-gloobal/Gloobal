@@ -325,6 +325,29 @@ test('B3-C: Login secureId screen shows "LOGIN" badge (regression)', async ({ pa
   expect((await badge.textContent()).trim()).toBe(before);
 });
 
+test("B3-G: both badges are filled purple pills, not purple text on white", async ({ page }) => {
+  const read = () =>
+    page.getByTestId("secureid-badge").evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { bg: s.backgroundColor, color: s.color };
+    });
+
+  await gotoRegistrationSecureId(page);
+  const register = await read();
+
+  await gotoLoginSecureId(page);
+  const login = await read();
+
+  // T.accent (#7C3AED) filled, white text. The outline version was the same
+  // hue but read as card chrome at 10px, which is how "the REGISTER badge is
+  // missing" survived four rounds against a badge that was on screen.
+  expect(register.bg).toBe("rgb(124, 58, 237)");
+  expect(register.color).toBe("rgb(255, 255, 255)");
+
+  // Register is styled off the login badge because they are one block.
+  expect(login).toEqual(register);
+});
+
 test("B3-D: Gloobal logo is NOT visible on registration secureId screen", async ({ page }) => {
   await gotoRegistrationSecureId(page);
 
