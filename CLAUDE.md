@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | | Path |
 |---|---|
-| Repo root | `C:\Users\Chanchal Sharma\Desktop\Gloobal` |
-| Frontend | `C:\Users\Chanchal Sharma\Desktop\Gloobal\Frontend` |
-| Backend | `C:\Users\Chanchal Sharma\Desktop\Gloobal\Backend` |
+| Repo root | `D:\Desktop\Gloobal` |
+| Frontend | `D:\Desktop\Gloobal\Frontend` |
+| Backend | `D:\Desktop\Gloobal\Backend` |
 | Live frontend | https://gloobal.netlify.app |
 | Live backend | https://gloobal-pay.onrender.com |
 
