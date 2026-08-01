@@ -19,6 +19,12 @@ blob-report
 .playwright
 verify-shots
 
+# Face-recognition model weights (~13MB), copied out of node_modules by
+# scripts/copy-face-models.js on install/dev/build. They ship with the npm
+# package, so committing them would store the same bytes twice — once in
+# node_modules and once in every clone of this repo's history.
+public/models/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
