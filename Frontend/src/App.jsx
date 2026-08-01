@@ -1441,26 +1441,34 @@ function GloobalId() {
                   aria-label={isLoginAttempt ? "Login · Gloobal ID" : "Register · Gloobal ID"}
                   style={{
                     position: "absolute",
-                    top: -11,
+                    // Clear of the card entirely, in the empty space above
+                    // it, rather than straddling its top border. Sitting on
+                    // the border made the pill read as part of the card's
+                    // chrome; standing free above it, it reads as the label
+                    // for the step. -47 is the pill's own height (38.5px at
+                    // this type size) plus an 8px gap, so the card's border
+                    // never runs under it.
+                    top: -47,
                     left: 16,
                     // A filled purple pill, not purple text on white. The
                     // outline version was the same colour but read as part of
                     // the card's own chrome at 10px, and "the Register badge
                     // is missing" came back four times against a badge that
-                    // was demonstrably on screen. Solid fill is the thing
-                    // that actually gets seen. Login and Register share this
-                    // block, so the two stay identical by construction.
+                    // was demonstrably on screen. Solid fill at this size is
+                    // the thing that actually gets seen. Login and Register
+                    // share this block, so the two stay identical by
+                    // construction.
                     background: T.accent,
                     border: `1px solid ${T.accent}`,
-                    borderRadius: 7,
-                    padding: "4px 11px",
-                    fontSize: 11,
+                    borderRadius: 10,
+                    padding: "7px 18px",
+                    fontSize: 15,
                     fontWeight: 800,
-                    letterSpacing: 0.6,
+                    letterSpacing: 0.8,
                     textTransform: "uppercase",
                     color: "#FFFFFF",
                     boxShadow: T.shadowRaised,
-                    minWidth: 44,
+                    minWidth: 64,
                     textAlign: "center",
                   }}
                 >
