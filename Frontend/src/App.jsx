@@ -1227,13 +1227,18 @@ function GloobalId() {
         </button>
       )}
 
-      {/* Back navigation for the two steps that previously had none:
-          Secure ID goes back to the OTP step it came from, and Referral
-          goes back to the Secure ID step. Both sit opposite the info
-          corner so neither control crowds the other. */}
-      {(stage === "secureId" || stage === "referral") && (
+      {/* Back navigation for the steps that previously had none: OTP goes
+          back to the phone step, Secure ID goes back to the OTP step it
+          came from, and Referral goes back to the Secure ID step. All sit
+          opposite the info corner so neither control crowds the other.
+          None of them clears the session — going back a step is navigation,
+          never a logout. */}
+      {(stage === "otp" || stage === "secureId" || stage === "referral") && (
         <button
           onClick={() => {
+            // Same destination as the card's own "Edit number" link; this
+            // is the labelled Back control for people who look for one.
+            if (stage === "otp") return flipTo("phone");
             if (stage === "referral") return flipTo("secureId");
             // Registration reached this card from the OTP step, so that's
             // where back belongs. A login attempt never passed through

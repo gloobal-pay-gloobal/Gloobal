@@ -4,6 +4,13 @@ import { T } from "../../styles/theme";
 
 // The back button + title bar shared by PinScreen and LoginAuthScreen —
 // identical markup in both, just a different title string.
+//
+// `onBack` is optional. A screen that omits it gets no back button at all,
+// rather than one wired to something that only looks like going back. The
+// lock screen is the case that forced this: its arrow used to call
+// "sign in with a different account", so tapping back wiped the session and
+// signed the person out of an account they were part-way through
+// unlocking. A screen with no way back has to render no back control.
 export function PinScreenHeader({ onBack, title }) {
   return (
     <div
@@ -16,26 +23,28 @@ export function PinScreenHeader({ onBack, title }) {
         borderBottom: `1px solid ${T.line}`,
       }}
     >
-      <button
-        onClick={onBack}
-        style={{
-          width: 34,
-          height: 34,
-          borderRadius: "50%",
-          border: "none",
-          background: T.surfaceAlt,
-          fontSize: 18,
-          color: T.ink,
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flexShrink: 0,
-        }}
-        aria-label="Back"
-      >
-        ‹
-      </button>
+      {onBack && (
+        <button
+          onClick={onBack}
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: "50%",
+            border: "none",
+            background: T.surfaceAlt,
+            fontSize: 18,
+            color: T.ink,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+          aria-label="Back"
+        >
+          ‹
+        </button>
+      )}
       <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, fontFamily: T.fontDisplay }}>{title}</span>
     </div>
   );

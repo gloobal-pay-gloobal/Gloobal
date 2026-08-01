@@ -103,7 +103,14 @@ export function ReauthScreen({
         fontFamily: T.fontBody,
       }}
     >
-      <PinScreenHeader onBack={onDifferentAccount} title="Verify it's you" />
+      {/* No back button. There is nowhere behind this screen: it is the
+          first thing a restored session sees, and the only ways out are
+          authenticating or the explicit "Sign in with a different account"
+          link at the bottom, which clears the session on purpose. The
+          header's arrow used to be wired straight to that link, so tapping
+          back read as "go back one step" and silently logged the person
+          out instead. */}
+      <PinScreenHeader title="Verify it's you" />
 
       <div
         style={{
