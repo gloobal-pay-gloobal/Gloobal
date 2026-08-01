@@ -4,6 +4,7 @@ import { PhoneDialPad } from "../common/DialPads";
 import { FlagEmoji } from "../common/FlagComponents";
 import { T } from "../../styles/theme";
 import { PinScreenHeader, PinChipCard } from "./PinScreenShell";
+import { faceStatus } from "../../services/api/faceApi";
 
 // The lock screen. Shown on every app open, relaunch, and refresh where a
 // session was restored — the dashboard is never reachable from cold
@@ -66,12 +67,29 @@ export function ReauthScreen({
   onSubmitPin,
   onBiometric,
   onDifferentAccount,
+  onFaceVerify,
   scanning,
   error,
   status,
 }) {
   const [revealed, setRevealed] = useState(false);
   const autoFired = useRef(false);
+  // Whether this account has a camera-based face enrolled. Probed rather
+  // than assumed, so the option is not offered to someone who would only be
+  // told "no face is enrolled" after granting camera access.
+  const [faceEnrolled, setFaceEnrolled] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const symbolId = user?.symbolId;
+    if (!symbolId || !onFaceVerify) return undefined;
+    faceStatus(symbolId).then((s) => {
+      if (!cancelled) setFaceEnrolled(Boolean(s?.enrolled) && !s?.locked);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.symbolId, onFaceVerify]);
 
   const hasPin = user?.hasPin !== false;
   // Only the total absence of both routes is a dead end. An enrolled
@@ -251,6 +269,38 @@ export function ReauthScreen({
         )}
         {error && (
           <p style={{ margin: 0, textAlign: "center", color: "#dc2626", fontSize: 12, fontWeight: 700 }}>{error}</p>
+        )}
+
+        {/* Camera face check. Labelled "Scan my face" rather than "Face ID"
+            on purpose: the two buttons above are the platform passkey, which
+            Apple also calls Face ID, and two controls with one name on a
+            single screen is how people end up unable to say which one
+            failed. */}
+        {faceEnrolled && onFaceVerify && (
+          <button
+            type="button"
+            data-testid="reauth-face-button"
+            onClick={onFaceVerify}
+            disabled={scanning}
+            className="v2-tap"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 18px",
+              borderRadius: 999,
+              border: `1.5px solid ${T.line}`,
+              background: T.surface,
+              color: T.accent,
+              fontSize: 12.5,
+              fontWeight: 800,
+              cursor: scanning ? "default" : "pointer",
+              boxShadow: T.shadowCard,
+            }}
+          >
+            <ScanFace size={17} />
+            Scan my face
+          </button>
         )}
 
         <button

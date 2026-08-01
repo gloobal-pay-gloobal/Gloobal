@@ -27,6 +27,16 @@ const PRECACHE_EXTENSIONS = new Set([
 // ever be precached (the service worker script itself).
 const SKIP = new Set(["sw.js"]);
 
+// Whole trees that must never be precached regardless of extension.
+//
+// /models/ holds the ~13MB of face-recognition weights. They are already
+// excluded by extension (.bin and .json are not in PRECACHE_EXTENSIONS), but
+// only by accident of that list — adding ".json" for some unrelated reason
+// would quietly add 13MB to every PWA install and to every update. They are
+// fetched on demand the first time someone opens Face ID, and cached by the
+// runtime handler after that.
+const SKIP_PREFIXES = ["/models/"];
+
 function walk(dir) {
   const out = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -55,6 +65,7 @@ function main() {
     const urlPath = "/" + rel.join("/");
     const name = rel[rel.length - 1];
     if (SKIP.has(name)) continue;
+    if (SKIP_PREFIXES.some((prefix) => urlPath.startsWith(prefix))) continue;
     if (!PRECACHE_EXTENSIONS.has(extname(name))) continue;
     manifestEntries.push(urlPath);
   }

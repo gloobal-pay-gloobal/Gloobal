@@ -11,7 +11,10 @@ const Transaction = require('./models/Transaction');
 const LedgerEntry = require('./models/LedgerEntry');
 const Referral = require('./models/Referral');
 const AssetSeed = require('./models/AssetSeed');
+const FaceTemplate = require('./models/FaceTemplate');
 const { nationalNumberFrom } = require('./constants/dialCodes');
+const faceCrypto = require('./lib/faceCrypto');
+const { compareDescriptors, matchThreshold } = require('./lib/faceMatch');
 
 
 // The prototype float every account opens with. Kept here rather than only on
@@ -1689,6 +1692,247 @@ app.patch('/api/creator/cashback-rate', async (req, res) => {
   } catch (error) {
     console.error('Creator cashback rate error:', error);
     return res.status(500).json({ message: 'Server error while saving your cashback rate.' });
+  }
+});
+
+// ─── Face verification ──────────────────────────────────────────────────────
+//
+// An ADDITIONAL factor. It does not replace the passkey or the PIN, and no
+// route below will ever sign anyone in on its own.
+//
+// That is a deliberate limit, not an unfinished one. The descriptor is
+// computed in the browser, so a modified client can post a vector it obtained
+// some other way — the server cannot tell a real camera from a good liar.
+// Scoring server-side (never trusting a client-sent "matched: true") and
+// gating on liveness raise the cost of that attack; they do not remove it.
+// WebAuthn does remove it, because the private key never leaves the secure
+// enclave, which is exactly why the passkey flow stays as the primary factor.
+//
+// What is stored: an encrypted descriptor. What is never stored, sent, or
+// logged: the captured frames.
+
+const FACE_MAX_FAILED_ATTEMPTS = 5;
+const FACE_LOCKOUT_MS = 10 * 60 * 1000;
+// Guards against a caller posting a 3-float "descriptor" that would match
+// almost anything, or a multi-megabyte array as a memory-exhaustion probe.
+const FACE_MIN_DIMENSIONS = 64;
+const FACE_MAX_DIMENSIONS = 2048;
+
+/** Validates the descriptor payload shared by enrol and verify. */
+function readFacePayload(body) {
+  const symbolId = String(body?.symbolId || '').trim();
+  const descriptor = body?.descriptor;
+  const model = String(body?.model || '').trim();
+
+  if (!symbolId) return { error: 'Gloobal ID is required.' };
+  if (!model) return { error: 'A model tag is required so templates stay comparable.' };
+  if (!Array.isArray(descriptor)) return { error: 'descriptor must be an array of numbers.' };
+  if (descriptor.length < FACE_MIN_DIMENSIONS || descriptor.length > FACE_MAX_DIMENSIONS) {
+    return { error: `descriptor must have between ${FACE_MIN_DIMENSIONS} and ${FACE_MAX_DIMENSIONS} values.` };
+  }
+  if (!descriptor.every((n) => Number.isFinite(n))) {
+    return { error: 'descriptor must contain only finite numbers.' };
+  }
+  return { symbolId, descriptor, model, livenessPassed: Boolean(body?.livenessPassed) };
+}
+
+/** 503 when no encryption key is configured — never a plaintext fallback. */
+function faceUnavailable(res) {
+  return res.status(503).json({
+    message: 'Face verification is not configured on this server.',
+  });
+}
+
+// POST /api/face/enroll — records the reference face for an account.
+app.post('/api/face/enroll', async (req, res) => {
+  try {
+    if (!faceCrypto.isConfigured()) return faceUnavailable(res);
+
+    const payload = readFacePayload(req.body);
+    if (payload.error) return res.status(400).json({ message: payload.error });
+
+    // An enrolment taken from a photograph becomes the reference every later
+    // check is measured against, so the liveness gate is mandatory here even
+    // though it is advisory on verify.
+    if (!payload.livenessPassed) {
+      return res.status(400).json({
+        message: 'Enrolment needs a live capture. Blink when prompted and try again.',
+      });
+    }
+
+    const user = await User.findOne({ symbolId: payload.symbolId });
+    if (!user) return res.status(404).json({ message: 'No account found for this Gloobal ID.' });
+
+    const envelope = faceCrypto.encryptDescriptor(payload.descriptor);
+
+    // Re-enrolling replaces the template outright and clears any lockout —
+    // the usual reason to re-enrol is that the old one stopped working.
+    await FaceTemplate.findOneAndUpdate(
+      { userId: user._id },
+      {
+        userId: user._id,
+        ciphertext: envelope.ciphertext,
+        iv: envelope.iv,
+        authTag: envelope.authTag,
+        dimensions: envelope.dimensions,
+        model: payload.model,
+        livenessPassed: true,
+        failedAttempts: 0,
+        lockedUntil: null,
+        enrolledAt: new Date(),
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    return res.status(201).json({
+      enrolled: true,
+      model: payload.model,
+      dimensions: envelope.dimensions,
+    });
+  } catch (error) {
+    if (error instanceof faceCrypto.FaceCryptoUnavailableError) return faceUnavailable(res);
+    console.error('Face enroll error:', error);
+    return res.status(500).json({ message: 'Server error while enrolling your face.' });
+  }
+});
+
+// POST /api/face/verify — scores a fresh capture against the enrolled template.
+app.post('/api/face/verify', async (req, res) => {
+  try {
+    if (!faceCrypto.isConfigured()) return faceUnavailable(res);
+
+    const payload = readFacePayload(req.body);
+    if (payload.error) return res.status(400).json({ message: payload.error });
+
+    const user = await User.findOne({ symbolId: payload.symbolId });
+    if (!user) return res.status(404).json({ message: 'No account found for this Gloobal ID.' });
+
+    const template = await FaceTemplate.findOne({ userId: user._id });
+    if (!template) {
+      return res.status(404).json({ message: 'No face is enrolled for this account.' });
+    }
+
+    if (template.lockedUntil && template.lockedUntil > new Date()) {
+      return res.status(423).json({
+        message: 'Face verification is temporarily locked. Use your PIN or passkey.',
+        lockedUntil: template.lockedUntil,
+      });
+    }
+
+    // Descriptors from different models share no coordinate system. Scoring
+    // across them would produce a confident number that means nothing, so
+    // this is an error rather than a failed match.
+    if (template.model !== payload.model) {
+      return res.status(409).json({
+        message: 'Enrolled face was recorded with a different model. Please enrol again.',
+        enrolledModel: template.model,
+      });
+    }
+    if (template.dimensions !== payload.descriptor.length) {
+      return res.status(409).json({
+        message: 'Enrolled face has a different descriptor size. Please enrol again.',
+      });
+    }
+
+    const enrolled = faceCrypto.decryptDescriptor({
+      ciphertext: template.ciphertext,
+      iv: template.iv,
+      authTag: template.authTag,
+    });
+
+    const result = compareDescriptors(payload.descriptor, enrolled);
+
+    // A spoofed capture is not scored at all. Refusing before comparison
+    // means a held-up photo cannot accumulate near-threshold information
+    // about the stored template.
+    if (!payload.livenessPassed) {
+      return res.status(400).json({
+        verified: false,
+        reason: 'liveness',
+        message: 'Could not confirm a live face. Blink when prompted and try again.',
+      });
+    }
+
+    if (!result.matched) {
+      template.failedAttempts += 1;
+      if (template.failedAttempts >= FACE_MAX_FAILED_ATTEMPTS) {
+        template.lockedUntil = new Date(Date.now() + FACE_LOCKOUT_MS);
+      }
+      await template.save();
+
+      return res.status(401).json({
+        verified: false,
+        reason: 'no_match',
+        message: 'That face did not match the one enrolled for this account.',
+        attemptsRemaining: Math.max(0, FACE_MAX_FAILED_ATTEMPTS - template.failedAttempts),
+      });
+    }
+
+    template.failedAttempts = 0;
+    template.lockedUntil = null;
+    template.lastVerifiedAt = new Date();
+    await template.save();
+
+    // The score is returned for the client's own telemetry, never the
+    // descriptor itself.
+    return res.status(200).json({
+      verified: true,
+      similarity: result.similarity,
+      threshold: result.threshold,
+    });
+  } catch (error) {
+    if (error instanceof faceCrypto.FaceCryptoUnavailableError) return faceUnavailable(res);
+    console.error('Face verify error:', error);
+    return res.status(500).json({ message: 'Server error while verifying your face.' });
+  }
+});
+
+// GET /api/face/status/:symbolId — is a face enrolled, and is it usable now?
+app.get('/api/face/status/:symbolId', async (req, res) => {
+  try {
+    const cleanSymbolId = String(req.params.symbolId || '').trim();
+    if (!cleanSymbolId) return res.status(400).json({ message: 'Gloobal ID is required.' });
+
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+    if (!user) return res.status(404).json({ message: 'No account found for this Gloobal ID.' });
+
+    const template = await FaceTemplate.findOne({ userId: user._id });
+    const locked = Boolean(template?.lockedUntil && template.lockedUntil > new Date());
+
+    return res.status(200).json({
+      enrolled: Boolean(template),
+      locked,
+      model: template?.model || null,
+      enrolledAt: template?.enrolledAt || null,
+      lastVerifiedAt: template?.lastVerifiedAt || null,
+      configured: faceCrypto.isConfigured(),
+      threshold: matchThreshold(),
+    });
+  } catch (error) {
+    console.error('Face status error:', error);
+    return res.status(500).json({ message: 'Server error while reading face status.' });
+  }
+});
+
+// DELETE /api/face/:symbolId — erases the enrolled template.
+//
+// Biometric data has to be deletable on request. Under India's DPDP Act this
+// is not a nice-to-have, and a face cannot be reissued if it leaks, so
+// "delete my face" must actually delete it rather than flag it inactive.
+app.delete('/api/face/:symbolId', async (req, res) => {
+  try {
+    const cleanSymbolId = String(req.params.symbolId || '').trim();
+    if (!cleanSymbolId) return res.status(400).json({ message: 'Gloobal ID is required.' });
+
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+    if (!user) return res.status(404).json({ message: 'No account found for this Gloobal ID.' });
+
+    const removed = await FaceTemplate.findOneAndDelete({ userId: user._id });
+
+    return res.status(200).json({ deleted: Boolean(removed) });
+  } catch (error) {
+    console.error('Face delete error:', error);
+    return res.status(500).json({ message: 'Server error while deleting your face data.' });
   }
 });
 

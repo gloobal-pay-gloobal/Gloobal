@@ -19,6 +19,11 @@ import { PhoneDialPad, SymbolDialPad } from "./components/common/DialPads";
 import { FlagEmoji, FlagSignShape } from "./components/common/FlagComponents";
 import { IdSuggestionsPanel, LastLoginBar } from "./components/common/GapPanels";
 import { AddBankScreen, DashboardScreen, GloobalCoverageScreen, PaymentReceiptScreen, SendMoneyScreen } from "./lazyScreens";
+// Lazy on purpose. Face ID pulls ~13MB of model weights the first time it
+// opens, and nobody who never touches it should pay for that on load.
+const FaceIdScreen = React.lazy(() =>
+  import("./components/auth/FaceIdScreen").then((m) => ({ default: m.FaceIdScreen }))
+);
 import { symbolForCountry } from "./constants/finance";
 import { ErrorBoundary } from "./pwa/ErrorBoundary";
 import { ScreenFallback } from "./pwa/ScreenFallback";
@@ -237,6 +242,11 @@ function GloobalId() {
   // continuing on to the Referral step.
   const [isLoginAttempt, setIsLoginAttempt] = useState(false);
   // --- Lock screen (restored session) ----------------------------------
+  // Face verification overlay: null, or { mode: "enroll" | "verify" }.
+  // An extra factor sitting beside the passkey and the PIN — never instead
+  // of them, so every screen that opens it keeps its other routes live.
+  const [faceScreen, setFaceScreen] = useState(null);
+  const [faceNotice, setFaceNotice] = useState(null);
   const [reauthPin, setReauthPin] = useState("");
   const [reauthError, setReauthError] = useState(null);
   const [reauthStatus, setReauthStatus] = useState(null);
@@ -2149,10 +2159,48 @@ function GloobalId() {
           onSubmitPin={handleReauthPin}
           onBiometric={handleReauthBiometric}
           onDifferentAccount={handleStartOver}
+          onFaceVerify={() => setFaceScreen({ mode: "verify" })}
           scanning={reauthBusy}
           error={reauthError}
           status={reauthStatus}
         />
+      )}
+
+      {/* Face verification. Rendered above whichever screen asked for it, so
+          dismissing it returns to a lock screen (or setup step) that still
+          has its PIN pad and passkey buttons exactly where they were. */}
+      {faceScreen && (
+        <ErrorBoundary>
+          <Suspense fallback={<ScreenFallback />}>
+            <FaceIdScreen
+              mode={faceScreen.mode}
+              symbolId={restoredSession?.user?.symbolId || registeredUser?.symbolId || secureId}
+              onBack={() => setFaceScreen(null)}
+              onSuccess={() => {
+                const wasEnroll = faceScreen.mode === "enroll";
+                setFaceScreen(null);
+                if (wasEnroll) {
+                  setFaceNotice("Face ID is set up.");
+                  return;
+                }
+                // A verified face on the lock screen unlocks the same way a
+                // correct PIN does — it is a second accepted proof, not a
+                // bypass of the account check.
+                const symbolId = restoredSession?.user?.symbolId;
+                if (symbolId) {
+                  recordLastLogin(symbolId);
+                  assertSessionMatchesProfile(symbolId);
+                }
+                flipTo("dashboard");
+              }}
+              onFailure={() => {
+                // Deliberately not a dead end: close the overlay and leave
+                // the PIN pad underneath untouched.
+                setFaceScreen(null);
+              }}
+            />
+          </Suspense>
+        </ErrorBoundary>
       )}
 
       {stage === "deviceSetup" && (

@@ -5,14 +5,16 @@
   "description": "Gloobal ID — a borderless identity and money app (production PWA build).",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build && node scripts/generate-sw.js",
+    "dev": "node scripts/copy-face-models.js && vite",
+    "build": "node scripts/copy-face-models.js && vite build && node scripts/generate-sw.js",
+    "postinstall": "node scripts/copy-face-models.js",
     "preview": "vite preview",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "test:e2e": "playwright test"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^13.3.0",
+    "@vladmandic/human": "^3.3.6",
     "country-flag-icons": "^1.6.20",
     "lucide-react": "^0.383.0",
     "react": "^18.3.1",
