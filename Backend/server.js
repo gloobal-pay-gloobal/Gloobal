@@ -11,6 +11,8 @@ const Transaction = require('./models/Transaction');
 const LedgerEntry = require('./models/LedgerEntry');
 const Referral = require('./models/Referral');
 const Interest = require('./models/Interest');
+const Product = require('./models/Product');
+const ProductService = require('./models/ProductService');
 const AssetSeed = require('./models/AssetSeed');
 const FaceTemplate = require('./models/FaceTemplate');
 const { nationalNumberFrom } = require('./constants/dialCodes');
@@ -888,6 +890,110 @@ app.get('/api/profile/:symbolId', async (req, res) => {
 
     return res.status(500).json({
       message: 'Server error while loading profile.'
+    });
+  }
+});
+
+// --- Product catalogue --------------------------------------------------
+//
+// The "Our Services" rows on the Gloobal Bank and Gloobal Coin screens,
+// and whether each product is live. Both used to be written into the app
+// bundle; changing a status meant a code edit and a deploy. They are rows
+// now, so a service goes live by editing one field in Atlas.
+
+// The starting state, seeded once into an empty collection. This is not
+// the source of truth after that first write — the database is. Editing
+// these constants will not change a deployment whose collection is already
+// populated, which is the point: the whole reason this exists is that
+// status should stop being a code change.
+//
+// Every claim here is checked against what the code actually does:
+//   Cashless   every transfer settles digitally, no cash leg anywhere
+//   Borderless Send Money resolves across countries and converts currency
+//   Taxless    there is no tax handling in this codebase at all
+//   Limitless  PROTOTYPE_TRANSACTION_MAX_AMOUNT caps every transfer
+const DEFAULT_PRODUCTS = [
+  { key: 'bank', live: true },
+  { key: 'coin', live: false }
+];
+
+const DEFAULT_PRODUCT_SERVICES = [
+  { product: 'bank', label: 'Cashless', status: 'live', note: 'Every transfer settles digitally', order: 0 },
+  { product: 'bank', label: 'Borderless', status: 'live', note: 'Send across currencies today', order: 1 },
+  { product: 'bank', label: 'Taxless', status: 'planned', note: 'No tax handling is built yet', order: 2 },
+  { product: 'bank', label: 'Limitless', status: 'planned', note: 'Transfers are still capped per payment', order: 3 },
+  { product: 'coin', label: 'Stable', status: 'planned', note: 'No peg or reserve exists yet', order: 0 },
+  { product: 'coin', label: 'Instant', status: 'planned', note: 'No settlement rail yet', order: 1 },
+  { product: 'coin', label: 'Borderless', status: 'planned', note: 'No settlement rail yet', order: 2 },
+  { product: 'coin', label: 'Backed', status: 'planned', note: 'No reserve is held yet', order: 3 }
+];
+
+// Runs once at boot. Uses insert-if-absent rather than upsert-with-values
+// so it can never overwrite an edit someone made in Atlas — a seed that
+// resets your data on every restart is a footgun, not a convenience.
+const seedProductCatalogue = async () => {
+  try {
+    await Promise.all(DEFAULT_PRODUCTS.map((doc) =>
+      Product.updateOne({ key: doc.key }, { $setOnInsert: doc }, { upsert: true })
+    ));
+    await Promise.all(DEFAULT_PRODUCT_SERVICES.map((doc) =>
+      ProductService.updateOne({ product: doc.product, label: doc.label }, { $setOnInsert: doc }, { upsert: true })
+    ));
+  } catch (error) {
+    // A failed seed must not stop the server booting. The app carries its
+    // own copy of this list as a fallback, so the screens still render.
+    console.error('Product catalogue seed error:', error);
+  }
+};
+
+// readyState 1 is "already connected". Checking it as well as listening
+// covers both orderings — this file calls mongoose.connect() above, so the
+// connection is normally still opening when this line runs, but a future
+// reorder must not silently skip the seed.
+if (mongoose.connection.readyState === 1) {
+  seedProductCatalogue();
+} else {
+  mongoose.connection.once('open', seedProductCatalogue);
+}
+
+// GET /api/products/:product → { product, live, services }
+//
+// `live` is applied to the rows before they are sent, not left for the
+// caller to remember: a service cannot be live inside a product that
+// isn't, and enforcing it here means every consumer gets the same answer
+// rather than each reimplementing the rule.
+app.get('/api/products/:product', async (req, res) => {
+  try {
+    const product = cleanProduct(req.params.product);
+
+    if (!product) {
+      return res.status(400).json({
+        message: `Product must be one of: ${INTEREST_PRODUCTS.join(', ')}.`
+      });
+    }
+
+    const [record, rows] = await Promise.all([
+      Product.findOne({ key: product }),
+      ProductService.find({ product }).sort({ order: 1, label: 1 })
+    ]);
+
+    const live = Boolean(record && record.live);
+
+    return res.status(200).json({
+      message: 'Product loaded successfully.',
+      product,
+      live,
+      services: rows.map((row) => ({
+        label: row.label,
+        status: live && row.status === 'live' ? 'live' : 'planned',
+        note: !live && row.status === 'live' ? 'Waiting on this product going live' : row.note
+      }))
+    });
+  } catch (error) {
+    console.error('Product read error:', error);
+
+    return res.status(500).json({
+      message: 'Server error while loading the product.'
     });
   }
 });
