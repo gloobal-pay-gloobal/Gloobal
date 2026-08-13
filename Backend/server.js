@@ -10,6 +10,7 @@ const Pin = require('./models/Pin');
 const Transaction = require('./models/Transaction');
 const LedgerEntry = require('./models/LedgerEntry');
 const Referral = require('./models/Referral');
+const Interest = require('./models/Interest');
 const AssetSeed = require('./models/AssetSeed');
 const FaceTemplate = require('./models/FaceTemplate');
 const { nationalNumberFrom } = require('./constants/dialCodes');
@@ -887,6 +888,157 @@ app.get('/api/profile/:symbolId', async (req, res) => {
 
     return res.status(500).json({
       message: 'Server error while loading profile.'
+    });
+  }
+});
+
+// --- Product interest ("I am IN") --------------------------------------
+//
+// The Gloobal Bank and Gloobal Coin screens ask one question: do you want
+// this? Until now the answer lived in React state and was thrown away on
+// reload, so the screens gathered nothing. These three routes are what
+// make that button a real feature rather than a toggle that lights up.
+
+const INTEREST_PRODUCTS = ['bank', 'coin'];
+
+const cleanProduct = (value) => {
+  const product = String(value || '').trim().toLowerCase();
+
+  return INTEREST_PRODUCTS.includes(product) ? product : null;
+};
+
+// Registered before '/api/interest/:product' so "status" is never read as
+// a product name. Two path segments vs one already keeps them apart, but
+// the order is the guarantee, not a coincidence of segment counts.
+//
+// GET /api/interest/status/:symbolId → which products this account is in
+// for. This is what lets "You're on the list" survive a reload, and show
+// up on a second device the same person signs in on.
+app.get('/api/interest/status/:symbolId', async (req, res) => {
+  try {
+    const cleanSymbolId = String(req.params.symbolId || '').trim();
+
+    if (!cleanSymbolId) {
+      return res.status(400).json({
+        message: 'Gloobal ID is required.'
+      });
+    }
+
+    const rows = await Interest.find({ symbolId: cleanSymbolId });
+
+    return res.status(200).json({
+      message: 'Interest status loaded successfully.',
+      symbolId: cleanSymbolId,
+      products: rows.map((row) => row.product)
+    });
+  } catch (error) {
+    console.error('Interest status error:', error);
+
+    return res.status(500).json({
+      message: 'Server error while loading interest status.'
+    });
+  }
+});
+
+// GET /api/interest/:product → the real count, and the real size of the
+// user base it is a fraction of. The app used to print "1 of 1 active
+// user" with both numbers hardcoded; both are now counted.
+app.get('/api/interest/:product', async (req, res) => {
+  try {
+    const product = cleanProduct(req.params.product);
+
+    if (!product) {
+      return res.status(400).json({
+        message: `Product must be one of: ${INTEREST_PRODUCTS.join(', ')}.`
+      });
+    }
+
+    const [total, totalUsers] = await Promise.all([
+      Interest.countDocuments({ product }),
+      User.countDocuments()
+    ]);
+
+    return res.status(200).json({
+      message: 'Interest loaded successfully.',
+      product,
+      total,
+      totalUsers
+    });
+  } catch (error) {
+    console.error('Interest read error:', error);
+
+    return res.status(500).json({
+      message: 'Server error while loading interest.'
+    });
+  }
+});
+
+// POST /api/interest — register this account's interest in a product.
+//
+// Idempotent on purpose: tapping twice, or tapping again from another
+// device, must not count the same person twice. The unique index on
+// (symbolId, product) enforces that in the database, and the duplicate-key
+// error it raises is treated as success — the caller asked for this
+// account to be on the list, and it is.
+app.post('/api/interest', async (req, res) => {
+  try {
+    const { symbolId, product: rawProduct } = req.body || {};
+    const cleanSymbolId = String(symbolId || '').trim();
+    const product = cleanProduct(rawProduct);
+
+    if (!cleanSymbolId) {
+      return res.status(400).json({
+        message: 'Gloobal ID is required.'
+      });
+    }
+
+    if (!product) {
+      return res.status(400).json({
+        message: `Product must be one of: ${INTEREST_PRODUCTS.join(', ')}.`
+      });
+    }
+
+    // Interest is only meaningful from a real account — otherwise the
+    // count is just however many times somebody could POST.
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+
+    if (!user) {
+      return res.status(404).json({
+        message: 'No account found for this Gloobal ID.'
+      });
+    }
+
+    let alreadyRegistered = false;
+
+    try {
+      await Interest.create({ userId: user._id, symbolId: cleanSymbolId, product });
+    } catch (error) {
+      // 11000 is the unique index doing its job.
+      if (error && error.code === 11000) {
+        alreadyRegistered = true;
+      } else {
+        throw error;
+      }
+    }
+
+    const [total, totalUsers] = await Promise.all([
+      Interest.countDocuments({ product }),
+      User.countDocuments()
+    ]);
+
+    return res.status(200).json({
+      message: alreadyRegistered ? 'Already on the list.' : 'Interest registered successfully.',
+      product,
+      registered: true,
+      alreadyRegistered,
+      total,
+      totalUsers
+    });
+  } catch (error) {
+    console.error('Interest register error:', error);
+
+    return res.status(500).json({
+      message: 'Server error while registering interest.'
     });
   }
 });
