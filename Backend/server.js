@@ -830,6 +830,35 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+// How many accounts exist platform-wide.
+//
+// Registered BEFORE '/api/profile/:symbolId' deliberately: Express matches
+// routes in declaration order, so with the parameterised route first this
+// path is read as symbolId === 'count', finds nobody, and answers
+// 404 "Profile not found." Order is the whole implementation here — moving
+// this below the route beneath it silently breaks it.
+//
+// No symbolId, and nothing per-account in the response: this is a single
+// aggregate the coverage screen prints, not a directory. countDocuments()
+// rather than find().length so the count happens in Mongo instead of
+// pulling every user document across the wire to measure an array.
+app.get('/api/profile/count', async (req, res) => {
+  try {
+    const total = await User.countDocuments();
+
+    return res.status(200).json({
+      message: 'User count loaded successfully.',
+      total
+    });
+  } catch (error) {
+    console.error('User Count Error:', error);
+
+    return res.status(500).json({
+      message: 'Server error while counting users.'
+    });
+  }
+});
+
 // Profile Details
 app.get('/api/profile/:symbolId', async (req, res) => {
   try {
