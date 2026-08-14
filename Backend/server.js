@@ -1902,6 +1902,93 @@ function createPrototypeTransactionReference() {
 // else), and only if it is genuinely unused: referenceId is unique-indexed, so
 // a taken one would fail the write. A rejected value is not an error — the
 // server just mints its own, exactly as it does for a client that sends none.
+// --- Atomic money movement --------------------------------------------------
+
+// Not enough money. Thrown from inside the transfer so it comes back as a 400
+// rather than a 500: it is a normal outcome, not a fault. The balance is now
+// checked BY the debit itself (the conditional $inc below), so under
+// concurrency the only way to learn there was not enough is to attempt it.
+class InsufficientBalanceError extends Error {
+  constructor(balance) {
+    super('Insufficient balance.');
+    this.name = 'InsufficientBalanceError';
+    this.balance = balance;
+  }
+}
+
+// Whether this deployment can run multi-document transactions. Atlas is a
+// replica set on every tier and can; a plain standalone mongod — which is what
+// a local dev box usually runs — cannot, and says so with one of the signatures
+// below. Probed on the first transfer and remembered, so a standalone does not
+// pay for a doomed startSession on every payment.
+//
+// null = not yet known, true / false = answered.
+let mongoTransactionsSupported = null;
+
+const isNoTransactionSupport = (error) => {
+  const message = String((error && error.message) || '');
+  return (
+    (error && (error.code === 20 || error.codeName === 'IllegalOperation')) ||
+    /Transaction numbers are only allowed on a replica set member or mongos/i.test(message) ||
+    /transactions? (are|is) not supported/i.test(message)
+  );
+};
+
+// Runs `work` inside a transaction when the deployment has them, and directly
+// when it does not. `work` receives the session (or null) and must pass it to
+// every write it makes. It can be called more than once: withTransaction
+// retries on a transient commit error, and each retry starts from a rolled-back
+// state, so a `work` that only writes through its session stays correct.
+//
+// Returns { value, atomic } — `atomic` false means the caller is responsible
+// for compensating a partial failure itself.
+async function withMongoTransaction(work) {
+  if (mongoTransactionsSupported === false) {
+    return { value: await work(null), atomic: false };
+  }
+
+  let session = null;
+
+  try {
+    session = await mongoose.startSession();
+  } catch (error) {
+    if (!isNoTransactionSupport(error)) throw error;
+    mongoTransactionsSupported = false;
+    return { value: await work(null), atomic: false };
+  }
+
+  try {
+    let value;
+    await session.withTransaction(async () => {
+      value = await work(session);
+    });
+    mongoTransactionsSupported = true;
+    return { value, atomic: true };
+  } catch (error) {
+    if (!isNoTransactionSupport(error)) throw error;
+    mongoTransactionsSupported = false;
+    return { value: await work(null), atomic: false };
+  } finally {
+    await session.endSession();
+  }
+}
+
+// Accounts created before User.balance existed have no such field. The debit
+// below matches on `balance: { $gte: amount }`, and a document without one can
+// never satisfy that, so the field is materialised first — at the same default
+// every read already reports for it (accountBalanceOf). Idempotent, and a no-op
+// for every account created since the field was added.
+async function materialiseBalance(user) {
+  if (Number.isFinite(Number(user.balance))) return;
+
+  await User.updateOne(
+    { _id: user._id, balance: { $exists: false } },
+    { $set: { balance: DEFAULT_ACCOUNT_BALANCE } }
+  );
+
+  user.balance = DEFAULT_ACCOUNT_BALANCE;
+}
+
 async function resolveTransactionReference(candidate) {
   const cleaned = String(candidate || '').trim();
   const chars = Array.from(cleaned);
@@ -2449,8 +2536,6 @@ app.get('/api/assets/paylater/:symbolId', async (req, res) => {
 });
 
 app.post('/api/transactions/send', async (req, res) => {
-  let pendingTransaction = null;
-
   try {
     const {
       senderSymbolId,
@@ -2596,6 +2681,15 @@ app.post('/api/transactions/send', async (req, res) => {
     // Checked after the PIN, not before it: the answer reveals roughly what
     // the account holds, which is not something to hand out to whoever can
     // guess a Gloobal ID.
+    await materialiseBalance(sender);
+    await materialiseBalance(receiver);
+
+    // A courtesy check, not the authority. It fails fast with a useful figure
+    // for the ordinary case of somebody trying to spend more than they have.
+    // The check that actually protects the balance is the conditional debit
+    // further down — this one reads a value that another request can change
+    // before the write lands, which is exactly the race it used to be the only
+    // guard against.
     const senderBalanceBefore = accountBalanceOf(sender);
 
     if (senderBalanceBefore < numericAmount) {
@@ -2643,27 +2737,6 @@ app.post('/api/transactions/send', async (req, res) => {
       });
     }
 
-    pendingTransaction = await Transaction.create({
-      fromUserId: sender._id,
-      toUserId: receiver._id,
-      amount: numericAmount,
-      currency: cleanCurrency,
-      type: 'send',
-      status: 'pending',
-      note: cleanNote,
-      referenceId: await resolveTransactionReference(req.body?.referenceId ?? req.body?.transactionId),
-      metadata: {
-        prototype: true,
-        idempotencyKey: cleanIdempotencyKey || null,
-        senderMatchedBy: senderResolved.matchedBy,
-        receiverMatchedBy: receiverResolved.matchedBy,
-        senderInput: senderIdentifier,
-        receiverInput: receiverIdentifier,
-        maxPrototypeAmount,
-        payMethod: cleanPayMethod || null,
-      },
-    });
-
     // The payee's own cashback rate splits the payment. The full amount
     // leaves the sender; the payee is credited the amount minus their chosen
     // share, and that share comes back to the sender as a planted asset
@@ -2674,77 +2747,170 @@ app.post('/api/transactions/send', async (req, res) => {
     const cashback = toMinorUnit(numericAmount * payeeCashbackRate);
     const payeeReceives = toMinorUnit(numericAmount - cashback);
 
-    const receiverBalanceBefore = accountBalanceOf(receiver);
-    const senderBalanceAfter = toMinorUnit(senderBalanceBefore - numericAmount);
-    const receiverBalanceAfter = toMinorUnit(receiverBalanceBefore + payeeReceives);
+    const transactionReference = await resolveTransactionReference(
+      req.body?.referenceId ?? req.body?.transactionId
+    );
 
-    // Two independent writes, so the second can fail with the first already
-    // committed — and a debit that lands with no matching credit is money
-    // gone. Mongo can only make this atomic inside a session/transaction; in
-    // the meantime the debit is compensated explicitly rather than left.
-    let senderDebited = false;
+    const transactionFields = {
+      fromUserId: sender._id,
+      toUserId: receiver._id,
+      amount: numericAmount,
+      currency: cleanCurrency,
+      type: 'send',
+      note: cleanNote,
+      referenceId: transactionReference,
+      metadata: {
+        prototype: true,
+        idempotencyKey: cleanIdempotencyKey || null,
+        senderMatchedBy: senderResolved.matchedBy,
+        receiverMatchedBy: receiverResolved.matchedBy,
+        senderInput: senderIdentifier,
+        receiverInput: receiverIdentifier,
+        maxPrototypeAmount,
+        payMethod: cleanPayMethod || null,
+      },
+    };
+
+    // Everything that moves money, in one place.
+    //
+    // The debit is a single conditional $inc — the balance is matched and
+    // decremented in one indivisible document operation, so two payments racing
+    // out of the same account cannot both pass. Previously each request read
+    // the balance, compared it in Node, and wrote the whole document back:
+    // two concurrent sends of 800 against 1000 both saw 1000, both passed, and
+    // both wrote 200 — 1600 leaving a 1000 account, last write winning.
+    //
+    // No figure here is computed from a value read earlier. Both new balances
+    // come back from the updates that produced them, so the ledger records what
+    // the database actually did rather than what this request predicted.
+    const performTransfer = async (session) => {
+      const sessionOpt = session ? { session } : {};
+
+      const debitedSender = await User.findOneAndUpdate(
+        { _id: sender._id, balance: { $gte: numericAmount } },
+        { $inc: { balance: -numericAmount } },
+        { returnDocument: 'after', ...sessionOpt }
+      );
+
+      // No match means the balance moved under us between the courtesy check
+      // and here. Nothing was written — $inc either matched and applied or did
+      // neither — so there is nothing to undo.
+      if (!debitedSender) {
+        const current = await User.findById(sender._id).select('balance').lean();
+        throw new InsufficientBalanceError(accountBalanceOf(current || {}));
+      }
+
+      const senderBalanceAfter = toMinorUnit(debitedSender.balance);
+      const senderBalanceAtDebit = toMinorUnit(senderBalanceAfter + numericAmount);
+
+      let creditedReceiver = null;
+
+      try {
+        creditedReceiver = await User.findOneAndUpdate(
+          { _id: receiver._id },
+          { $inc: { balance: payeeReceives } },
+          { returnDocument: 'after', ...sessionOpt }
+        );
+
+        if (!creditedReceiver) throw new Error('Receiver account disappeared mid-transfer.');
+
+        const receiverBalanceAfter = toMinorUnit(creditedReceiver.balance);
+        const receiverBalanceAtCredit = toMinorUnit(receiverBalanceAfter - payeeReceives);
+
+        // Created here, already successful. It used to be written as 'pending'
+        // before the money moved and flipped to 'success' after, which left a
+        // real window where a crash stranded a pending row over balances that
+        // had already changed. Inside a transaction the row and the balances
+        // commit together or not at all.
+        const [transaction] = await Transaction.create(
+          [{ ...transactionFields, status: 'success' }],
+          session ? { session } : {}
+        );
+
+        await LedgerEntry.create(
+          [
+            {
+              transactionId: transaction._id,
+              userId: sender._id,
+              entryType: 'debit',
+              amount: numericAmount,
+              balanceBefore: senderBalanceAtDebit,
+              balanceAfter: senderBalanceAfter,
+              currency: cleanCurrency,
+              note: 'Prototype debit entry',
+              metadata: {
+                prototype: true,
+                transactionReferenceId: transaction.referenceId,
+                cashback,
+                cashbackRate: payeeCashbackRate,
+              },
+            },
+            {
+              // The credit is the amount minus the payee's own cashback share,
+              // so the two entries deliberately do not carry the same figure —
+              // the difference is what became the payer's asset seed below.
+              transactionId: transaction._id,
+              userId: receiver._id,
+              entryType: 'credit',
+              amount: payeeReceives,
+              balanceBefore: receiverBalanceAtCredit,
+              balanceAfter: receiverBalanceAfter,
+              currency: cleanCurrency,
+              note: 'Prototype credit entry',
+              metadata: {
+                prototype: true,
+                transactionReferenceId: transaction.referenceId,
+                cashback,
+                cashbackRate: payeeCashbackRate,
+              },
+            },
+          ],
+          session ? { session, ordered: true } : {}
+        );
+
+        return { transaction, senderBalanceAfter, receiverBalanceAfter };
+      } catch (moveError) {
+        // Inside a transaction the abort undoes all of the above, so
+        // compensating by hand would double-refund. This branch is only for a
+        // deployment without transactions, where the debit really is committed
+        // and really does need putting back.
+        if (!session) {
+          try {
+            await User.updateOne({ _id: sender._id }, { $inc: { balance: numericAmount } });
+            if (creditedReceiver) {
+              await User.updateOne({ _id: receiver._id }, { $inc: { balance: -payeeReceives } });
+            }
+          } catch (revertError) {
+            // Nothing further can be done in-process; this is the one case
+            // that needs to be findable in the logs after the fact.
+            console.error('CRITICAL: transfer could not be reverted for', sender.symbolId, revertError);
+          }
+        }
+
+        throw moveError;
+      }
+    };
+
+    let transferred;
 
     try {
-      sender.balance = senderBalanceAfter;
-      await sender.save();
-      senderDebited = true;
-
-      receiver.balance = receiverBalanceAfter;
-      await receiver.save();
-    } catch (moveError) {
-      if (senderDebited) {
-        try {
-          sender.balance = senderBalanceBefore;
-          await sender.save();
-        } catch (revertError) {
-          // Nothing further can be done in-process; this is the one case
-          // that needs to be findable in the logs after the fact.
-          console.error('CRITICAL: debit could not be reverted for', sender.symbolId, revertError);
-        }
+      ({ value: transferred } = await withMongoTransaction(performTransfer));
+    } catch (transferError) {
+      if (transferError instanceof InsufficientBalanceError) {
+        return res.status(400).json({
+          success: false,
+          message: transferError.message,
+          balance: transferError.balance,
+        });
       }
-      throw moveError;
+      throw transferError;
     }
 
-    await LedgerEntry.create([
-      {
-        transactionId: pendingTransaction._id,
-        userId: sender._id,
-        entryType: 'debit',
-        amount: numericAmount,
-        balanceBefore: senderBalanceBefore,
-        balanceAfter: senderBalanceAfter,
-        currency: cleanCurrency,
-        note: 'Prototype debit entry',
-        metadata: {
-          prototype: true,
-          transactionReferenceId: pendingTransaction.referenceId,
-          cashback,
-          cashbackRate: payeeCashbackRate,
-        },
-      },
-      {
-        transactionId: pendingTransaction._id,
-        // The credit is the amount minus the payee's own cashback share, so
-        // the two entries deliberately do not carry the same figure — the
-        // difference is what became the payer's asset seed below.
-        userId: receiver._id,
-        entryType: 'credit',
-        amount: payeeReceives,
-        balanceBefore: receiverBalanceBefore,
-        balanceAfter: receiverBalanceAfter,
-        currency: cleanCurrency,
-        note: 'Prototype credit entry',
-        metadata: {
-          prototype: true,
-          transactionReferenceId: pendingTransaction.referenceId,
-          cashback,
-          cashbackRate: payeeCashbackRate,
-        },
-      },
-    ]);
-
-    pendingTransaction.status = 'success';
-    await pendingTransaction.save();
+    // Past this point the money has moved and the record of it exists. Nothing
+    // below can fail the payment — only the asset seed is still outstanding,
+    // and that is best-effort by design.
+    const completedTransaction = transferred.transaction;
+    const senderBalanceAfter = transferred.senderBalanceAfter;
 
     // Plant a My Assets seed for cashback-earning payments. The rate is the
     // *payee's* own choice (User.cashbackRate, set via
@@ -2775,7 +2941,7 @@ app.post('/api/transactions/send', async (req, res) => {
     return res.status(201).json({
       success: true,
       message: 'Prototype transaction completed successfully.',
-      transaction: cleanTransactionPayload(pendingTransaction, sender, receiver),
+      transaction: cleanTransactionPayload(completedTransaction, sender, receiver),
       newBalance: senderBalanceAfter,
       cashback,
       cashbackRate: payeeCashbackRate,
@@ -2783,19 +2949,11 @@ app.post('/api/transactions/send', async (req, res) => {
       assetSeed: plantedSeed ? computeSeed(plantedSeed) : null,
     });
   } catch (error) {
-    if (pendingTransaction && pendingTransaction.status === 'pending') {
-      try {
-        pendingTransaction.status = 'failed';
-        pendingTransaction.metadata = {
-          ...(pendingTransaction.metadata || {}),
-          failureMessage: error.message,
-        };
-        await pendingTransaction.save();
-      } catch (statusError) {
-        console.error('Transaction failure status update error:', statusError);
-      }
-    }
-
+    // No pending row to reconcile any more. A Transaction is now written as
+    // part of the same atomic step that moves the balances, so a failure
+    // leaves no record at all rather than a 'pending' one stranded over money
+    // that had already moved — which is what the block that used to sit here
+    // was trying, and failing, to clean up after.
     console.error('Send transaction error:', error);
     return res.status(500).json({
       success: false,
