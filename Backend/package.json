@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node tests/transfer-atomicity.test.mjs"
+    "test": "node tests/auth-and-access.test.mjs && node tests/transfer-atomicity.test.mjs",
+    "test:auth": "node tests/auth-and-access.test.mjs",
+    "test:atomicity": "node tests/transfer-atomicity.test.mjs"
   },
   "keywords": [],
   "author": "",

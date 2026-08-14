@@ -40,8 +40,51 @@ const toMinorUnit = (value) => Math.round((Number(value) + Number.EPSILON) * 100
 const app = express();
 
 // Middleware
-app.use(express.json());
-app.use(cors());
+//
+// A body cap, because express.json() defaults to 100kb and nothing this API
+// accepts is anywhere near that — the largest legitimate payload is a face
+// descriptor. It bounds what a single request can make the process allocate.
+app.use(express.json({ limit: '64kb' }));
+
+// CORS was `cors()` with no argument, which answers every origin with
+// `Access-Control-Allow-Origin: *`. That let any page on the internet call this
+// API from a visitor's browser. Now an allowlist: the deployed frontends, plus
+// localhost for development.
+//
+// Requests with no Origin at all (curl, server-to-server, the health checker)
+// are allowed through — CORS is a browser mechanism and refusing them would
+// break non-browser callers without stopping anything, since a program that
+// sets no Origin was never subject to it in the first place.
+const ALLOWED_ORIGINS = String(
+  process.env.ALLOWED_ORIGINS ||
+    'https://gloobalv3.netlify.app,http://localhost:5173,http://127.0.0.1:5173'
+)
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+      return callback(null, false);
+    },
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    maxAge: 600
+  })
+);
+
+// A handful of headers that cost nothing and close off the cheapest attacks.
+// Not a replacement for helmet; just the subset that matters for a JSON API
+// with no HTML surface of its own.
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Referrer-Policy', 'no-referrer');
+  res.set('X-Frame-Options', 'DENY');
+  res.removeHeader('X-Powered-By');
+  next();
+});
 
 // MongoDB Connection
 const mongoURI = process.env.MONGO_URI || 'YOUR_MONGODB_CONNECTION_STRING_HERE';
@@ -190,7 +233,232 @@ const findVerifiedPinResetOtp = async (mobileNumber) => {
   }).sort({ verifiedAt: -1 });
 };
 
-app.post('/api/otp/send', async (req, res) => {
+// ─── Authentication ─────────────────────────────────────────────────────────
+//
+// Until now this API had none. Every route took a `symbolId` out of the body or
+// the path and trusted it, which meant a Gloobal ID was simultaneously a public
+// address and the only thing standing between a stranger and the account:
+// anyone could read a balance and a phone number, overwrite a PIN through
+// /api/pin/set, and then spend the balance through /api/transactions/send.
+//
+// A caller now proves who it is with a bearer token, minted only in exchange
+// for a real credential (PIN, or a WebAuthn assertion), and routes that touch
+// an account check that the token names THAT account.
+//
+// The token is an HMAC-signed payload rather than a JWT, deliberately: it needs
+// no dependency, and the one algorithm it accepts cannot be talked down to
+// "none" by a caller. It is a bearer token, so it is only as safe as the
+// transport — which is HTTPS in every deployment of this API.
+
+const AUTH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+// A missing secret must never fall back to a constant: a signing key that ships
+// in the source signs tokens anybody can forge, which is indistinguishable from
+// having no authentication at all. A random per-boot key is the safe failure —
+// it works, and its only cost is that a restart invalidates existing tokens and
+// everyone signs in again. On Render's free tier the service sleeps often, so
+// that cost is real and the warning below is worth acting on.
+const AUTH_TOKEN_SECRET = process.env.AUTH_TOKEN_SECRET || crypto.randomBytes(48).toString('hex');
+
+if (!process.env.AUTH_TOKEN_SECRET) {
+  console.warn(
+    'WARNING: AUTH_TOKEN_SECRET is not set. Using a random key generated at boot — ' +
+    'every restart will sign everybody out. Set it in the environment.'
+  );
+}
+
+const base64url = (input) => Buffer.from(input).toString('base64url');
+
+const signAuthPayload = (encodedPayload) =>
+  crypto.createHmac('sha256', AUTH_TOKEN_SECRET).update(encodedPayload).digest('base64url');
+
+const issueAuthToken = (user) => {
+  const payload = base64url(
+    JSON.stringify({
+      sub: String(user._id),
+      symbolId: user.symbolId,
+      iat: Date.now(),
+      exp: Date.now() + AUTH_TOKEN_TTL_MS
+    })
+  );
+
+  return `${payload}.${signAuthPayload(payload)}`;
+};
+
+const readAuthToken = (token) => {
+  const [payload, signature] = String(token || '').split('.');
+  if (!payload || !signature) return null;
+
+  const expected = signAuthPayload(payload);
+  const given = Buffer.from(signature);
+  const want = Buffer.from(expected);
+
+  // Constant time, and length-checked first because timingSafeEqual throws on a
+  // length mismatch — which would itself be a timing signal.
+  if (given.length !== want.length || !crypto.timingSafeEqual(given, want)) return null;
+
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!claims || typeof claims.exp !== 'number' || claims.exp < Date.now()) return null;
+    return claims;
+  } catch (error) {
+    return null;
+  }
+};
+
+const bearerFrom = (req) => {
+  const header = String(req.headers.authorization || '');
+  return header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+};
+
+// The account behind the token, or null. Used by requireAuth, and directly by
+// the routes that accept EITHER a token or a freshly verified OTP.
+const authenticatedUser = async (req) => {
+  const claims = readAuthToken(bearerFrom(req));
+  if (!claims) return null;
+
+  const user = await User.findById(claims.sub);
+  if (!user) return null;
+
+  // The token names an ID the account no longer uses — it was renamed through
+  // /api/profile/change-symbol-id. The account is still the same document, so
+  // the token stays valid; this only stops a stale ID being trusted as the
+  // caller's identity further down.
+  return user;
+};
+
+const requireAuth = async (req, res, next) => {
+  const user = await authenticatedUser(req);
+
+  if (!user) {
+    return res.status(401).json({
+      success: false,
+      message: 'Sign in to continue.'
+    });
+  }
+
+  req.authUser = user;
+  next();
+};
+
+// Confirms the authenticated account is the one the route is about. Reads the
+// ID from wherever that route carries it — path parameter first, then body,
+// then query — and compares against the token's own account.
+//
+// Comparison is by document id, not by symbolId string, so a rename mid-session
+// cannot lock somebody out of their own data.
+const requireSelf = (...sources) => async (req, res, next) => {
+  const candidates = sources
+    .map((source) => req.params?.[source] ?? req.body?.[source] ?? req.query?.[source])
+    .map((value) => (value === undefined || value === null ? '' : String(value).trim()))
+    .filter(Boolean);
+
+  if (candidates.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Gloobal ID is required.'
+    });
+  }
+
+  for (const candidate of candidates) {
+    const decoded = safeDecodeSymbolId(candidate).trim() || candidate;
+    if (decoded === req.authUser.symbolId) continue;
+
+    const owner = await User.findOne({ symbolId: decoded }).select('_id').lean();
+    if (owner && String(owner._id) === String(req.authUser._id)) continue;
+
+    return res.status(403).json({
+      success: false,
+      message: 'That account is not yours.'
+    });
+  }
+
+  next();
+};
+
+// ─── Rate limiting ──────────────────────────────────────────────────────────
+//
+// There was none. The client bundle carries its own throttle (see
+// services/api/rateLimiter.js) and says in its first comment that it is not the
+// real limit, because it runs in the caller's browser and can be edited out.
+// Nothing on this side counted anything, so every credential check and every
+// lookup could be driven as fast as the network allowed.
+//
+// In-process and therefore per-instance: this API runs as one Render service,
+// so that is the whole picture today, but it is not a distributed limit and a
+// restart forgets every counter. It raises the cost of guessing and scraping;
+// it is not a substitute for a shared store once there is more than one
+// instance.
+
+const rateBuckets = new Map();
+
+// Trusting an arbitrary X-Forwarded-For would let a caller rotate their own
+// limit key by lying, so only the first hop — the one Render itself sets — is
+// read, and it is not trusted for anything but bucketing.
+const clientKey = (req) => {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return forwarded || req.socket?.remoteAddress || 'unknown';
+};
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateBuckets) {
+    if (bucket.resetAt <= now) rateBuckets.delete(key);
+  }
+}, 60 * 1000).unref();
+
+const rateLimit = ({ name, max, windowMs, keyOf }) => (req, res, next) => {
+  const scope = keyOf ? keyOf(req) : '';
+  const key = `${name}:${clientKey(req)}:${scope}`;
+  const now = Date.now();
+  const bucket = rateBuckets.get(key);
+
+  if (!bucket || bucket.resetAt <= now) {
+    rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+    return next();
+  }
+
+  bucket.count += 1;
+
+  if (bucket.count > max) {
+    const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({
+      success: false,
+      message: `Too many attempts. Try again in ${retryAfter}s.`
+    });
+  }
+
+  next();
+};
+
+// Each limiter gets its own bucket name, so a person registering does not
+// spend the budget they will need to log in. Sharing one bucket across every
+// credential route would also punish everybody behind a single carrier NAT,
+// which in this app's main market is most people.
+//
+// None of these is the primary defence against PIN guessing — that is the
+// per-account five-strike lockout on the Pin record, which no amount of IP
+// rotation gets around. These bound how fast the API as a whole can be driven,
+// which is what stops the Gloobal ID space being walked.
+const WINDOW_MS = 5 * 60 * 1000;
+
+// Sending and verifying codes.
+const otpLimit = rateLimit({ name: 'otp', max: 12, windowMs: WINDOW_MS });
+// Exchanging a credential for a session: login, PIN verification, passkey
+// assertions, setting a PIN.
+const credentialLimit = rateLimit({ name: 'credential', max: 30, windowMs: WINDOW_MS });
+// Creating accounts.
+const registerLimit = rateLimit({ name: 'register', max: 8, windowMs: WINDOW_MS });
+// Account lookups. Keyed on the caller only, never on the ID being looked up —
+// including the ID would hand an enumerator a fresh bucket for every guess,
+// which is the one thing this limit exists to prevent. Generous for normal use,
+// far too slow to walk 8^12 with.
+const lookupLimit = rateLimit({ name: 'lookup', max: 90, windowMs: WINDOW_MS });
+// Everything a signed-in app does in the ordinary course of being used.
+const writeLimit = rateLimit({ name: 'write', max: 150, windowMs: WINDOW_MS });
+
+app.post('/api/otp/send', otpLimit, async (req, res) => {
   try {
     const { mobileNumber, purpose } = req.body;
     const cleanMobileNumber = normalizeMobileNumber(mobileNumber);
@@ -256,11 +524,16 @@ app.post('/api/otp/send', async (req, res) => {
       expiresAt
     });
 
+    // The code itself is NOT in the response. It used to be, which made the
+    // second factor no factor at all: anyone who could reach this route was
+    // handed the code for any number they named. There is still no SMS gateway
+    // here — the prototype code is a fixed value both sides already know — but
+    // an endpoint that returns it is a hole that stays open on the day a real
+    // gateway is wired in and the value stops being fixed.
     return res.status(200).json({
       message: 'Prototype OTP sent successfully.',
       mobileNumber: cleanMobileNumber,
-      purpose: cleanPurpose,
-      prototypeOtp
+      purpose: cleanPurpose
     });
   } catch (error) {
     console.error('OTP send error:', error);
@@ -271,7 +544,7 @@ app.post('/api/otp/send', async (req, res) => {
   }
 });
 
-app.post('/api/otp/verify', async (req, res) => {
+app.post('/api/otp/verify', otpLimit, async (req, res) => {
   try {
     const { mobileNumber, otp, purpose } = req.body;
     const cleanMobileNumber = normalizeMobileNumber(mobileNumber);
@@ -347,7 +620,25 @@ app.post('/api/otp/verify', async (req, res) => {
 // PIN Prototype APIs
 const isValidPinFormat = (pin) => /^\d{4,6}$/.test(String(pin || '').trim());
 
-app.post('/api/pin/set', async (req, res) => {
+// Sets or replaces an account's PIN.
+//
+// This was the worst hole in the API. It took { symbolId, pin } and nothing
+// else — no OTP, no old PIN, no session — so anyone who knew a Gloobal ID could
+// overwrite that account's PIN and then spend its balance through
+// /api/transactions/send, which authorises on exactly that PIN. Unauthenticated
+// account takeover, with funds movement, in two calls.
+//
+// It now needs one of two proofs, which between them cover every legitimate
+// caller:
+//   - a verified registration OTP for the account's own number, which is how a
+//     brand-new account sets its first PIN moments after registering; or
+//   - a valid session token for the account, which is how somebody who is
+//     already signed in changes it.
+// Neither is available to a stranger holding only a Gloobal ID.
+//
+// Changing a PIN you have forgotten is /api/pin/reset, which has required a
+// verified pin_reset OTP all along.
+app.post('/api/pin/set', credentialLimit, async (req, res) => {
   try {
     const { symbolId, pin } = req.body;
     const cleanSymbolId = String(symbolId || '').trim();
@@ -370,6 +661,21 @@ app.post('/api/pin/set', async (req, res) => {
     if (!user) {
       return res.status(404).json({
         message: 'Secure ID not found.'
+      });
+    }
+
+    const signedInUser = await authenticatedUser(req);
+    const isSelf = signedInUser && String(signedInUser._id) === String(user._id);
+
+    // The OTP is looked up against the number the ACCOUNT holds, never a number
+    // supplied with the request — otherwise the caller could name a number they
+    // control, verify an OTP for it, and use that to set somebody else's PIN.
+    const accountMobile = normalizeMobileNumber(user.mobileNumber || user.fullName);
+    const registrationOtp = isSelf ? null : await findVerifiedRegistrationOtp(accountMobile);
+
+    if (!isSelf && !registrationOtp) {
+      return res.status(403).json({
+        message: 'Verify your mobile number, or sign in, before setting a PIN.'
       });
     }
 
@@ -404,7 +710,7 @@ app.post('/api/pin/set', async (req, res) => {
   }
 });
 
-app.post('/api/pin/verify', async (req, res) => {
+app.post('/api/pin/verify', credentialLimit, async (req, res) => {
   try {
     const { symbolId, pin } = req.body;
     const cleanSymbolId = String(symbolId || '').trim();
@@ -428,18 +734,11 @@ app.post('/api/pin/verify', async (req, res) => {
 
     const pinRecord = await Pin.findOne({ userId: user._id });
 
+    // An account with no PIN on file cannot verify one. This used to accept
+    // DEFAULT_LOGIN_PIN — '1234' unless the environment said otherwise — and
+    // answer `verified: true` with the full user payload, so any account that
+    // had not finished setting a PIN was open to a four-character guess.
     if (!pinRecord) {
-      const prototypePin = process.env.DEFAULT_LOGIN_PIN || '1234';
-
-      if (cleanPin === prototypePin) {
-        return res.status(200).json({
-          verified: true,
-          prototypeFallback: true,
-          message: 'Prototype PIN verified successfully.',
-          user: await publicUserPayload(user)
-        });
-      }
-
       return res.status(404).json({
         verified: false,
         message: 'PIN is not set for this Secure ID.'
@@ -492,7 +791,7 @@ app.post('/api/pin/verify', async (req, res) => {
 
 
 // Reset PIN using verified OTP
-app.post('/api/pin/reset', async (req, res) => {
+app.post('/api/pin/reset', credentialLimit, async (req, res) => {
   try {
     const { symbolId, mobileNumber, pin, newPin } = req.body;
     const cleanSymbolId = String(symbolId || '').trim();
@@ -558,6 +857,10 @@ app.post('/api/pin/reset', async (req, res) => {
 
     return res.status(200).json({
       message: 'PIN reset successfully.',
+      // A verified pin_reset OTP for this account's number, plus a new PIN just
+      // set: the caller has proved as much as a login proves, so they leave
+      // signed in rather than having to immediately log in again.
+      token: issueAuthToken(user),
       user: await publicUserPayload(user)
     });
   } catch (error) {
@@ -569,7 +872,7 @@ app.post('/api/pin/reset', async (req, res) => {
   }
 });
 // Registration and Multi-Level Referral Engine
-app.post('/api/register-symbol', async (req, res) => {
+app.post('/api/register-symbol', registerLimit, async (req, res) => {
   try {
     const { fullName, mobileNumber, symbolId, referredBy } = req.body;
 
@@ -624,6 +927,11 @@ app.post('/api/register-symbol', async (req, res) => {
       return res.status(200).json({
         message: 'This Secure ID is already registered. Continue to login.',
         alreadyRegistered: true,
+        // A verified registration OTP for this account's own number is proof of
+        // control of that number, which is the same proof the first-time path
+        // below rests on — so this branch signs the person in too, rather than
+        // leaving a returning caller with no token and no way to set a PIN.
+        token: issueAuthToken(existingUserBySymbol),
         user: await publicUserPayload(existingUserBySymbol)
       });
     }
@@ -724,6 +1032,10 @@ app.post('/api/register-symbol', async (req, res) => {
       message: 'Secure ID registered successfully.',
       referralApplied,
       referralWarning,
+      // The registration OTP is consumed just above, so this token is the only
+      // credential the caller carries out of here — and POST /api/pin/set, the
+      // very next step of registration, now requires one.
+      token: issueAuthToken(newUser),
       user: await publicUserPayload(newUser)
     });
   } catch (error) {
@@ -760,13 +1072,22 @@ app.post('/api/register-symbol', async (req, res) => {
 // on the landing screen, so a +91 account could be shown as a UK one. The
 // response below carries mobileNumber precisely so the client can derive
 // the account's real country instead of guessing.
-app.post('/api/login', async (req, res) => {
+// Signs in and mints the session token every protected route now needs.
+//
+// It also accepts a mobile number as the identifier. Logging in by phone used
+// to mean calling GET /api/users/resolve first to turn the number into a
+// Gloobal ID, which is an unauthenticated oracle mapping phone numbers to
+// accounts. The PIN is the credential either way, so the resolution happens
+// here, behind it, and that lookup can go back to being a signed-in operation.
+app.post('/api/login', credentialLimit, async (req, res) => {
   try {
-    const { secureId, symbolId, pin } = req.body;
-    const loginSymbolId = String(secureId || symbolId || '').trim();
+    const { secureId, symbolId, identifier, mobileNumber, pin } = req.body;
+    const loginIdentifier = String(
+      secureId || symbolId || identifier || mobileNumber || ''
+    ).trim();
     const cleanPin = String(pin || '').trim();
 
-    if (!loginSymbolId || !cleanPin) {
+    if (!loginIdentifier || !cleanPin) {
       return res.status(400).json({
         message: 'Secure ID and PIN are required.'
       });
@@ -778,7 +1099,8 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ symbolId: loginSymbolId });
+    const resolved = await resolveTransactionUserByIdentifier(loginIdentifier);
+    const user = resolved?.user || (await User.findOne({ symbolId: loginIdentifier }));
 
     if (!user) {
       return res.status(404).json({
@@ -823,6 +1145,7 @@ app.post('/api/login', async (req, res) => {
 
     return res.status(200).json({
       message: 'Login successful.',
+      token: issueAuthToken(user),
       user: await publicUserPayload(user)
     });
   } catch (error) {
@@ -883,7 +1206,7 @@ app.get('/api/stats', async (req, res) => {
 });
 
 // Profile Details
-app.get('/api/profile/:symbolId', async (req, res) => {
+app.get('/api/profile/:symbolId', lookupLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const cleanSymbolId = String(req.params.symbolId || '').trim();
 
@@ -1040,7 +1363,7 @@ const cleanProduct = (value) => {
 // GET /api/interest/status/:symbolId → which products this account is in
 // for. This is what lets "You're on the list" survive a reload, and show
 // up on a second device the same person signs in on.
-app.get('/api/interest/status/:symbolId', async (req, res) => {
+app.get('/api/interest/status/:symbolId', lookupLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const cleanSymbolId = String(req.params.symbolId || '').trim();
 
@@ -1106,7 +1429,7 @@ app.get('/api/interest/:product', async (req, res) => {
 // (symbolId, product) enforces that in the database, and the duplicate-key
 // error it raises is treated as success — the caller asked for this
 // account to be on the list, and it is.
-app.post('/api/interest', async (req, res) => {
+app.post('/api/interest', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const { symbolId, product: rawProduct } = req.body || {};
     const cleanSymbolId = String(symbolId || '').trim();
@@ -1173,7 +1496,7 @@ app.post('/api/interest', async (req, res) => {
 // The response carries Gloobal IDs and join dates only — never mobile
 // numbers, emails, or internal ObjectIds, since a referrer is not entitled
 // to their referrals' contact details.
-app.get('/api/referrals/:symbolId', async (req, res) => {
+app.get('/api/referrals/:symbolId', lookupLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const cleanSymbolId = String(req.params.symbolId || '').trim();
 
@@ -1232,7 +1555,7 @@ const isValidSymbolId = (value) => {
 // knows an ID can rename it. Recorded plainly rather than dressed up —
 // this route inherits the codebase-wide missing auth layer and must be put
 // behind real session checks along with the rest of them.
-app.patch('/api/profile/change-symbol-id', async (req, res) => {
+app.patch('/api/profile/change-symbol-id', writeLimit, requireAuth, requireSelf('currentSymbolId'), async (req, res) => {
   try {
     const currentSymbolId = String(req.body.currentSymbolId || '').trim();
     const newSymbolId = String(req.body.newSymbolId || '').trim();
@@ -1348,7 +1671,7 @@ const safeDecodeSymbolId = (raw) => {
   }
 };
 
-app.get('/r/:symbolId', async (req, res) => {
+app.get('/r/:symbolId', lookupLimit, async (req, res) => {
   try {
     const symbolId = safeDecodeSymbolId(req.params.symbolId).trim();
 
@@ -1379,7 +1702,7 @@ app.get('/r/:symbolId', async (req, res) => {
   }
 });
 
-app.put('/api/profile/:symbolId', async (req, res) => {
+app.put('/api/profile/:symbolId', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const cleanSymbolId = String(req.params.symbolId || '').trim();
 
@@ -1472,7 +1795,7 @@ function getWebAuthnConfig(req) {
 }
 
 // Passkey Status
-app.post('/api/passkey/status', async (req, res) => {
+app.post('/api/passkey/status', lookupLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const { symbolId } = req.body;
     const cleanSymbolId = String(symbolId || '').trim();
@@ -1505,7 +1828,7 @@ app.post('/api/passkey/status', async (req, res) => {
 });
 
 // Device Authentication Prototype - Register Options
-app.post('/api/passkey/register/options', async (req, res) => {
+app.post('/api/passkey/register/options', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const { symbolId } = req.body;
     const cleanSymbolId = String(symbolId || '').trim();
@@ -1567,7 +1890,7 @@ app.post('/api/passkey/register/options', async (req, res) => {
 });
 
 // Device Authentication Prototype - Register Verify
-app.post('/api/passkey/register/verify', async (req, res) => {
+app.post('/api/passkey/register/verify', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const { symbolId, response } = req.body;
     const cleanSymbolId = String(symbolId || '').trim();
@@ -1647,7 +1970,7 @@ app.post('/api/passkey/register/verify', async (req, res) => {
 });
 
 // Device Authentication Prototype - Auth Options
-app.post('/api/passkey/auth/options', async (req, res) => {
+app.post('/api/passkey/auth/options', credentialLimit, async (req, res) => {
   try {
     const { symbolId } = req.body;
     const cleanSymbolId = String(symbolId || '').trim();
@@ -1700,7 +2023,7 @@ app.post('/api/passkey/auth/options', async (req, res) => {
 });
 
 // Device Authentication Prototype - Auth Verify
-app.post('/api/passkey/auth/verify', async (req, res) => {
+app.post('/api/passkey/auth/verify', credentialLimit, async (req, res) => {
   try {
     const { symbolId, response } = req.body;
     const cleanSymbolId = String(symbolId || '').trim();
@@ -1759,6 +2082,11 @@ app.post('/api/passkey/auth/verify', async (req, res) => {
     return res.status(200).json({
       verified: true,
       message: 'Device authentication successful.',
+      // A verified WebAuthn assertion is a stronger credential than the PIN,
+      // so it mints a session on the same terms as /api/login. Without this,
+      // signing in by fingerprint alone would leave the app with no token and
+      // every protected route answering 401.
+      token: issueAuthToken(user),
       user: await publicUserPayload(user)
     });
   } catch (error) {
@@ -2028,7 +2356,45 @@ function cleanTransactionPayload(transaction, sender, receiver) {
   };
 }
 
-app.get('/api/users/resolve', async (req, res) => {
+// Is this Gloobal ID free to claim?
+//
+// Public, because registration has to ask it before anybody has an account to
+// sign in with — but it answers with one boolean and nothing else. The route
+// below returns a name, a phone number and a cashback rate, and registration
+// was using THAT to check availability, which is why an unauthenticated caller
+// could turn a guessed ID into somebody's contact details.
+//
+// Being able to tell a taken ID from a free one is inherent to letting people
+// choose their own: the mitigation is that this is rate limited and leaks
+// nothing but the bit itself.
+app.get('/api/users/available', lookupLimit, async (req, res) => {
+  try {
+    const symbolId = safeDecodeSymbolId(String(req.query.symbolId || req.query.identifier || '')).trim();
+
+    if (!symbolId) {
+      return res.status(400).json({
+        success: false,
+        message: 'A Gloobal ID is required.'
+      });
+    }
+
+    const taken = await User.exists({ symbolId });
+
+    return res.json({ success: true, symbolId, available: !taken, exists: Boolean(taken) });
+  } catch (error) {
+    console.error('Availability check error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Could not check that Gloobal ID right now.'
+    });
+  }
+});
+
+// Looks up a payee. Signed in only: the response carries a real name, a mobile
+// number and a cashback rate, and it accepts a phone number as the identifier —
+// so unauthenticated it was both a directory of the platform's users and a
+// phone-number-to-account oracle. Availability checks belong on the route above.
+app.get('/api/users/resolve', lookupLimit, requireAuth, async (req, res) => {
   try {
     const identifier = String(req.query.identifier || '').trim();
 
@@ -2106,7 +2472,7 @@ const MAX_CREATOR_CASHBACK_RATE = 0.07;
 // PATCH /api/creator/cashback-rate — a Creator sets the share of every payment
 // they hand back to whoever paid them. Each Creator picks their own rate;
 // Gloobal does not set one centrally. Stored as a decimal (1% = 0.01).
-app.patch('/api/creator/cashback-rate', async (req, res) => {
+app.patch('/api/creator/cashback-rate', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const cleanSymbolId = String(req.body?.symbolId || '').trim();
     const rate = Number(req.body?.cashbackRate);
@@ -2184,7 +2550,7 @@ function faceUnavailable(res) {
 }
 
 // POST /api/face/enroll — records the reference face for an account.
-app.post('/api/face/enroll', async (req, res) => {
+app.post('/api/face/enroll', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     if (!faceCrypto.isConfigured()) return faceUnavailable(res);
 
@@ -2237,7 +2603,7 @@ app.post('/api/face/enroll', async (req, res) => {
 });
 
 // POST /api/face/verify — scores a fresh capture against the enrolled template.
-app.post('/api/face/verify', async (req, res) => {
+app.post('/api/face/verify', credentialLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     if (!faceCrypto.isConfigured()) return faceUnavailable(res);
 
@@ -2328,7 +2694,7 @@ app.post('/api/face/verify', async (req, res) => {
 });
 
 // GET /api/face/status/:symbolId — is a face enrolled, and is it usable now?
-app.get('/api/face/status/:symbolId', async (req, res) => {
+app.get('/api/face/status/:symbolId', lookupLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const cleanSymbolId = String(req.params.symbolId || '').trim();
     if (!cleanSymbolId) return res.status(400).json({ message: 'Gloobal ID is required.' });
@@ -2359,7 +2725,7 @@ app.get('/api/face/status/:symbolId', async (req, res) => {
 // Biometric data has to be deletable on request. Under India's DPDP Act this
 // is not a nice-to-have, and a face cannot be reissued if it leaks, so
 // "delete my face" must actually delete it rather than flag it inactive.
-app.delete('/api/face/:symbolId', async (req, res) => {
+app.delete('/api/face/:symbolId', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const cleanSymbolId = String(req.params.symbolId || '').trim();
     if (!cleanSymbolId) return res.status(400).json({ message: 'Gloobal ID is required.' });
@@ -2377,7 +2743,7 @@ app.delete('/api/face/:symbolId', async (req, res) => {
 });
 
 // GET /api/assets/:symbolId — a user's planted seeds with live-derived values.
-app.get('/api/assets/:symbolId', async (req, res) => {
+app.get('/api/assets/:symbolId', lookupLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const cleanSymbolId = String(req.params.symbolId || '').trim();
     if (!cleanSymbolId) {
@@ -2416,7 +2782,7 @@ app.get('/api/assets/:symbolId', async (req, res) => {
 
 // POST /api/assets/plant-seed — plant a new seed from a cashback-earning
 // payment. P2P sends carry cashbackRate 0 and are rejected here.
-app.post('/api/assets/plant-seed', async (req, res) => {
+app.post('/api/assets/plant-seed', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const { symbolId, business, category, amountPaid, cashbackRate, currency } = req.body || {};
     const cleanSymbolId = String(symbolId || '').trim();
@@ -2461,7 +2827,7 @@ app.post('/api/assets/plant-seed', async (req, res) => {
 // that actually exist: payments the account chose to put on PayLater
 // (metadata.payMethod), and the cashback seeds that raised the limit. An
 // account that has done neither gets an empty list, not a sample ledger.
-app.get('/api/assets/paylater/:symbolId', async (req, res) => {
+app.get('/api/assets/paylater/:symbolId', lookupLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const cleanSymbolId = String(req.params.symbolId || '').trim();
     if (!cleanSymbolId) {
@@ -2535,7 +2901,7 @@ app.get('/api/assets/paylater/:symbolId', async (req, res) => {
   }
 });
 
-app.post('/api/transactions/send', async (req, res) => {
+app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderSymbolId', 'fromSymbolId'), async (req, res) => {
   try {
     const {
       senderSymbolId,
@@ -2962,7 +3328,7 @@ app.post('/api/transactions/send', async (req, res) => {
   }
 });
 
-app.get('/api/transactions/history/:symbolId', async (req, res) => {
+app.get('/api/transactions/history/:symbolId', lookupLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const symbolId = String(req.params.symbolId || '').trim();
 
@@ -3028,7 +3394,7 @@ app.get('/api/transactions/history/:symbolId', async (req, res) => {
 // as /history, plus the two totals the dashboard's balance card needs. Kept
 // as one call so the PAID figure, the RECEIVED figure and the week's bars
 // are always three views of one fetch rather than three that can disagree.
-app.get('/api/transactions/:symbolId', async (req, res) => {
+app.get('/api/transactions/:symbolId', lookupLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
     const symbolId = String(req.params.symbolId || '').trim();
     const type = String(req.query.type || 'all').trim().toLowerCase();

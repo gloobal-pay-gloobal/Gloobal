@@ -36,9 +36,10 @@ const [beforeQuery, query] = process.env.MONGO_URI.split("?");
 process.env.MONGO_URI = `${beforeQuery.replace(/\/[^/]*$/, "/")}${TEST_DB}${query ? "?" + query : ""}`;
 process.env.PORT = process.env.TEST_PORT || "5199";
 process.env.PROTOTYPE_TRANSACTION_MAX_AMOUNT = "100000";
+process.env.AUTH_TOKEN_SECRET = "test-secret-not-the-production-one";
+process.env.PROTOTYPE_OTP = "123456";
 
 const mongoose = require("mongoose");
-const bcrypt = require("bcrypt");
 
 require(join(BACKEND, "server.js"));
 
@@ -63,48 +64,51 @@ const untilConnected = () =>
     setTimeout(() => reject(new Error("timed out connecting to MongoDB")), 40000);
   });
 
+// Registered once through the real flow, because /api/transactions/send now
+// requires a session token naming the sender — creating the documents directly
+// would produce accounts nobody can sign in as.
+let senderToken = null;
+
+const post = (path, body, token) =>
+  fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: Object.assign(
+      { "Content-Type": "application/json" },
+      token ? { Authorization: `Bearer ${token}` } : {}
+    ),
+    body: JSON.stringify(body)
+  }).then(async (response) => ({ status: response.status, body: await response.json().catch(() => null) }));
+
+async function registerAccount(symbol, mobileNumber, name) {
+  await post("/api/otp/send", { mobileNumber, purpose: "registration" });
+  await post("/api/otp/verify", { mobileNumber, otp: "123456", purpose: "registration" });
+  const registered = await post("/api/register-symbol", { fullName: name, mobileNumber, symbolId: symbol });
+  const token = registered.body?.token;
+  await post("/api/pin/set", { symbolId: symbol, pin: PIN }, token);
+  return token;
+}
+
+async function createAccounts() {
+  await Promise.all([User.deleteMany({}), Pin.deleteMany({}), Transaction.deleteMany({}), LedgerEntry.deleteMany({})]);
+  senderToken = await registerAccount(SENDER, "+919000000001", "Atomicity Sender");
+  await registerAccount(RECEIVER, "+919000000002", "Atomicity Receiver");
+  if (!senderToken) throw new Error("registration did not return a token");
+}
+
+// Resets balances and clears the transaction history between sections. The
+// accounts themselves persist, so the session token stays valid.
 async function seed(openingBalance) {
-  await Promise.all([
-    User.deleteMany({ symbolId: { $in: [SENDER, RECEIVER] } }),
-    Transaction.deleteMany({}),
-    LedgerEntry.deleteMany({})
-  ]);
-  const sender = await User.create({
-    fullName: "Atomicity Sender",
-    mobileNumber: "+919000000001",
-    symbolId: SENDER,
-    balance: openingBalance
-  });
-  const receiver = await User.create({
-    fullName: "Atomicity Receiver",
-    mobileNumber: "+919000000002",
-    symbolId: RECEIVER,
-    balance: 0,
-    cashbackRate: 0
-  });
-  await Pin.deleteMany({ userId: { $in: [sender._id, receiver._id] } });
-  await Pin.create({
-    userId: sender._id,
-    pinHash: await bcrypt.hash(PIN, 10),
-    failedAttempts: 0,
-    lockedUntil: null
-  });
+  await Promise.all([Transaction.deleteMany({}), LedgerEntry.deleteMany({})]);
+  await User.updateOne({ symbolId: SENDER }, { $set: { balance: openingBalance } });
+  await User.updateOne({ symbolId: RECEIVER }, { $set: { balance: 0, cashbackRate: 0 } });
 }
 
 const send = (amount, note, extra = {}) =>
-  fetch(`${BASE}/api/transactions/send`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      senderSymbolId: SENDER,
-      receiverSymbolId: RECEIVER,
-      amount,
-      currency: "INR",
-      note,
-      pin: PIN,
-      ...extra
-    })
-  }).then(async (response) => ({ status: response.status, body: await response.json() }));
+  post(
+    "/api/transactions/send",
+    { senderSymbolId: SENDER, receiverSymbolId: RECEIVER, amount, currency: "INR", note, pin: PIN, ...extra },
+    senderToken
+  );
 
 const balances = async () => {
   const [sender, receiver] = await Promise.all([
@@ -126,6 +130,8 @@ async function run() {
     throw new Error(`refusing to run against "${mongoose.connection.name}" — expected ${TEST_DB}`);
   }
   console.log(`db: ${mongoose.connection.name}\n`);
+
+  await createAccounts();
 
   console.log("1. ten concurrent sends of 800 against a balance of 1000");
   await seed(1000);
