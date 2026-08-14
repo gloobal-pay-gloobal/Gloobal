@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const crypto = require('crypto');
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -858,6 +859,25 @@ app.get('/api/profile/count', async (req, res) => {
 
     return res.status(500).json({
       message: 'Server error while counting users.'
+    });
+  }
+});
+
+// GET /api/stats — platform-wide figures for the Coverage screen. The same
+// count /api/profile/count returns, under the name and key the clients ask
+// for, so a caller does not have to know that the only platform statistic
+// this server keeps happens to live under the profile prefix. Kept as its own
+// route rather than a redirect: this is where a second figure would go.
+app.get('/api/stats', async (req, res) => {
+  try {
+    const totalUsers = await User.countDocuments();
+
+    return res.status(200).json({ totalUsers, total: totalUsers });
+  } catch (error) {
+    console.error('Stats Error:', error);
+
+    return res.status(500).json({
+      message: 'Server error while loading platform statistics.'
     });
   }
 });
@@ -1842,12 +1862,58 @@ function cleanResolvedTransactionUserPayload(resolved) {
     email: resolved.user.email || '',
     mobileNumber: resolved.user.mobileNumber || '',
     symbolId: resolved.user.symbolId,
+    // The payee's own Creator Share. A sender has to be told the rate
+    // before they pay, and this route is the only lookup they perform, so
+    // withholding it here is what made every recipient card read "0.00%"
+    // regardless of what the account had actually set.
+    cashbackRate: Number(resolved.user.cashbackRate) || 0,
     matchedBy: resolved.matchedBy,
     normalizedIdentifier: resolved.normalizedIdentifier,
   };
 }
+
+// A transaction reference is written in the same alphabet as a Gloobal ID —
+// twenty of the eight symbols, nothing else. It used to be
+// `GLOOBAL-TXN-<epoch ms>-<base36>`, which leaked the exact creation time to
+// anyone holding a receipt and read as machine output rather than as part of
+// this product.
+//
+// Twenty symbols is 8^20 ≈ 1.15e18 possibilities, drawn from the CSPRNG, so a
+// collision against Transaction.referenceId's unique index is not a practical
+// concern (and a duplicate key would surface as a rejected write, never as a
+// misattributed payment).
+const TRANSACTION_REFERENCE_LENGTH = 20;
+
 function createPrototypeTransactionReference() {
-  return `GLOOBAL-TXN-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+  let reference = '';
+  for (let i = 0; i < TRANSACTION_REFERENCE_LENGTH; i += 1) {
+    reference += GLOOBAL_SYMBOLS[crypto.randomInt(GLOOBAL_SYMBOLS.length)];
+  }
+  return reference;
+}
+
+// The sending client mints a transaction ID before it calls, because its own
+// receipt, complaint window and location record are all keyed by it. Honouring
+// that ID here is what makes the sender's receipt and the receiver's history
+// row name the SAME transaction — otherwise the two parties hold two different
+// IDs for one payment and neither can quote the other's.
+//
+// Only a well-formed value is accepted (twenty of the eight symbols, nothing
+// else), and only if it is genuinely unused: referenceId is unique-indexed, so
+// a taken one would fail the write. A rejected value is not an error — the
+// server just mints its own, exactly as it does for a client that sends none.
+async function resolveTransactionReference(candidate) {
+  const cleaned = String(candidate || '').trim();
+  const chars = Array.from(cleaned);
+  const wellFormed =
+    chars.length === TRANSACTION_REFERENCE_LENGTH &&
+    chars.every((ch) => GLOOBAL_SYMBOLS.includes(ch));
+
+  if (wellFormed && !(await Transaction.exists({ referenceId: cleaned }))) {
+    return cleaned;
+  }
+
+  return createPrototypeTransactionReference();
 }
 
 function cleanTransactionUser(user) {
@@ -2585,7 +2651,7 @@ app.post('/api/transactions/send', async (req, res) => {
       type: 'send',
       status: 'pending',
       note: cleanNote,
-      referenceId: createPrototypeTransactionReference(),
+      referenceId: await resolveTransactionReference(req.body?.referenceId ?? req.body?.transactionId),
       metadata: {
         prototype: true,
         idempotencyKey: cleanIdempotencyKey || null,
