@@ -31,7 +31,23 @@ const transactionSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ['send', 'receive', 'request', 'qr_payment', 'refund', 'reversal'],
+      // The three coin types are distinct from 'send' on purpose. A mint and a
+      // redeem have one party, not two, and their fromUserId/toUserId would be
+      // the same account — recording them as a 'send' would put a self-transfer
+      // in the history of an API that rejects self-transfers everywhere else.
+      // 'coin_send' is a real two-party movement but in coin units, so a
+      // history reader that sums 'send' amounts as fiat must not pick it up.
+      enum: [
+        'send',
+        'receive',
+        'request',
+        'qr_payment',
+        'refund',
+        'reversal',
+        'coin_mint',
+        'coin_redeem',
+        'coin_send',
+      ],
       required: true,
       index: true,
     },

@@ -78,6 +78,23 @@ const userSchema = new mongoose.Schema({
     default: 10000,
     min: 0
   },
+  // Gloobal Coin held by this account, in coin units.
+  //
+  // Deliberately NOT defaulted to a float the way `balance` is: nobody is
+  // given coin, they mint it, and every coin in this field was created by
+  // moving the same amount of `balance` into the CoinReserve. The sum of this
+  // field across all accounts equals CoinReserve.issued and CoinReserve.reserve
+  // — see CoinReserve.js for why all three are kept rather than derived.
+  //
+  // `min: 0` is load-bearing, not decorative. The mint/redeem/transfer updates
+  // guard with `coinBalance: { $gte: amount }`, so a debit that would go
+  // negative matches no document and writes nothing; this bound is the second
+  // line of defence if a future write forgets that guard.
+  coinBalance: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
   // The direct person who invited them
   referredBy: {
     type: String,

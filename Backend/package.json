@@ -4,9 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node tests/auth-and-access.test.mjs && node tests/transfer-atomicity.test.mjs",
+    "test": "node tests/auth-and-access.test.mjs && node tests/transfer-atomicity.test.mjs && node tests/coin-supply-invariant.test.mjs",
     "test:auth": "node tests/auth-and-access.test.mjs",
-    "test:atomicity": "node tests/transfer-atomicity.test.mjs"
+    "test:atomicity": "node tests/transfer-atomicity.test.mjs",
+    "test:coin": "node tests/coin-supply-invariant.test.mjs"
   },
   "keywords": [],
   "author": "",

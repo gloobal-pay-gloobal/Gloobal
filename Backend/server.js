@@ -10,6 +10,7 @@ const Otp = require('./models/Otp');
 const Pin = require('./models/Pin');
 const Transaction = require('./models/Transaction');
 const LedgerEntry = require('./models/LedgerEntry');
+const CoinReserve = require('./models/CoinReserve');
 const Referral = require('./models/Referral');
 const Interest = require('./models/Interest');
 const Product = require('./models/Product');
@@ -1257,7 +1258,10 @@ app.get('/api/profile/:symbolId', lookupLimit, requireAuth, requireSelf('symbolI
 //   Limitless  PROTOTYPE_TRANSACTION_MAX_AMOUNT caps every transfer
 const DEFAULT_PRODUCTS = [
   { key: 'bank', live: true },
-  { key: 'coin', live: false }
+  // Coin became live when /api/coin/{mint,redeem,send} shipped. Before that it
+  // was a screen; now it is a currency you can hold, move and cash out, with a
+  // reserve behind it that tests/coin-supply-invariant.test.mjs checks.
+  { key: 'coin', live: true }
 ];
 
 const DEFAULT_PRODUCT_SERVICES = [
@@ -1265,10 +1269,39 @@ const DEFAULT_PRODUCT_SERVICES = [
   { product: 'bank', label: 'Borderless', status: 'live', note: 'Send across currencies today', order: 1 },
   { product: 'bank', label: 'Taxless', status: 'planned', note: 'No tax handling is built yet', order: 2 },
   { product: 'bank', label: 'Limitless', status: 'planned', note: 'Transfers are still capped per payment', order: 3 },
-  { product: 'coin', label: 'Stable', status: 'planned', note: 'No peg or reserve exists yet', order: 0 },
-  { product: 'coin', label: 'Instant', status: 'planned', note: 'No settlement rail yet', order: 1 },
-  { product: 'coin', label: 'Borderless', status: 'planned', note: 'No settlement rail yet', order: 2 },
-  { product: 'coin', label: 'Backed', status: 'planned', note: 'No reserve is held yet', order: 3 }
+  // Coin's four, revisited now that the coin exists. Each is either something
+  // this codebase does or something it does not, and the three that changed
+  // changed because code was written, not because the wording softened:
+  //
+  //   Stable      pegged 1:1 to the reserve currency and redeemable at that
+  //               rate, both directions, by /api/coin/{mint,redeem}
+  //   Instant     /api/coin/send commits inside one Mongo transaction; there
+  //               is no pending state for a coin transfer to sit in
+  //   Backed      CoinReserve holds fiat equal to every coin issued, and
+  //               /api/coin/supply reports the comparison rather than a claim
+  //   Borderless  still not true: the reserve is denominated in one currency,
+  //               so coin cannot yet be minted against or redeemed into
+  //               another. Sending across borders is not the missing piece —
+  //               a multi-currency reserve is.
+  { product: 'coin', label: 'Stable', status: 'live', note: 'Pegged 1:1 and redeemable from reserve', order: 0 },
+  { product: 'coin', label: 'Instant', status: 'live', note: 'Transfers settle immediately', order: 1 },
+  { product: 'coin', label: 'Borderless', status: 'planned', note: 'The reserve is single-currency for now', order: 2 },
+  { product: 'coin', label: 'Backed', status: 'live', note: 'Every coin is backed 1:1 in reserve', order: 3 }
+];
+
+// The seed above is insert-only, so it cannot correct a row that already
+// exists — which is every coin row on any deployment that has booted before.
+// Those rows say the coin has no reserve and no rail, and that is now false.
+//
+// Narrow on purpose: each update matches the exact stale note as well as the
+// label, so a row somebody edited by hand in Atlas does not match and is left
+// alone. Once every deployment has run this it becomes a no-op, and it is safe
+// to run repeatedly in the meantime.
+const COIN_SERVICE_CORRECTIONS = [
+  { label: 'Stable', staleNote: 'No peg or reserve exists yet', status: 'live', note: 'Pegged 1:1 and redeemable from reserve' },
+  { label: 'Instant', staleNote: 'No settlement rail yet', status: 'live', note: 'Transfers settle immediately' },
+  { label: 'Borderless', staleNote: 'No settlement rail yet', status: 'planned', note: 'The reserve is single-currency for now' },
+  { label: 'Backed', staleNote: 'No reserve is held yet', status: 'live', note: 'Every coin is backed 1:1 in reserve' }
 ];
 
 // Runs once at boot. Uses insert-if-absent rather than upsert-with-values
@@ -1282,6 +1315,23 @@ const seedProductCatalogue = async () => {
     await Promise.all(DEFAULT_PRODUCT_SERVICES.map((doc) =>
       ProductService.updateOne({ product: doc.product, label: doc.label }, { $setOnInsert: doc }, { upsert: true })
     ));
+    // Correct the coin rows written before the coin existed. Matched on the
+    // stale note as well as the label, so only the rows this seed itself wrote
+    // are touched. See COIN_SERVICE_CORRECTIONS.
+    await Promise.all(COIN_SERVICE_CORRECTIONS.map((row) =>
+      ProductService.updateOne(
+        { product: 'coin', label: row.label, note: row.staleNote },
+        { $set: { status: row.status, note: row.note } }
+      )
+    ));
+    // Same reasoning for the product itself: it was seeded live:false and the
+    // insert-only seed cannot revise that. Guarded on the old value so a
+    // deliberate takedown (someone setting it false in Atlas to hide a broken
+    // coin) is not undone on the next restart... which this cannot distinguish
+    // from the stale seed, so it is the one correction here that is not fully
+    // safe. It is applied because a coin that works while the catalogue calls
+    // it dead is the worse failure, and flipping it back is one Atlas edit.
+    await Product.updateOne({ key: 'coin', live: false }, { $set: { live: true } });
   } catch (error) {
     // A failed seed must not stop the server booting. The app carries its
     // own copy of this list as a fallback, so the screens still render.
@@ -3487,6 +3537,552 @@ app.get('/api/transactions/:symbolId', lookupLimit, requireAuth, requireSelf('sy
       success: false,
       message: 'Could not load transactions.',
     });
+  }
+});
+
+// ── Gloobal Coin ────────────────────────────────────────────────────────────
+//
+// A fully backed prototype currency. Every coin in existence was minted by
+// moving the same amount of prototype fiat out of an account and into the
+// CoinReserve, and can be redeemed back at the same rate. Nothing here creates
+// value: a mint converts, a transfer moves, a redeem converts back, and the
+// total supply only changes on the first and the last.
+//
+// The three properties worth stating, because the tests assert exactly them:
+//
+//   1. reserve == issued == sum(User.coinBalance), after every operation
+//   2. a transfer changes neither reserve nor issued — only who holds
+//   3. fiat + coin held by an account is unchanged by mint and redeem
+//
+// Coin is denominated in GC and fiat in INR, and the two are never added
+// together anywhere in this file. They are equal in magnitude by the 1:1 issue
+// rate, which is a property of the peg and not licence to treat one as the
+// other.
+const COIN_CURRENCY = 'GC';
+
+const coinBalanceOf = (user) => {
+  const raw = Number(user?.coinBalance);
+  return Number.isFinite(raw) ? raw : 0;
+};
+
+// The PIN check, as the transfer route performs it, for the one coin operation
+// that needs it. Returns null when the PIN is good, or a { status, message }
+// to send back when it is not.
+//
+// Written as its own function rather than by reaching into the transfer route,
+// and the transfer route is deliberately left alone: it is the most heavily
+// tested path in this file and a refactor of it is not something to smuggle in
+// alongside a new feature.
+const rejectOnBadPin = async (user, rawPin) => {
+  const cleanPin = String(rawPin || '').trim();
+
+  if (!cleanPin) return { status: 400, message: 'PIN is required before sending coin.' };
+  if (!isValidPinFormat(cleanPin)) return { status: 400, message: 'PIN must be 4 to 6 digits.' };
+
+  const pinRecord = await Pin.findOne({ userId: user._id });
+
+  if (!pinRecord) return { status: 404, message: 'PIN is not set for this Secure ID.' };
+
+  if (pinRecord.lockedUntil && pinRecord.lockedUntil > new Date()) {
+    return { status: 423, message: 'PIN is temporarily locked. Please try again later.' };
+  }
+
+  const matches = await bcrypt.compare(cleanPin, pinRecord.pinHash);
+
+  if (!matches) {
+    pinRecord.failedAttempts = (pinRecord.failedAttempts || 0) + 1;
+    if (pinRecord.failedAttempts >= 5) {
+      pinRecord.lockedUntil = new Date(Date.now() + 10 * 60 * 1000);
+    }
+    await pinRecord.save();
+    return { status: 401, message: 'Invalid PIN.' };
+  }
+
+  pinRecord.failedAttempts = 0;
+  pinRecord.lockedUntil = null;
+  pinRecord.lastVerifiedAt = new Date();
+  await pinRecord.save();
+
+  return null;
+};
+
+// Shared validation for an amount arriving in a coin request body.
+const readCoinAmount = (raw) => {
+  const amount = toMinorUnit(Number(raw));
+  const maxPrototypeAmount = Number(process.env.PROTOTYPE_TRANSACTION_MAX_AMOUNT || 5000);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { error: 'Valid amount greater than 0 is required.' };
+  }
+
+  if (Number.isFinite(maxPrototypeAmount) && maxPrototypeAmount > 0 && amount > maxPrototypeAmount) {
+    return { error: `Prototype coin limit is ${maxPrototypeAmount} per operation.` };
+  }
+
+  return { amount };
+};
+
+// Total supply and the reserve behind it.
+//
+// Public and unauthenticated, like /api/stats: it answers with three aggregate
+// numbers and names nobody. It is also the honest version of the claim the
+// Gloobal Coin screen makes — a client can show "backed" only because this
+// route says the reserve matches what has been issued, rather than because the
+// copy on the screen says so.
+//
+// MUST stay declared above /api/coin/:symbolId. Express matches in declaration
+// order, and behind the parameterised route this 404s with
+// symbolId === 'supply'.
+app.get('/api/coin/supply', async (req, res) => {
+  try {
+    const reserveDoc = await CoinReserve.load();
+
+    // Summed from the accounts themselves, not read off the reserve document.
+    // The whole value of this number is that it was maintained by a different
+    // set of writes, so it can disagree.
+    const [held] = await User.aggregate([
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$coinBalance', 0] } }, holders: { $sum: { $cond: [{ $gt: [{ $ifNull: ['$coinBalance', 0] }, 0] }, 1, 0] } } } },
+    ]);
+
+    const reserve = toMinorUnit(reserveDoc?.reserve || 0);
+    const issued = toMinorUnit(reserveDoc?.issued || 0);
+    const heldByAccounts = toMinorUnit(held?.total || 0);
+
+    return res.json({
+      success: true,
+      reserve,
+      issued,
+      heldByAccounts,
+      holders: held?.holders || 0,
+      reserveCurrency: reserveDoc?.reserveCurrency || 'INR',
+      coinCurrency: COIN_CURRENCY,
+      // Not a boast — a comparison of three independently maintained figures.
+      // A client that shows "fully backed" is quoting this, and if the numbers
+      // ever disagree it says so instead.
+      backed: reserve === issued && issued === heldByAccounts,
+    });
+  } catch (error) {
+    console.error('Coin supply error:', error);
+    return res.status(500).json({ success: false, message: 'Could not load coin supply.' });
+  }
+});
+
+// One account's coin position, plus the supply it sits inside.
+app.get('/api/coin/:symbolId', lookupLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
+  try {
+    const user = await User.findOne({ symbolId: String(req.params.symbolId || '').trim() });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Secure ID not found.' });
+    }
+
+    const reserveDoc = await CoinReserve.load();
+
+    return res.json({
+      success: true,
+      symbolId: user.symbolId,
+      coinBalance: coinBalanceOf(user),
+      balance: accountBalanceOf(user),
+      coinCurrency: COIN_CURRENCY,
+      reserveCurrency: reserveDoc?.reserveCurrency || 'INR',
+      reserve: toMinorUnit(reserveDoc?.reserve || 0),
+      issued: toMinorUnit(reserveDoc?.issued || 0),
+    });
+  } catch (error) {
+    console.error('Coin balance error:', error);
+    return res.status(500).json({ success: false, message: 'Could not load coin balance.' });
+  }
+});
+
+// Mint: fiat out of the account, into the reserve; coin issued 1:1.
+//
+// No PIN. A mint moves value between two things the same person owns and is
+// undone in full by a redeem, so there is no counterparty and nothing to lose
+// to a mistake — gating it behind a credential would be friction that buys
+// nothing. /api/coin/send does require one, because that is irreversible and
+// has someone else on the other end.
+app.post('/api/coin/mint', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
+  try {
+    const { symbolId, amount } = req.body || {};
+    const { amount: coinAmount, error } = readCoinAmount(amount);
+
+    if (error) return res.status(400).json({ success: false, message: error });
+
+    const user = await User.findOne({ symbolId: String(symbolId || '').trim() });
+
+    if (!user) return res.status(404).json({ success: false, message: 'Secure ID not found.' });
+
+    // Accounts predating the balance field cannot satisfy `balance: { $gte }`.
+    // coinBalance needs no equivalent: $inc materialises a missing field on the
+    // credit side, and on the debit side a missing field failing the guard is
+    // the correct answer — that account holds no coin.
+    await materialiseBalance(user);
+
+    const referenceId = await resolveTransactionReference(null);
+
+    const { value, atomic } = await withMongoTransaction(async (session) => {
+      const sessionOpt = session ? { session } : {};
+
+      // One update, both fields. Fiat leaving and coin arriving are the same
+      // event, and splitting them into two writes would open a window in which
+      // the account had neither.
+      const converted = await User.findOneAndUpdate(
+        { _id: user._id, balance: { $gte: coinAmount } },
+        { $inc: { balance: -coinAmount, coinBalance: coinAmount } },
+        { returnDocument: 'after', ...sessionOpt }
+      );
+
+      if (!converted) {
+        const current = await User.findById(user._id).select('balance').lean();
+        throw new InsufficientBalanceError(accountBalanceOf(current || {}));
+      }
+
+      const reserveDoc = await CoinReserve.findOneAndUpdate(
+        { key: 'global' },
+        { $inc: { reserve: coinAmount, issued: coinAmount } },
+        { upsert: true, returnDocument: 'after', ...sessionOpt }
+      );
+
+      const balanceAfter = toMinorUnit(converted.balance);
+      const coinAfter = toMinorUnit(converted.coinBalance);
+
+      const [transaction] = await Transaction.create(
+        [
+          {
+            fromUserId: user._id,
+            toUserId: null,
+            amount: coinAmount,
+            currency: COIN_CURRENCY,
+            type: 'coin_mint',
+            status: 'success',
+            note: 'Minted Gloobal Coin',
+            referenceId,
+            metadata: { prototype: true, reserveCurrency: reserveDoc?.reserveCurrency || 'INR' },
+          },
+        ],
+        session ? { session } : {}
+      );
+
+      // Two lines in two currencies. They are not a debit/credit pair of one
+      // journal entry — a single entry cannot balance across currencies — but
+      // the fiat leg and the coin leg of the same conversion, each recorded
+      // against the unit it actually moved in.
+      await LedgerEntry.create(
+        [
+          {
+            transactionId: transaction._id,
+            userId: user._id,
+            entryType: 'debit',
+            amount: coinAmount,
+            balanceBefore: toMinorUnit(balanceAfter + coinAmount),
+            balanceAfter,
+            currency: reserveDoc?.reserveCurrency || 'INR',
+            note: 'Fiat moved into coin reserve',
+            metadata: { prototype: true, coinLeg: 'fiat', transactionReferenceId: transaction.referenceId },
+          },
+          {
+            transactionId: transaction._id,
+            userId: user._id,
+            entryType: 'credit',
+            amount: coinAmount,
+            balanceBefore: toMinorUnit(coinAfter - coinAmount),
+            balanceAfter: coinAfter,
+            currency: COIN_CURRENCY,
+            note: 'Gloobal Coin issued',
+            metadata: { prototype: true, coinLeg: 'coin', transactionReferenceId: transaction.referenceId },
+          },
+        ],
+        session ? { session, ordered: true } : {}
+      );
+
+      return { transaction, balanceAfter, coinAfter, reserveDoc };
+    });
+
+    return res.json({
+      success: true,
+      atomic,
+      minted: coinAmount,
+      balance: value.balanceAfter,
+      coinBalance: value.coinAfter,
+      reserve: toMinorUnit(value.reserveDoc?.reserve || 0),
+      issued: toMinorUnit(value.reserveDoc?.issued || 0),
+      referenceId: value.transaction.referenceId,
+    });
+  } catch (error) {
+    if (error instanceof InsufficientBalanceError) {
+      return res.status(400).json({ success: false, message: 'Not enough balance to mint that much.', balance: error.balance });
+    }
+    console.error('Coin mint error:', error);
+    return res.status(500).json({ success: false, message: 'Could not mint Gloobal Coin.' });
+  }
+});
+
+// Redeem: coin destroyed, fiat returned from the reserve. The exact inverse of
+// a mint, including which numbers move.
+app.post('/api/coin/redeem', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
+  try {
+    const { symbolId, amount } = req.body || {};
+    const { amount: coinAmount, error } = readCoinAmount(amount);
+
+    if (error) return res.status(400).json({ success: false, message: error });
+
+    const user = await User.findOne({ symbolId: String(symbolId || '').trim() });
+
+    if (!user) return res.status(404).json({ success: false, message: 'Secure ID not found.' });
+
+    await materialiseBalance(user);
+
+    const referenceId = await resolveTransactionReference(null);
+
+    const { value, atomic } = await withMongoTransaction(async (session) => {
+      const sessionOpt = session ? { session } : {};
+
+      const converted = await User.findOneAndUpdate(
+        { _id: user._id, coinBalance: { $gte: coinAmount } },
+        { $inc: { coinBalance: -coinAmount, balance: coinAmount } },
+        { returnDocument: 'after', ...sessionOpt }
+      );
+
+      if (!converted) {
+        const current = await User.findById(user._id).select('coinBalance').lean();
+        const held = coinBalanceOf(current || {});
+        const shortfall = new Error('Not enough Gloobal Coin to redeem that much.');
+        shortfall.name = 'InsufficientCoinError';
+        shortfall.coinBalance = held;
+        throw shortfall;
+      }
+
+      // Guarded, not merely decremented. If the reserve cannot cover this the
+      // account is holding coin the reserve never backed, and the right move is
+      // to fail loudly rather than to pay out fiat that was never deposited and
+      // drive the reserve negative.
+      const reserveDoc = await CoinReserve.findOneAndUpdate(
+        { key: 'global', reserve: { $gte: coinAmount }, issued: { $gte: coinAmount } },
+        { $inc: { reserve: -coinAmount, issued: -coinAmount } },
+        { returnDocument: 'after', ...sessionOpt }
+      );
+
+      if (!reserveDoc) {
+        throw new Error('Coin reserve is short of the amount being redeemed — refusing to pay out unbacked coin.');
+      }
+
+      const balanceAfter = toMinorUnit(converted.balance);
+      const coinAfter = toMinorUnit(converted.coinBalance);
+
+      const [transaction] = await Transaction.create(
+        [
+          {
+            fromUserId: user._id,
+            toUserId: null,
+            amount: coinAmount,
+            currency: COIN_CURRENCY,
+            type: 'coin_redeem',
+            status: 'success',
+            note: 'Redeemed Gloobal Coin',
+            referenceId,
+            metadata: { prototype: true, reserveCurrency: reserveDoc.reserveCurrency || 'INR' },
+          },
+        ],
+        session ? { session } : {}
+      );
+
+      await LedgerEntry.create(
+        [
+          {
+            transactionId: transaction._id,
+            userId: user._id,
+            entryType: 'debit',
+            amount: coinAmount,
+            balanceBefore: toMinorUnit(coinAfter + coinAmount),
+            balanceAfter: coinAfter,
+            currency: COIN_CURRENCY,
+            note: 'Gloobal Coin redeemed',
+            metadata: { prototype: true, coinLeg: 'coin', transactionReferenceId: transaction.referenceId },
+          },
+          {
+            transactionId: transaction._id,
+            userId: user._id,
+            entryType: 'credit',
+            amount: coinAmount,
+            balanceBefore: toMinorUnit(balanceAfter - coinAmount),
+            balanceAfter,
+            currency: reserveDoc.reserveCurrency || 'INR',
+            note: 'Fiat returned from coin reserve',
+            metadata: { prototype: true, coinLeg: 'fiat', transactionReferenceId: transaction.referenceId },
+          },
+        ],
+        session ? { session, ordered: true } : {}
+      );
+
+      return { transaction, balanceAfter, coinAfter, reserveDoc };
+    });
+
+    return res.json({
+      success: true,
+      atomic,
+      redeemed: coinAmount,
+      balance: value.balanceAfter,
+      coinBalance: value.coinAfter,
+      reserve: toMinorUnit(value.reserveDoc?.reserve || 0),
+      issued: toMinorUnit(value.reserveDoc?.issued || 0),
+      referenceId: value.transaction.referenceId,
+    });
+  } catch (error) {
+    if (error.name === 'InsufficientCoinError') {
+      return res.status(400).json({ success: false, message: error.message, coinBalance: error.coinBalance });
+    }
+    console.error('Coin redeem error:', error);
+    return res.status(500).json({ success: false, message: 'Could not redeem Gloobal Coin.' });
+  }
+});
+
+// Coin from one account to another.
+//
+// Supply is untouched: no coin is created or destroyed, and the reserve is not
+// read or written. That is the property that makes this a currency rather than
+// a balance transfer with extra steps — the backing does not have to move for
+// the coin to.
+app.post('/api/coin/send', writeLimit, requireAuth, requireSelf('senderSymbolId', 'symbolId'), async (req, res) => {
+  try {
+    const { senderSymbolId, symbolId, receiverSymbolId, toSymbolId, amount, note = '', pin } = req.body || {};
+
+    const senderIdentifier = String(senderSymbolId || symbolId || '').trim();
+    const receiverIdentifier = String(receiverSymbolId || toSymbolId || '').trim();
+    const cleanNote = String(note || '').trim().slice(0, 140);
+    const { amount: coinAmount, error } = readCoinAmount(amount);
+
+    if (error) return res.status(400).json({ success: false, message: error });
+    if (!senderIdentifier) return res.status(400).json({ success: false, message: 'Sender Secure ID is required.' });
+    if (!receiverIdentifier) return res.status(400).json({ success: false, message: 'Receiver Secure ID is required.' });
+
+    if (normalizeText(senderIdentifier) === normalizeText(receiverIdentifier)) {
+      return res.status(400).json({ success: false, message: 'Self-transfer is not allowed.' });
+    }
+
+    const sender = (await resolveTransactionUserByIdentifier(senderIdentifier))?.user;
+    const receiver = (await resolveTransactionUserByIdentifier(receiverIdentifier))?.user;
+
+    if (!sender) return res.status(404).json({ success: false, message: 'Sender Secure ID not found.' });
+    if (!receiver) return res.status(404).json({ success: false, message: 'Receiver Secure ID not found.' });
+
+    if (String(sender._id) === String(receiver._id)) {
+      return res.status(400).json({ success: false, message: 'Self-transfer is not allowed.' });
+    }
+
+    // Before the balance is looked at, so a wrong PIN learns nothing about
+    // what the account holds.
+    const pinFailure = await rejectOnBadPin(sender, pin);
+    if (pinFailure) return res.status(pinFailure.status).json({ success: false, message: pinFailure.message });
+
+    const referenceId = await resolveTransactionReference(req.body?.referenceId);
+
+    const { value, atomic } = await withMongoTransaction(async (session) => {
+      const sessionOpt = session ? { session } : {};
+
+      const debited = await User.findOneAndUpdate(
+        { _id: sender._id, coinBalance: { $gte: coinAmount } },
+        { $inc: { coinBalance: -coinAmount } },
+        { returnDocument: 'after', ...sessionOpt }
+      );
+
+      if (!debited) {
+        const current = await User.findById(sender._id).select('coinBalance').lean();
+        const shortfall = new Error('Not enough Gloobal Coin to send that much.');
+        shortfall.name = 'InsufficientCoinError';
+        shortfall.coinBalance = coinBalanceOf(current || {});
+        throw shortfall;
+      }
+
+      let credited = null;
+
+      try {
+        credited = await User.findOneAndUpdate(
+          { _id: receiver._id },
+          { $inc: { coinBalance: coinAmount } },
+          { returnDocument: 'after', ...sessionOpt }
+        );
+
+        if (!credited) throw new Error('Receiver account disappeared mid-transfer.');
+
+        const senderCoinAfter = toMinorUnit(debited.coinBalance);
+        const receiverCoinAfter = toMinorUnit(credited.coinBalance);
+
+        const [transaction] = await Transaction.create(
+          [
+            {
+              fromUserId: sender._id,
+              toUserId: receiver._id,
+              amount: coinAmount,
+              currency: COIN_CURRENCY,
+              type: 'coin_send',
+              status: 'success',
+              note: cleanNote,
+              referenceId,
+              metadata: { prototype: true },
+            },
+          ],
+          session ? { session } : {}
+        );
+
+        await LedgerEntry.create(
+          [
+            {
+              transactionId: transaction._id,
+              userId: sender._id,
+              entryType: 'debit',
+              amount: coinAmount,
+              balanceBefore: toMinorUnit(senderCoinAfter + coinAmount),
+              balanceAfter: senderCoinAfter,
+              currency: COIN_CURRENCY,
+              note: 'Gloobal Coin sent',
+              metadata: { prototype: true, coinLeg: 'coin', transactionReferenceId: transaction.referenceId },
+            },
+            {
+              transactionId: transaction._id,
+              userId: receiver._id,
+              entryType: 'credit',
+              amount: coinAmount,
+              balanceBefore: toMinorUnit(receiverCoinAfter - coinAmount),
+              balanceAfter: receiverCoinAfter,
+              currency: COIN_CURRENCY,
+              note: 'Gloobal Coin received',
+              metadata: { prototype: true, coinLeg: 'coin', transactionReferenceId: transaction.referenceId },
+            },
+          ],
+          session ? { session, ordered: true } : {}
+        );
+
+        return { transaction, senderCoinAfter, receiverCoinAfter };
+      } catch (moveError) {
+        // Only reachable on a deployment without transactions, where the debit
+        // above really did commit. Inside a transaction the abort undoes it and
+        // compensating here would hand back coin twice.
+        if (!session) {
+          try {
+            await User.updateOne({ _id: sender._id }, { $inc: { coinBalance: coinAmount } });
+            if (credited) await User.updateOne({ _id: receiver._id }, { $inc: { coinBalance: -coinAmount } });
+          } catch (revertError) {
+            console.error('Coin transfer compensation failed:', revertError);
+          }
+        }
+        throw moveError;
+      }
+    });
+
+    return res.json({
+      success: true,
+      atomic,
+      sent: coinAmount,
+      coinBalance: value.senderCoinAfter,
+      referenceId: value.transaction.referenceId,
+      receiver: cleanTransactionUser(receiver),
+    });
+  } catch (error) {
+    if (error.name === 'InsufficientCoinError') {
+      return res.status(400).json({ success: false, message: error.message, coinBalance: error.coinBalance });
+    }
+    console.error('Coin send error:', error);
+    return res.status(500).json({ success: false, message: 'Could not send Gloobal Coin.' });
   }
 });
 
