@@ -20,6 +20,8 @@ const FaceTemplate = require('./models/FaceTemplate');
 const { nationalNumberFrom } = require('./constants/dialCodes');
 const faceCrypto = require('./lib/faceCrypto');
 const { compareDescriptors, matchThreshold } = require('./lib/faceMatch');
+const { settleCrossBorderPayment } = require('./lib/settlementEngine');
+const { mintShareLegAndReceipts } = require('./lib/merchantShareFlow');
 
 
 // The prototype float every account opens with. Kept here rather than only on
@@ -3328,6 +3330,27 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
     const completedTransaction = transferred.transaction;
     const senderBalanceAfter = transferred.senderBalanceAfter;
 
+    // Cross-border settlement — best-effort, same as the AssetSeed planting
+    // step below: the payment already succeeded, so this can only add a
+    // Settlement/pool audit trail on top of it, never affect the payment
+    // itself. Returns null for the common today case (both accounts default
+    // to countryIso 'IN', so there is no currency mismatch to settle) — see
+    // lib/settlementEngine.js for what makes it actually run.
+    let settlement = null;
+
+    try {
+      settlement = await settleCrossBorderPayment({
+        transaction: completedTransaction,
+        sender,
+        receiver,
+        amount: numericAmount,
+      });
+    } catch (settlementError) {
+      // settleCrossBorderPayment already catches and logs internally; this
+      // is only a backstop against a bug in that catch itself.
+      console.error('Settlement step raised unexpectedly (non-fatal):', settlementError);
+    }
+
     // Plant a My Assets seed for cashback-earning payments. The rate is the
     // *payee's* own choice (User.cashbackRate, set via
     // PATCH /api/creator/cashback-rate) — never a figure the paying client
@@ -3354,6 +3377,30 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
       }
     }
 
+    // The diagrams' "1 vs 2 transaction IDs, 1 vs 4 receipts" structure —
+    // best-effort, same reasoning as settlement and seed-planting above.
+    // Run after seed planting (not before) specifically so a merchant-share
+    // payment's share Transaction can carry plantedSeed's id in its
+    // metadata, linking the receipt trail back to the seed it documents.
+    let shareTransaction = null;
+    let receipts = [];
+
+    try {
+      ({ shareTransaction, receipts } = await mintShareLegAndReceipts({
+        paymentTransaction: completedTransaction,
+        sender,
+        receiver,
+        amount: numericAmount,
+        cashback,
+        currency: cleanCurrency,
+        assetSeedId: plantedSeed?._id || null,
+      }));
+    } catch (receiptError) {
+      // mintShareLegAndReceipts already catches and logs internally; this
+      // is only a backstop against a bug in that catch itself.
+      console.error('Receipt/share-leg step raised unexpectedly (non-fatal):', receiptError);
+    }
+
     return res.status(201).json({
       success: true,
       message: 'Prototype transaction completed successfully.',
@@ -3363,6 +3410,33 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
       cashbackRate: payeeCashbackRate,
       payeeReceives,
       assetSeed: plantedSeed ? computeSeed(plantedSeed) : null,
+      settlement: settlement
+        ? {
+            settlementId: settlement.settlementId,
+            sourceCountryIso: settlement.sourceCountryIso,
+            sourceCurrency: settlement.sourceCurrency,
+            sourceAmount: settlement.sourceAmount,
+            destinationCountryIso: settlement.destinationCountryIso,
+            destinationCurrency: settlement.destinationCurrency,
+            destinationAmount: settlement.destinationAmount,
+            rate: settlement.rate,
+            rateSource: settlement.rateSource,
+          }
+        : null,
+      shareTransaction: shareTransaction
+        ? {
+            referenceId: shareTransaction.referenceId,
+            amount: shareTransaction.amount,
+            currency: shareTransaction.currency,
+          }
+        : null,
+      receipts: receipts.map((r) => ({
+        receiptId: r.receiptId,
+        leg: r.leg,
+        role: r.role,
+        amount: r.amount,
+        currency: r.currency,
+      })),
     });
   } catch (error) {
     // No pending row to reconcile any more. A Transaction is now written as
@@ -3400,6 +3474,17 @@ app.get('/api/transactions/history/:symbolId', lookupLimit, requireAuth, require
 
     const transactions = await Transaction.find({
       $or: [{ fromUserId: user._id }, { toUserId: user._id }],
+      // 'share' legs (lib/merchantShareFlow.js) move no real balance and
+      // exist purely as a receipt-trail record of a diversion already
+      // reflected in the payer's AssetSeed. Every reader of this endpoint
+      // today — GloobalCoverageScreen's spend/transaction-count figures
+      // among them — was built assuming every row here is a real send/
+      // receive, so a 'share' row would double-count as extra spend and
+      // show up as a confusing second "sent" entry for the same purchase.
+      // Excluded here, not deleted: the rows still exist for whatever
+      // reads Receipt/Transaction directly (e.g. a future Creator Share
+      // history view), this endpoint just isn't that view.
+      type: { $ne: 'share' },
     })
       .sort({ createdAt: -1 })
       .limit(50)
@@ -3473,6 +3558,12 @@ app.get('/api/transactions/:symbolId', lookupLimit, requireAuth, requireSelf('sy
       {
         $match: {
           status: 'success',
+          // Same exclusion as /api/transactions/history/:symbolId above —
+          // a 'share' leg moves no real balance (lib/merchantShareFlow.js),
+          // so counting it here would inflate totalSent/totalReceived by
+          // the cashback amount on top of the real payment that already
+          // includes it.
+          type: { $ne: 'share' },
           $or: [{ fromUserId: user._id }, { toUserId: user._id }],
         },
       },
@@ -3494,7 +3585,11 @@ app.get('/api/transactions/:symbolId', lookupLimit, requireAuth, requireSelf('sy
       : type === 'received' ? { toUserId: user._id }
       : { $or: [{ fromUserId: user._id }, { toUserId: user._id }] };
 
-    const records = await Transaction.find(directionMatch)
+    // Same exclusion as the totals aggregate just above and
+    // /api/transactions/history/:symbolId — a 'share' leg is a receipt-
+    // trail record, not something this record list (or the dashboard it
+    // feeds) was built to display.
+    const records = await Transaction.find({ ...directionMatch, type: { $ne: 'share' } })
       .sort({ createdAt: -1 })
       .limit(100)
       .populate('fromUserId', 'fullName symbolId')

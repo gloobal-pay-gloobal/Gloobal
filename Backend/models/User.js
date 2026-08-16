@@ -19,6 +19,19 @@ const userSchema = new mongoose.Schema({
     trim: true,
     default: null
   },
+  // ISO 3166-1 alpha-2 of the country picked on the registration dial-code
+  // screen (Country.iso). Nothing before the multi-currency pool work read
+  // this off a user, so it never had anywhere to live — every account's
+  // "local currency" was implicitly INR because the backend only ever spoke
+  // one currency. It now decides which CountryCurrencyPool a payment debits
+  // or credits from. `default: 'IN'` matches every account created before
+  // this field existed, which really were all India-registered.
+  countryIso: {
+    type: String,
+    uppercase: true,
+    trim: true,
+    default: 'IN'
+  },
   symbolId: {
     type: String,
     required: true,

@@ -47,6 +47,16 @@ const transactionSchema = new mongoose.Schema(
         'coin_mint',
         'coin_redeem',
         'coin_send',
+        // The second leg of a merchant-share payment (lib/merchantShareFlow.js):
+        // records that a slice of a 'send' was diverted into the payer's
+        // AssetSeed rather than paid to the merchant. fromUserId is the
+        // merchant (whose cut this represents), toUserId is the payer (who
+        // the seed belongs to) — same direction AssetSeed.userId already
+        // uses. Deliberately never moves User.balance: the value it
+        // documents is the same value already reflected in the linked
+        // AssetSeed, so crediting it again would be inventing money, not
+        // recording it. See metadata.noBalanceMovement on rows of this type.
+        'share',
       ],
       required: true,
       index: true,
