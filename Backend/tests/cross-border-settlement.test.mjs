@@ -65,10 +65,24 @@ const US_RECEIVER = symbolId(6);
 const DOMESTIC_RECEIVER = symbolId(9);
 const PIN = "246813";
 
-// 1 INR = 0.05 USD — an unrealistic but deliberately clean rate, so the
-// expected destinationAmount is exact arithmetic (1000 * 0.05 = 50), not a
-// real-world figure that needs rounding assertions to check.
-const SEEDED_RATE = 0.05;
+// 1 USD = 85 INR — the same clean rate the audit report's own worked
+// example uses, chosen only so the expected figures below are easy to
+// verify by hand.
+//
+// Audit fix: this used to be framed as "1 INR = 0.05 USD" and seeded as
+// `{ fromCurrency: 'INR', toCurrency: 'USD', rate: 0.05 }`. That is backwards
+// from what server.js actually looks up — it calls
+// `getRate(destinationCurrency, senderCurrency)`, i.e. `getRate('USD', 'INR')`
+// for this India->USA case, which queries `{ fromCurrency: 'USD',
+// toCurrency: 'INR' }` (see lib/fxRates.js's own getRate: "rate for 1 unit
+// of `from` in `to`"). The old seed never matched that query, so this test
+// was silently falling through to a REAL network call to open.er-api.com
+// instead of testing the deterministic rate it claimed to — and even if it
+// had matched, `amount` is the RECEIVER's own currency (see server.js's own
+// comment at the top of its currency-conversion block), not the sender's,
+// so `destinationAmount` was never actually `sourceAmount * rate` the way
+// section 1 below used to assert. Both are corrected together.
+const SEEDED_RATE = 85;
 
 const untilConnected = () =>
   new Promise((resolve, reject) => {
@@ -127,10 +141,19 @@ async function setUp() {
   ]);
 
   // Seeded fresh, not fetched — see the header comment on why this test
-  // never calls the real FX provider.
-  await ExchangeRate.create({ fromCurrency: "INR", toCurrency: "USD", rate: SEEDED_RATE, source: "test-seed", fetchedAt: new Date() });
+  // never calls the real FX provider. fromCurrency/toCurrency match exactly
+  // what server.js's getRate(destinationCurrency, senderCurrency) call
+  // queries for this India(INR)->USA(USD) pair — see SEEDED_RATE's own
+  // comment for why this direction matters.
+  await ExchangeRate.create({ fromCurrency: "USD", toCurrency: "INR", rate: SEEDED_RATE, source: "test-seed", fetchedAt: new Date() });
 }
 
+// `amount` here is the RECEIVER's own currency face value, not the
+// sender's — see SEEDED_RATE's own comment. `currency: "INR"` in the body
+// is never actually read (server.js derives both parties' real currencies
+// from their own countryIso; the field is kept in this call only because
+// existing callers of this helper already pass it and it is harmless to
+// leave).
 const send = (senderSymbol, receiverSymbol, amount, note) =>
   post(
     "/api/transactions/send",
@@ -154,11 +177,20 @@ async function run() {
   await setUp();
 
   console.log("1. IN -> US payment settles at the seeded rate");
-  const crossBorder = await send(INDIA_SENDER, US_RECEIVER, 1000, "cross-border");
+  // 100 here is a $100 USD face amount (the receiver's own currency — see
+  // SEEDED_RATE's own comment on why), not 100 INR. At the seeded 1 USD =
+  // 85 INR and this receiver's 0% cashback rate, that means an 8,500 INR
+  // debit and a clean $100 release — kept well under the sender's 10,000
+  // INR balance.
+  const crossBorder = await send(INDIA_SENDER, US_RECEIVER, 100, "cross-border");
+  const expectedDebit = 100 * SEEDED_RATE; // 8500 INR
   check("send accepted", crossBorder.status === 201, `status=${crossBorder.status}`);
   check("settlement present on the response", !!crossBorder.body?.settlement);
-  check("sourceAmount is the sent amount", crossBorder.body?.settlement?.sourceAmount === 1000);
-  check("destinationAmount uses the seeded rate", crossBorder.body?.settlement?.destinationAmount === 50,
+  check("sourceAmount is the converted INR debit (100 USD x rate 85, 0% cashback)",
+    crossBorder.body?.settlement?.sourceAmount === expectedDebit,
+    `sourceAmount=${crossBorder.body?.settlement?.sourceAmount}`);
+  check("destinationAmount is the USD face amount released (0% cashback, so no rate involved on this side)",
+    crossBorder.body?.settlement?.destinationAmount === 100,
     `destinationAmount=${crossBorder.body?.settlement?.destinationAmount}`);
   check("rate matches the seeded rate", crossBorder.body?.settlement?.rate === SEEDED_RATE);
   check("rateSource names the cache, not a live fetch", crossBorder.body?.settlement?.rateSource === "test-seed",
@@ -171,23 +203,31 @@ async function run() {
   check("transactionId links back to the Transaction",
     String(settlementRow?.transactionId) === String(crossBorder.body?.transaction?._id || settlementRow?.transactionId));
 
+  // Audit fix: this test predates CountryCurrencyPool.loadOrCreate seeding
+  // a brand-new pool with DEFAULT_POOL_SEED_BALANCE (5,000,000) instead of
+  // 0 — see that model's own header comment for why ("the very first
+  // payment through a brand-new corridor... would find the pool empty and
+  // be refused for a reason that has nothing to do with the payment
+  // itself"). Sections 3 and 4 below now add the correct amounts (see
+  // SEEDED_RATE's own comment for the separate amount-direction fix) on
+  // top of this seed balance, rather than asserting a bare pre-seed
+  // baseline — tests/cross-currency-transfer.test.mjs already accounts for
+  // this constant correctly.
+  const SEED = CountryCurrencyPool.DEFAULT_POOL_SEED_BALANCE;
+
   console.log("\n3. India's pool (keyed by USD) was credited the INR amount");
   const sourcePool = await CountryCurrencyPool.findOne({ countryIso: "IN", counterCurrency: "USD" }).lean();
   check("pool exists", !!sourcePool);
-  check("availableBalance credited 1000", sourcePool?.availableBalance === 1000, `availableBalance=${sourcePool?.availableBalance}`);
+  check("availableBalance is the seed balance plus the 8500 credited", sourcePool?.availableBalance === SEED + expectedDebit,
+    `availableBalance=${sourcePool?.availableBalance}`);
   check("totalBalance matches availableBalance (reservedBalance untouched)",
     sourcePool?.totalBalance === sourcePool?.availableBalance);
 
   console.log("\n4. US's pool (keyed by INR) was debited the USD amount");
   const destinationPool = await CountryCurrencyPool.findOne({ countryIso: "US", counterCurrency: "INR" }).lean();
   check("pool exists", !!destinationPool);
-  check("availableBalance debited 50", destinationPool?.availableBalance === -50, `availableBalance=${destinationPool?.availableBalance}`);
-  // A fresh pool starts at 0 and nothing in this build funds it before a
-  // settlement draws from it — a destination pool going negative on the
-  // very first cross-border payment is expected today, not a bug this test
-  // is guarding against. Real pool funding/rebalancing is unbuilt; noted
-  // here so it isn't mistaken for silently working.
-  console.log("     (negative balance is expected — pools are never pre-funded yet, see comment above)");
+  check("availableBalance is the seed balance minus the 100 released", destinationPool?.availableBalance === SEED - 100,
+    `availableBalance=${destinationPool?.availableBalance}`);
 
   console.log("\n5. IN -> IN payment (both accounts default countryIso) does not settle");
   const domestic = await send(INDIA_SENDER, DOMESTIC_RECEIVER, 500, "domestic");

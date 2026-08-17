@@ -20,8 +20,39 @@ const FaceTemplate = require('./models/FaceTemplate');
 const { nationalNumberFrom } = require('./constants/dialCodes');
 const faceCrypto = require('./lib/faceCrypto');
 const { compareDescriptors, matchThreshold } = require('./lib/faceMatch');
-const { settleCrossBorderPayment } = require('./lib/settlementEngine');
+const { settleCrossBorderPayment, revertCrossBorderSettlement, InsufficientPoolLiquidityError } = require('./lib/settlementEngine');
 const { mintShareLegAndReceipts } = require('./lib/merchantShareFlow');
+const Country = require('./models/Country');
+const AuditLog = require('./models/AuditLog');
+const CountryCurrencyPool = require('./models/CountryCurrencyPool');
+const GeuSupply = require('./models/GeuSupply');
+const GeuEntryMint = require('./models/GeuEntryMint');
+const GeuGrowthEvent = require('./models/GeuGrowthEvent');
+const GeuRedemption = require('./models/GeuRedemption');
+const { getRate } = require('./lib/fxRates');
+const { loadCurrencyDecimals, decimalsFor } = require('./lib/currencyDecimals');
+
+// Audit fix: AuditLog was fully defined (schema, indexes) but never written
+// to anywhere in this file — every route that could meaningfully report a
+// security- or money-relevant event had nowhere to record it. This helper
+// wires it in without touching any economic logic: it is purely an
+// observability side-channel. Fire-and-forget and swallow-on-failure by
+// design — an audit write must never be able to fail, slow down, or change
+// the outcome of the request it's describing. Call sites choose what to log;
+// this only guarantees that logging itself is safe to call inline.
+function recordAudit({ userId = null, action, status = 'info', message = '', req = null, metadata = {} }) {
+  AuditLog.create({
+    userId,
+    action,
+    status,
+    message,
+    ipAddress: req?.ip || req?.headers?.['x-forwarded-for'] || '',
+    userAgent: req?.headers?.['user-agent'] || '',
+    metadata,
+  }).catch((error) => {
+    console.error(`AuditLog write failed for action "${action}":`, error.message);
+  });
+}
 
 
 // The prototype float every account opens with. Kept here rather than only on
@@ -38,7 +69,37 @@ const accountBalanceOf = (user) => {
 // minor unit before it is stored. 1000 * 0.0157 is 15.700000000000001 in
 // binary floating point, and a balance carrying that dust would drift a
 // little further with every payment.
-const toMinorUnit = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+//
+// Bug fix (audit finding): this used to hardcode 2 decimal places for
+// every currency, but not every currency has 2 — JPY, KRW, VND, the CFA
+// francs and others have none at all (see models/Currency.js's `decimals`
+// field, which was already being seeded correctly and simply never read
+// anywhere). A JPY balance could end up carrying values like 1234.56,
+// which is not a real amount of any unit that currency has. The optional
+// `currencyCode` looks up the right precision via lib/currencyDecimals.js
+// (a small in-memory cache, since Currency.decimals lives in Mongo and
+// this needs to stay synchronous); omitting it keeps the exact previous
+// 2-decimal behaviour, which is still correct for the large majority of
+// seeded currencies and for non-ISO prototype units like Gloobal Coin
+// ('GC') that were never meant to be looked up there.
+const toMinorUnit = (value, currencyCode) => {
+  const decimals = currencyCode ? decimalsFor(currencyCode) : 2;
+  const factor = 10 ** decimals;
+  return Math.round((Number(value) + Number.EPSILON) * factor) / factor;
+};
+
+// Resolves whatever country ISO a client claims (the country picked on the
+// registration phone-code screen) against the seeded Country collection —
+// the same source of truth lib/settlementEngine.js reads localCurrency
+// from. Never trusts an unseeded/malformed code: falls back to 'IN', the
+// same default every account already carried before this field was wired
+// up, rather than writing something that later crashes a currency lookup.
+async function resolveRegistrationCountryIso(rawIso) {
+  const candidate = String(rawIso || '').trim().toUpperCase();
+  if (candidate.length !== 2) return 'IN';
+  const match = await Country.findOne({ iso: candidate }).select('iso').lean();
+  return match ? match.iso : 'IN';
+}
 
 const app = express();
 
@@ -777,10 +838,18 @@ app.post('/api/pin/verify', credentialLimit, async (req, res) => {
     pinRecord.lastVerifiedAt = new Date();
     await pinRecord.save();
 
+    // This route is the primary re-authentication step after a restored
+    // session (see Frontend's session.js — a lock screen always costs a
+    // PIN or passkey check before reaching the dashboard), so a successful
+    // verify has to mint a bearer token here too, not just confirm the PIN
+    // was right. Without this, everyone who unlocks via PIN rather than a
+    // fresh /api/login would have no token at all, and every requireAuth
+    // route after it would 401.
     return res.status(200).json({
       verified: true,
       message: 'PIN verified successfully.',
-      user: await publicUserPayload(user)
+      user: await publicUserPayload(user),
+      token: issueAuthToken(user)
     });
   } catch (error) {
     console.error('PIN verify error:', error);
@@ -877,12 +946,20 @@ app.post('/api/pin/reset', credentialLimit, async (req, res) => {
 // Registration and Multi-Level Referral Engine
 app.post('/api/register-symbol', registerLimit, async (req, res) => {
   try {
-    const { fullName, mobileNumber, symbolId, referredBy } = req.body;
+    const { fullName, mobileNumber, symbolId, referredBy, countryIso } = req.body;
 
     const cleanMobileNumber = normalizeMobileNumber(mobileNumber || fullName);
     const cleanFullName = cleanMobileNumber;
     const cleanSymbolId = String(symbolId || '').trim();
     const cleanReferrer = String(referredBy || '').trim();
+    // The country the person actually picked on the phone-code screen —
+    // previously collected on the frontend and then thrown away, which left
+    // every account defaulting to 'IN' forever (see the multi-currency
+    // settlement code's own comment on that). Resolved against the seeded
+    // Country table, never trusted raw, since this is what decides which
+    // currency this account's balance — and every cashback it earns — is
+    // actually denominated in.
+    const resolvedCountryIso = await resolveRegistrationCountryIso(countryIso);
 
     if (!cleanMobileNumber || !cleanSymbolId) {
       return res.status(400).json({
@@ -979,6 +1056,7 @@ app.post('/api/register-symbol', registerLimit, async (req, res) => {
       fullName: cleanFullName,
       mobileNumber: cleanMobileNumber,
       symbolId: cleanSymbolId,
+      countryIso: resolvedCountryIso,
       referredBy: validReferrerId,
       referralChain,
       symbolIdHistory: [
@@ -1349,6 +1427,25 @@ if (mongoose.connection.readyState === 1) {
   seedProductCatalogue();
 } else {
   mongoose.connection.once('open', seedProductCatalogue);
+}
+
+// Populates lib/currencyDecimals.js's cache so toMinorUnit can round each
+// currency to its own real precision instead of a hardcoded 2 decimals.
+// Currencies are static reference data (142 rows), so one load at boot is
+// enough — same reasoning as the product catalogue seed just above not
+// needing to re-run. A failed load is not fatal: toMinorUnit already
+// falls back to 2 decimals for anything the cache doesn't have, which is
+// exactly what every call site did before this fix existed.
+const bootCurrencyDecimalsCache = () => {
+  loadCurrencyDecimals().catch((error) => {
+    console.error('Currency decimals cache load error (falling back to 2dp everywhere):', error);
+  });
+};
+
+if (mongoose.connection.readyState === 1) {
+  bootCurrencyDecimalsCache();
+} else {
+  mongoose.connection.once('open', bootCurrencyDecimalsCache);
 }
 
 // GET /api/products/:product → { product, live, services }
@@ -2479,10 +2576,16 @@ app.get('/api/users/resolve', lookupLimit, requireAuth, async (req, res) => {
   }
 });
 // --- My Assets --------------------------------------------------------------
-// Cashback earned on a payment is "planted" and grows 1%/month, compounded,
-// toward the original amount paid. Everything a client sees (current value,
-// years accrued, years to full) is derived here from plantedAt on every read,
-// so nothing about a seed's worth is ever stored and can never drift.
+// Cashback is real money the moment it is earned — it is credited straight
+// into the payer's spendable balance in the same request that plants this
+// seed (see performTransfer in POST /api/transactions/send). It does not
+// wait, vest, or need to be claimed to be spent.
+//
+// What DOES need claiming is the bonus on top: a seed's cashback keeps
+// earning 1%/month, compounded, for as long as that growth goes unclaimed.
+// interestAvailable below is that unclaimed bonus, always derived on read
+// from plantedAt and interestClaimed — never stored — so it can never drift.
+// POST /api/assets/claim-interest pays it into real balance on request.
 const ASSET_GROWTH_RATE_MONTHLY = 0.01; // 1% per month, internal compounding step
 const MS_PER_YEAR = 1000 * 60 * 60 * 24 * 365.25;
 
@@ -2493,14 +2596,13 @@ function computeSeed(seed) {
   const yearsAccrued = Math.max(0, (Date.now() - plantedAt.getTime()) / MS_PER_YEAR);
   const currentValue = cashback * Math.pow(1 + ASSET_GROWTH_RATE_MONTHLY, yearsAccrued * 12);
 
-  // Months for the planted cashback to compound up to the full amount paid.
-  // Guard the log against non-positive/degenerate inputs so a bad seed can
-  // never yield NaN/Infinity in the response.
-  let yearsToTarget = 0;
-  if (cashback > 0 && amountPaid > cashback) {
-    const monthsToTarget = Math.log(amountPaid / cashback) / Math.log(1 + ASSET_GROWTH_RATE_MONTHLY);
-    yearsToTarget = monthsToTarget / 12;
-  }
+  // Total bonus interest earned so far (always >= 0 — currentValue never
+  // dips below the original cashback), and however much of that is still
+  // unclaimed. interestClaimed only ever increases, so this can't go
+  // negative except from float noise, which the floor below absorbs.
+  const interestAccrued = Math.max(0, currentValue - cashback);
+  const interestClaimed = Number(seed.interestClaimed) || 0;
+  const interestAvailable = Math.max(0, interestAccrued - interestClaimed);
 
   return {
     id: String(seed._id || seed.id || ''),
@@ -2510,8 +2612,10 @@ function computeSeed(seed) {
     cashbackRate: Number(seed.cashbackRate) || 0,
     cashback,
     currentValue,
+    interestAccrued,
+    interestClaimed,
+    interestAvailable,
     yearsAccrued,
-    yearsToTarget,
     plantedAt,
     currency: seed.currency || 'INR',
   };
@@ -2810,21 +2914,26 @@ app.get('/api/assets/:symbolId', lookupLimit, requireAuth, requireSelf('symbolId
     const rawSeeds = await AssetSeed.find({ userId: user._id }).sort({ plantedAt: -1 });
     if (rawSeeds.length === 0) {
       return res.status(200).json({
-        totalAssets: 0, futureAssets: 0, seeds: [], avgYearsToTarget: 0, payLaterLimit: 0,
+        totalCashbackEarned: 0, totalInterestAccrued: 0, totalInterestAvailable: 0,
+        totalInterestClaimed: 0, seeds: [],
       });
     }
 
     const seeds = rawSeeds.map(computeSeed);
-    const totalAssets = seeds.reduce((s, x) => s + x.currentValue, 0);
-    const futureAssets = seeds.reduce((s, x) => s + x.amountPaid, 0);
-    const avgYearsToTarget = seeds.reduce((s, x) => s + x.yearsToTarget, 0) / seeds.length;
+    // totalCashbackEarned is already sitting in the account's real balance —
+    // this is a lifetime total for display, not a second spendable figure.
+    // Only totalInterestAvailable is money still waiting to be claimed.
+    const totalCashbackEarned = seeds.reduce((s, x) => s + x.cashback, 0);
+    const totalInterestAccrued = seeds.reduce((s, x) => s + x.interestAccrued, 0);
+    const totalInterestAvailable = seeds.reduce((s, x) => s + x.interestAvailable, 0);
+    const totalInterestClaimed = seeds.reduce((s, x) => s + x.interestClaimed, 0);
 
     return res.status(200).json({
-      totalAssets,
-      futureAssets,
+      totalCashbackEarned,
+      totalInterestAccrued,
+      totalInterestAvailable,
+      totalInterestClaimed,
       seeds,
-      avgYearsToTarget,
-      payLaterLimit: totalAssets,
     });
   } catch (error) {
     console.error('Assets fetch error:', error);
@@ -2832,23 +2941,52 @@ app.get('/api/assets/:symbolId', lookupLimit, requireAuth, requireSelf('symbolId
   }
 });
 
-// POST /api/assets/plant-seed — plant a new seed from a cashback-earning
-// payment. P2P sends carry cashbackRate 0 and are rejected here.
+// POST /api/assets/plant-seed — plant a seed for a cashback-earning payment
+// that has no seed yet.
+//
+// SECURITY/AUDIT FIX: this route used to create an AssetSeed straight from
+// client-supplied amountPaid/cashbackRate/cashback, with no link to any
+// real Transaction and no upper bound on cashbackRate. A seed's accrued
+// interest is real, spendable money once claimed (POST
+// /api/assets/claim-interest credits it straight into `balance`), so that
+// let any authenticated caller fabricate an arbitrarily large claimable
+// balance out of nothing — e.g. { amountPaid: 1, cashbackRate: 1000000 } —
+// with no corresponding payment, sender debit, or receiver credit behind
+// it anywhere in the ledger. This is exactly the "unexplained money" this
+// system's own AssetSeed invariant exists to rule out.
+//
+// OLD BEHAVIOUR: any finite amountPaid > 0 and any finite cashbackRate > 0
+// (no ceiling) were trusted from the request body and written directly
+// into a new AssetSeed.
+// NEW BEHAVIOUR: the caller supplies only a transactionId. Every actual
+// figure (amountPaid, cashbackRate, cashback, currency) is read back off
+// that Transaction's own LedgerEntry rows — the same rows performTransfer
+// already wrote when the cashback was genuinely credited — never from the
+// request body. The route now only fills in a seed for a real payment
+// that performTransfer's own inline planting (POST /api/transactions/send)
+// didn't already cover (e.g. a seed row lost after the payment somehow),
+// and the schema's unique partial index on transactionId makes a duplicate
+// seed for the same payment impossible even under a concurrent retry.
+//
+// WHY THE OLD BEHAVIOUR WAS WRONG: it let the account making the request
+// decide, unilaterally and without limit, how much bonus-earning value it
+// held — violating ledger integrity invariant A (debits must equal
+// credits somewhere) and the account-conservation invariant B, since
+// nothing ever debited anything to fund it.
+// WHICH INVARIANT THIS PROTECTS: AssetSeed cannot create unexplained
+// money (audit section 8), and every seed now has a parent transaction
+// reference (audit section 11's receipt-traceability principle, applied
+// here to seeds).
 app.post('/api/assets/plant-seed', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
   try {
-    const { symbolId, business, category, amountPaid, cashbackRate, currency } = req.body || {};
-    const cleanSymbolId = String(symbolId || '').trim();
-    const numericAmount = Number(amountPaid);
-    const numericRate = Number(cashbackRate);
+    const cleanSymbolId = String(req.body?.symbolId || '').trim();
+    const transactionId = String(req.body?.transactionId || '').trim();
 
     if (!cleanSymbolId) {
       return res.status(400).json({ message: 'Secure ID is required.' });
     }
-    if (!Number.isFinite(numericRate) || numericRate <= 0) {
-      return res.status(400).json({ message: 'cashbackRate must be greater than 0.' });
-    }
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({ message: 'A valid amountPaid is required.' });
+    if (!transactionId || !mongoose.isValidObjectId(transactionId)) {
+      return res.status(400).json({ message: 'A valid transactionId is required — a seed can only be planted for a real payment.' });
     }
 
     const user = await User.findOne({ symbolId: cleanSymbolId });
@@ -2856,21 +2994,133 @@ app.post('/api/assets/plant-seed', writeLimit, requireAuth, requireSelf('symbolI
       return res.status(404).json({ message: 'Secure ID not found.' });
     }
 
+    const transaction = await Transaction.findById(transactionId);
+    if (!transaction) {
+      return res.status(404).json({ message: 'No transaction found for that id.' });
+    }
+    // Only the payer of that specific payment may plant a seed for it —
+    // matches who performTransfer's own inline planting would have
+    // credited the cashback to.
+    if (String(transaction.fromUserId) !== String(user._id)) {
+      return res.status(403).json({ message: 'That transaction was not sent by this account.' });
+    }
+    if (transaction.status !== 'success' || !['send', 'qr_payment'].includes(transaction.type)) {
+      return res.status(400).json({ message: 'Only a completed payment can earn a seed.' });
+    }
+
+    const existingSeed = await AssetSeed.findOne({ transactionId: transaction._id });
+    if (existingSeed) {
+      return res.status(200).json({ seed: computeSeed(existingSeed), duplicate: true });
+    }
+
+    // The real, already-credited cashback figures — written by
+    // performTransfer at payment time, never recomputed here.
+    const [debitLine, cashbackLine] = await Promise.all([
+      LedgerEntry.findOne({ transactionId: transaction._id, userId: user._id, entryType: 'debit' }).lean(),
+      LedgerEntry.findOne({
+        transactionId: transaction._id,
+        userId: user._id,
+        entryType: 'credit',
+        note: 'Cashback credited to balance',
+      }).lean(),
+    ]);
+
+    if (!debitLine || !cashbackLine) {
+      return res.status(400).json({ message: 'That payment carried no cashback to plant a seed for.' });
+    }
+
     const seed = await AssetSeed.create({
       userId: user._id,
       symbolId: user.symbolId,
-      business: String(business || 'Payment').trim().slice(0, 80),
-      category: String(category || 'General').trim().slice(0, 40),
-      amountPaid: numericAmount,
-      cashbackRate: numericRate,
-      cashback: numericAmount * numericRate,
-      currency: String(currency || user.currency || 'INR').trim().toUpperCase(),
+      business: String(req.body?.business || req.body?.payeeName || 'Payment').trim().slice(0, 80),
+      category: String(req.body?.category || 'General').trim().slice(0, 40),
+      amountPaid: debitLine.amount,
+      cashbackRate: Number(cashbackLine.metadata?.cashbackRate) || 0,
+      cashback: cashbackLine.amount,
+      currency: debitLine.currency || 'INR',
+      transactionId: transaction._id,
     });
 
     return res.status(201).json({ seed: computeSeed(seed) });
   } catch (error) {
+    // A duplicate-key error here means the unique partial index caught a
+    // genuine race (two concurrent calls for the same transaction) —
+    // report it the same way the pre-existing-seed check above would.
+    if (error?.code === 11000) {
+      const existingSeed = await AssetSeed.findOne({ transactionId: req.body?.transactionId }).catch(() => null);
+      if (existingSeed) {
+        return res.status(200).json({ seed: computeSeed(existingSeed), duplicate: true });
+      }
+    }
     console.error('Plant seed error:', error);
     return res.status(500).json({ message: 'Server error while planting seed.' });
+  }
+});
+
+// POST /api/assets/claim-interest — pay the bonus interest a user's seeds
+// have accrued into real, spendable balance. The cashback itself needs no
+// claiming (it was credited at payment time); this only ever pays out the
+// growth on top, and only however much is currently accrued.
+//
+// Each seed is updated with an optimistic-concurrency filter
+// (interestClaimed must still match what was just read) so two concurrent
+// claims can't both pay out the same growth — a seed that loses the race
+// this round simply claims nothing and is picked up cleanly next time.
+app.post('/api/assets/claim-interest', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
+  try {
+    const cleanSymbolId = String(req.body?.symbolId || '').trim();
+    if (!cleanSymbolId) {
+      return res.status(400).json({ message: 'Secure ID is required.' });
+    }
+
+    const user = await User.findOne({ symbolId: cleanSymbolId });
+    if (!user) {
+      return res.status(404).json({ message: 'Secure ID not found.' });
+    }
+
+    const rawSeeds = await AssetSeed.find({ userId: user._id });
+    let totalClaimed = 0;
+    const claimedSeedIds = [];
+
+    for (const seed of rawSeeds) {
+      const { interestAvailable } = computeSeed(seed);
+      if (interestAvailable <= 0) continue;
+
+      const priorClaimed = Number(seed.interestClaimed) || 0;
+      const updated = await AssetSeed.findOneAndUpdate(
+        { _id: seed._id, interestClaimed: priorClaimed },
+        { $set: { interestClaimed: priorClaimed + interestAvailable, lastClaimedAt: new Date() } },
+        { new: true }
+      );
+
+      // A null result means someone else claimed this exact seed in the
+      // gap between the read above and this write — skip it this round
+      // rather than paying out (or double-paying) a stale figure.
+      if (!updated) continue;
+
+      totalClaimed += interestAvailable;
+      claimedSeedIds.push(String(seed._id));
+    }
+
+    if (totalClaimed <= 0) {
+      return res.status(200).json({ claimed: 0, newBalance: Number(user.balance) || 0, seedIds: [] });
+    }
+
+    const roundedClaim = toMinorUnit(totalClaimed);
+    const credited = await User.findOneAndUpdate(
+      { _id: user._id },
+      { $inc: { balance: roundedClaim } },
+      { returnDocument: 'after' }
+    );
+
+    return res.status(200).json({
+      claimed: roundedClaim,
+      newBalance: toMinorUnit(credited?.balance ?? user.balance),
+      seedIds: claimedSeedIds,
+    });
+  } catch (error) {
+    console.error('Claim interest error:', error);
+    return res.status(500).json({ message: 'Server error while claiming interest.' });
   }
 });
 
@@ -2963,7 +3213,11 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
       toSymbolId,
       to,
       amount,
-      currency = 'INR',
+      // Deliberately no longer read: `currency` used to be trusted straight
+      // from the client and defaulted to 'INR' no matter who was actually
+      // involved. Both parties' real currencies are now derived below from
+      // their own countryIso, the same never-trust-the-client rule
+      // payeeCashbackRate already followed.
       note = '',
       pin,
       idempotencyKey,
@@ -2974,7 +3228,6 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
     const receiverIdentifier = String(receiverSymbolId || toSymbolId || to || '').trim();
     const cleanPin = String(pin || '').trim();
     const numericAmount = Number(amount);
-    const cleanCurrency = String(currency || 'INR').trim().toUpperCase() || 'INR';
     const cleanNote = String(note || '').trim().slice(0, 140);
     const cleanIdempotencyKey = String(idempotencyKey || '').trim().slice(0, 120);
     // How it was paid ("Gloobal Bank", "Gloobal PayLater", ...). Recorded so
@@ -3068,6 +3321,10 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
     }
 
     if (pinRecord.lockedUntil && pinRecord.lockedUntil > new Date()) {
+      recordAudit({
+        userId: sender._id, action: 'transaction.send.blocked', status: 'blocked',
+        message: 'PIN locked out', req, metadata: { symbolId: sender.symbolId },
+      });
       return res.status(423).json({
         success: false,
         message: 'PIN is temporarily locked. Please try again later.',
@@ -3084,6 +3341,12 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
       }
 
       await pinRecord.save();
+
+      recordAudit({
+        userId: sender._id, action: 'transaction.send.pin_invalid', status: 'failed',
+        message: `Invalid PIN (attempt ${pinRecord.failedAttempts}/5)`, req,
+        metadata: { symbolId: sender.symbolId, lockedOut: !!pinRecord.lockedUntil },
+      });
 
       return res.status(401).json({
         success: false,
@@ -3102,19 +3365,89 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
     await materialiseBalance(sender);
     await materialiseBalance(receiver);
 
+    // Real per-currency conversion. Each account's own local currency is
+    // looked up from its own countryIso (never trusted from the client,
+    // same reasoning as payeeCashbackRate below) — sender.countryIso used
+    // to always be 'IN' because registration never saved what the person
+    // actually picked; now that it does (see POST /api/register-symbol),
+    // a genuinely cross-border pair resolves to two different currencies
+    // here. The typed `amount` is always the RECEIVER's local-currency face
+    // value — the same currency the amount box's flag shows on the sending
+    // screen (SendMoneyScreen.jsx's bottom.currency) — so it is exactly
+    // what the payee's own cashback share and balance credit are computed
+    // in below. fxRate converts 1 unit of that into the sender's own
+    // currency, which is what the sender's debit and cashback-credit legs
+    // actually move. A same-currency pair (still the overwhelming majority
+    // of accounts today) resolves fxRate to exactly 1, so nothing below
+    // changes behaviour for them at all.
+    const [senderCountry, receiverCountry] = await Promise.all([
+      Country.findOne({ iso: sender.countryIso }).select('localCurrency').lean(),
+      Country.findOne({ iso: receiver.countryIso }).select('localCurrency').lean(),
+    ]);
+    const senderCurrency = senderCountry?.localCurrency || 'INR';
+    const destinationCurrency = receiverCountry?.localCurrency || 'INR';
+
+    let fxRate = 1;
+    let fxRateSource = 'identity';
+
+    if (senderCurrency !== destinationCurrency) {
+      try {
+        ({ rate: fxRate, source: fxRateSource } = await getRate(destinationCurrency, senderCurrency));
+      } catch (fxError) {
+        // Same "fail closed, never invent a number" rule lib/fxRates.js
+        // documents for itself — a guessed 1:1 rate here would silently
+        // move the wrong amount of real balance, which is a materially
+        // worse outcome than the payment not going through this once.
+        console.error(`FX rate lookup failed for ${destinationCurrency}->${senderCurrency}:`, fxError);
+        return res.status(502).json({
+          success: false,
+          message: 'Exchange rate is temporarily unavailable. Please try again in a moment.',
+        });
+      }
+    }
+
+    // The payee's own cashback rate splits the payment, entirely in the
+    // receiver's own currency — the payee is credited the amount minus
+    // their chosen share, and that share is credited straight back to the
+    // sender as real, immediately spendable balance (see performTransfer
+    // below) — not an off-ledger figure that only shows up on some other
+    // screen. So a 1% Creator paid 1,000 (their own currency) receives 990
+    // and the payer is net-debited the converted equivalent of 990 too:
+    // 1,000 (destination currency) out, 10 (destination currency, converted
+    // into the sender's own currency) back. A seed is also planted purely
+    // to track a bonus interest rate on that 10 for as long as it goes
+    // unclaimed (see computeSeed / POST /api/assets/claim-interest).
+    const payeeCashbackRate = Number(receiver.cashbackRate) || 0;
+    // Rounded to each leg's own currency precision (audit fix — see
+    // toMinorUnit's header comment): cashback/payeeReceives are the
+    // receiver-currency face split, debitAmount/cashbackCredit are the
+    // sender-currency converted split. A same-currency pair still rounds
+    // to the same precision on both sides, so this changes nothing for
+    // the common case; it only matters once senderCurrency and
+    // destinationCurrency actually differ in decimal places.
+    const cashback = toMinorUnit(numericAmount * payeeCashbackRate, destinationCurrency);
+    const payeeReceives = toMinorUnit(numericAmount - cashback, destinationCurrency);
+    // What actually leaves the sender's own balance, and what actually
+    // lands back in it — both converted into the sender's own currency.
+    // Equal to numericAmount/cashback whenever fxRate is 1.
+    const debitAmount = toMinorUnit(numericAmount * fxRate, senderCurrency);
+    const cashbackCredit = toMinorUnit(cashback * fxRate, senderCurrency);
+
     // A courtesy check, not the authority. It fails fast with a useful figure
     // for the ordinary case of somebody trying to spend more than they have.
     // The check that actually protects the balance is the conditional debit
     // further down — this one reads a value that another request can change
     // before the write lands, which is exactly the race it used to be the only
-    // guard against.
+    // guard against. Compared against debitAmount, not the typed amount —
+    // that's what's actually about to leave the sender's own currency balance.
     const senderBalanceBefore = accountBalanceOf(sender);
 
-    if (senderBalanceBefore < numericAmount) {
+    if (senderBalanceBefore < debitAmount) {
       return res.status(400).json({
         success: false,
         message: 'Insufficient balance.',
         balance: senderBalanceBefore,
+        currency: senderCurrency,
       });
     }
 
@@ -3140,7 +3473,7 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
       fromUserId: sender._id,
       toUserId: receiver._id,
       amount: numericAmount,
-      currency: cleanCurrency,
+      currency: destinationCurrency,
       note: cleanNote,
       status: { $in: ['pending', 'success'] },
       createdAt: { $gte: duplicateWindowStartedAt },
@@ -3155,16 +3488,6 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
       });
     }
 
-    // The payee's own cashback rate splits the payment. The full amount
-    // leaves the sender; the payee is credited the amount minus their chosen
-    // share, and that share comes back to the sender as a planted asset
-    // rather than as spendable money. So a 1% Creator paid 1,000 receives
-    // 990 and the payer holds 10 as a seed — the payer is out 1,000 either
-    // way, and the 10 is the part that grows.
-    const payeeCashbackRate = Number(receiver.cashbackRate) || 0;
-    const cashback = toMinorUnit(numericAmount * payeeCashbackRate);
-    const payeeReceives = toMinorUnit(numericAmount - cashback);
-
     const transactionReference = await resolveTransactionReference(
       req.body?.referenceId ?? req.body?.transactionId
     );
@@ -3173,7 +3496,11 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
       fromUserId: sender._id,
       toUserId: receiver._id,
       amount: numericAmount,
-      currency: cleanCurrency,
+      // The face-value currency this payment was denominated in — the
+      // receiver's own currency, not whatever (unauthoritative) `currency`
+      // the client sent. cleanCurrency is no longer used for anything
+      // money-shaped; it only ever fed this field.
+      currency: destinationCurrency,
       type: 'send',
       note: cleanNote,
       referenceId: transactionReference,
@@ -3186,6 +3513,13 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
         receiverInput: receiverIdentifier,
         maxPrototypeAmount,
         payMethod: cleanPayMethod || null,
+        // The sender's own side of this payment, in their own currency —
+        // what POST /api/pin/... and the receipt screen need to show "you
+        // paid X" correctly for a cross-border send, since `amount`/
+        // `currency` above are the receiver's side.
+        senderCurrency,
+        debitAmount,
+        fxRate,
       },
     };
 
@@ -3205,8 +3539,8 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
       const sessionOpt = session ? { session } : {};
 
       const debitedSender = await User.findOneAndUpdate(
-        { _id: sender._id, balance: { $gte: numericAmount } },
-        { $inc: { balance: -numericAmount } },
+        { _id: sender._id, balance: { $gte: debitAmount } },
+        { $inc: { balance: -debitAmount } },
         { returnDocument: 'after', ...sessionOpt }
       );
 
@@ -3218,12 +3552,73 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
         throw new InsufficientBalanceError(accountBalanceOf(current || {}));
       }
 
-      const senderBalanceAfter = toMinorUnit(debitedSender.balance);
-      const senderBalanceAtDebit = toMinorUnit(senderBalanceAfter + numericAmount);
+      let senderBalanceAfter = toMinorUnit(debitedSender.balance, senderCurrency);
+      const senderBalanceAtDebit = toMinorUnit(senderBalanceAfter + debitAmount, senderCurrency);
 
       let creditedReceiver = null;
+      // Tracks how much of `cashback` actually made it back to the sender's
+      // balance, so the no-transaction revert path below undoes exactly what
+      // happened — not a fixed guess that would over- or under-revert
+      // depending on which step failed.
+      let cashbackAppliedToSender = 0;
+      // Tracks whether the destination pool's release actually landed, for
+      // the same reason — the no-transaction revert path below only puts
+      // the pool back if this step is the one that moved it.
+      let poolSettlementApplied = false;
+      let settlement = null;
+      // Set once the Transaction row exists, so the no-transaction revert
+      // path can mark it 'reversed' rather than leave a 'success' row
+      // behind for a payment that didn't actually finish moving money.
+      let createdTransactionId = null;
 
       try {
+        // Created before the receiver is credited (not after, as this used
+        // to be written): the settlement gate right below needs a real
+        // transaction._id to attach its audit row to, and — more
+        // importantly — this is inside the same Mongo transaction as
+        // everything else here, so creating it first changes nothing about
+        // atomicity. Either everything in this block commits together, or
+        // none of it does.
+        const [transaction] = await Transaction.create(
+          [{ ...transactionFields, status: 'success' }],
+          session ? { session } : {}
+        );
+        createdTransactionId = transaction._id;
+
+        // The hard-liquidity gate: a genuinely cross-border payment can
+        // only proceed if the receiver's own-country pool actually has the
+        // real, available local-currency liquidity to release — the same
+        // constraint a correspondent bank has for a corridor it doesn't
+        // hold funds in. This throws InsufficientPoolLiquidityError (never
+        // silently succeeds with a partial or invented amount) if it
+        // can't, which aborts this whole transaction — the sender's debit
+        // and the Transaction row just created both roll back with it, so
+        // a refused corridor leaves no partial trace behind.
+        //
+        // Four figures, not two: each pool's own gross movement and its own
+        // cashback reversal are separate ledger lines (see
+        // settlementEngine.js's own header comment for why) — the gate
+        // below checks the destination pool against the full face amount
+        // (destinationReleaseAmount), not the net-of-cashback figure, which
+        // is the stricter, more realistic liquidity check.
+        if (senderCurrency !== destinationCurrency) {
+          settlement = await settleCrossBorderPayment({
+            session,
+            transaction,
+            sender,
+            receiver,
+            senderCurrency,
+            destinationCurrency,
+            destinationReleaseAmount: numericAmount,
+            destinationCashbackReturn: cashback,
+            sourceCreditAmount: debitAmount,
+            sourceCashbackRelease: cashbackCredit,
+            rate: fxRate,
+            rateSource: fxRateSource,
+          });
+          poolSettlementApplied = true;
+        }
+
         creditedReceiver = await User.findOneAndUpdate(
           { _id: receiver._id },
           { $inc: { balance: payeeReceives } },
@@ -3232,61 +3627,112 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
 
         if (!creditedReceiver) throw new Error('Receiver account disappeared mid-transfer.');
 
-        const receiverBalanceAfter = toMinorUnit(creditedReceiver.balance);
-        const receiverBalanceAtCredit = toMinorUnit(receiverBalanceAfter - payeeReceives);
+        const receiverBalanceAfter = toMinorUnit(creditedReceiver.balance, destinationCurrency);
+        const receiverBalanceAtCredit = toMinorUnit(receiverBalanceAfter - payeeReceives, destinationCurrency);
 
-        // Created here, already successful. It used to be written as 'pending'
-        // before the money moved and flipped to 'success' after, which left a
-        // real window where a crash stranded a pending row over balances that
-        // had already changed. Inside a transaction the row and the balances
-        // commit together or not at all.
-        const [transaction] = await Transaction.create(
-          [{ ...transactionFields, status: 'success' }],
-          session ? { session } : {}
-        );
+        // The payee's cashback share comes straight back to the sender as
+        // real, immediately spendable balance — not an off-ledger figure
+        // shown on some other screen. Within a single currency (fxRate 1)
+        // this is the same money just routed back rather than paid to the
+        // payee: the payee already received amount - cashback above, so
+        // crediting the sender `cashbackCredit` here is what makes debit
+        // (debitAmount) and the two credits (payeeReceives + cashbackCredit)
+        // balance to debitAmount exactly. Across a currency pair the two
+        // sides are no longer the same number in the same unit — that's the
+        // whole point — but each leg is still internally exact: the sender
+        // only ever gains or loses their own currency, the receiver only
+        // ever gains or loses theirs.
+        let senderBalanceAtCashbackCredit = senderBalanceAfter;
 
-        await LedgerEntry.create(
-          [
-            {
-              transactionId: transaction._id,
-              userId: sender._id,
-              entryType: 'debit',
-              amount: numericAmount,
-              balanceBefore: senderBalanceAtDebit,
-              balanceAfter: senderBalanceAfter,
-              currency: cleanCurrency,
-              note: 'Prototype debit entry',
-              metadata: {
-                prototype: true,
-                transactionReferenceId: transaction.referenceId,
-                cashback,
-                cashbackRate: payeeCashbackRate,
-              },
+        if (cashbackCredit > 0) {
+          const creditedSender = await User.findOneAndUpdate(
+            { _id: sender._id },
+            { $inc: { balance: cashbackCredit } },
+            { returnDocument: 'after', ...sessionOpt }
+          );
+
+          if (!creditedSender) throw new Error('Sender account disappeared mid-transfer.');
+
+          senderBalanceAtCashbackCredit = toMinorUnit(senderBalanceAfter, senderCurrency);
+          senderBalanceAfter = toMinorUnit(creditedSender.balance, senderCurrency);
+          cashbackAppliedToSender = cashbackCredit;
+        }
+
+        const ledgerRows = [
+          {
+            // The sender's own leg, in the sender's own currency — this is
+            // what actually left their balance, not the receiver-currency
+            // face value shown on the receipt.
+            transactionId: transaction._id,
+            userId: sender._id,
+            entryType: 'debit',
+            amount: debitAmount,
+            balanceBefore: senderBalanceAtDebit,
+            balanceAfter: senderBalanceAtCashbackCredit,
+            currency: senderCurrency,
+            note: 'Prototype debit entry',
+            metadata: {
+              prototype: true,
+              transactionReferenceId: transaction.referenceId,
+              cashback: cashbackCredit,
+              cashbackRate: payeeCashbackRate,
+              fxRate,
+              faceAmount: numericAmount,
+              faceCurrency: destinationCurrency,
             },
-            {
-              // The credit is the amount minus the payee's own cashback share,
-              // so the two entries deliberately do not carry the same figure —
-              // the difference is what became the payer's asset seed below.
-              transactionId: transaction._id,
-              userId: receiver._id,
-              entryType: 'credit',
-              amount: payeeReceives,
-              balanceBefore: receiverBalanceAtCredit,
-              balanceAfter: receiverBalanceAfter,
-              currency: cleanCurrency,
-              note: 'Prototype credit entry',
-              metadata: {
-                prototype: true,
-                transactionReferenceId: transaction.referenceId,
-                cashback,
-                cashbackRate: payeeCashbackRate,
-              },
+          },
+          {
+            // The credit is the amount minus the payee's own cashback share —
+            // the difference (cashback) is credited straight back to the
+            // sender below, as its own ledger line, rather than vanishing.
+            // Stays in the receiver's own currency — this is their leg.
+            transactionId: transaction._id,
+            userId: receiver._id,
+            entryType: 'credit',
+            amount: payeeReceives,
+            balanceBefore: receiverBalanceAtCredit,
+            balanceAfter: receiverBalanceAfter,
+            currency: destinationCurrency,
+            note: 'Prototype credit entry',
+            metadata: {
+              prototype: true,
+              transactionReferenceId: transaction.referenceId,
+              cashback,
+              cashbackRate: payeeCashbackRate,
             },
-          ],
-          session ? { session, ordered: true } : {}
-        );
+          },
+        ];
 
-        return { transaction, senderBalanceAfter, receiverBalanceAfter };
+        if (cashbackCredit > 0) {
+          // The sender's own cashback-credit leg: real money landing back in
+          // their balance in the same breath as the payment, not a separate
+          // asset that only exists on the My Assets screen. In the sender's
+          // own currency — cashbackCredit, not the receiver-currency
+          // cashback figure the payee's share was actually computed in.
+          ledgerRows.push({
+            transactionId: transaction._id,
+            userId: sender._id,
+            entryType: 'credit',
+            amount: cashbackCredit,
+            balanceBefore: senderBalanceAtCashbackCredit,
+            balanceAfter: senderBalanceAfter,
+            currency: senderCurrency,
+            note: 'Cashback credited to balance',
+            metadata: {
+              prototype: true,
+              transactionReferenceId: transaction.referenceId,
+              cashback: cashbackCredit,
+              cashbackRate: payeeCashbackRate,
+              fxRate,
+              faceCashback: cashback,
+              faceCurrency: destinationCurrency,
+            },
+          });
+        }
+
+        await LedgerEntry.create(ledgerRows, session ? { session, ordered: true } : {});
+
+        return { transaction, senderBalanceAfter, receiverBalanceAfter, settlement };
       } catch (moveError) {
         // Inside a transaction the abort undoes all of the above, so
         // compensating by hand would double-refund. This branch is only for a
@@ -3294,9 +3740,23 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
         // and really does need putting back.
         if (!session) {
           try {
-            await User.updateOne({ _id: sender._id }, { $inc: { balance: numericAmount } });
+            await User.updateOne(
+              { _id: sender._id },
+              { $inc: { balance: debitAmount - cashbackAppliedToSender } }
+            );
             if (creditedReceiver) {
               await User.updateOne({ _id: receiver._id }, { $inc: { balance: -payeeReceives } });
+            }
+            if (poolSettlementApplied && settlement) {
+              // Reads its own four ledger-line amounts back off the
+              // settlement row — nothing to pass or keep in sync here.
+              await revertCrossBorderSettlement(settlement);
+            }
+            if (createdTransactionId) {
+              await Transaction.updateOne(
+                { _id: createdTransactionId },
+                { $set: { status: 'reversed' } }
+              );
             }
           } catch (revertError) {
             // Nothing further can be done in-process; this is the one case
@@ -3315,41 +3775,92 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
       ({ value: transferred } = await withMongoTransaction(performTransfer));
     } catch (transferError) {
       if (transferError instanceof InsufficientBalanceError) {
+        recordAudit({
+          userId: sender._id, action: 'transaction.send.failed', status: 'failed',
+          message: 'Insufficient balance at debit time', req,
+          metadata: { symbolId: sender.symbolId, receiverSymbolId: receiver.symbolId, debitAmount, balance: transferError.balance },
+        });
         return res.status(400).json({
           success: false,
           message: transferError.message,
           balance: transferError.balance,
         });
       }
+      // The corridor's own pool couldn't cover the release — a real,
+      // hard-liquidity refusal, not a sender-balance problem. Nothing moved:
+      // the transaction (or the non-transactional revert path) already
+      // undid the sender's debit.
+      if (transferError instanceof InsufficientPoolLiquidityError) {
+        recordAudit({
+          userId: sender._id, action: 'transaction.send.failed', status: 'failed',
+          message: `Insufficient pool liquidity (${transferError.countryIso}/${transferError.counterCurrency})`, req,
+          metadata: { symbolId: sender.symbolId, receiverSymbolId: receiver.symbolId, countryIso: transferError.countryIso, counterCurrency: transferError.counterCurrency },
+        });
+        return res.status(503).json({
+          success: false,
+          message: `This payment corridor (${transferError.countryIso}/${transferError.counterCurrency}) doesn't have enough settlement liquidity right now. Please try again later.`,
+        });
+      }
+
+      // Audit fix: the losing side of the idempotencyKey race the unique
+      // index on Transaction (fromUserId + metadata.idempotencyKey) exists
+      // to close — see that index's own comment. Both concurrent requests
+      // passed the earlier findOne pre-check (nothing existed yet for
+      // either of them to find); one of them's Transaction.create then hit
+      // the index and aborted. That is not a failure to report to the
+      // client — it is exactly the duplicate-request case the pre-check
+      // already handles, just caught one step later. The winner's row is
+      // looked up and returned the same way the pre-check would have.
+      const isIdempotencyKeyCollision =
+        cleanIdempotencyKey &&
+        (transferError?.code === 11000 || transferError?.writeErrors?.[0]?.code === 11000) &&
+        /idempotencyKey/.test(String(transferError?.message || transferError?.writeErrors?.[0]?.errmsg || ''));
+
+      if (isIdempotencyKeyCollision) {
+        const winningTransaction = await Transaction.findOne({
+          fromUserId: sender._id,
+          'metadata.idempotencyKey': cleanIdempotencyKey,
+        }).sort({ createdAt: -1 });
+
+        if (winningTransaction) {
+          return res.status(200).json({
+            success: true,
+            duplicate: true,
+            message: 'Duplicate request ignored. Existing transaction returned.',
+            transaction: cleanTransactionPayload(winningTransaction, sender, receiver),
+          });
+        }
+        // Extremely unlikely (the winner's own transaction should already be
+        // committed by the time its index write conflict reaches us here),
+        // but if the winning row genuinely can't be found, fall through and
+        // surface the original error rather than fabricate a response.
+      }
+
       throw transferError;
     }
 
-    // Past this point the money has moved and the record of it exists. Nothing
-    // below can fail the payment — only the asset seed is still outstanding,
-    // and that is best-effort by design.
+    // Past this point the money has moved, the record of it exists, and — for
+    // a cross-border payment — the corridor's own pools already settled (see
+    // performTransfer's own settleCrossBorderPayment call; that isn't
+    // best-effort any more, it's the hard liquidity gate the transfer itself
+    // depends on). Nothing below can fail the payment — only the asset seed
+    // and the merchant-share receipts are still outstanding, and those stay
+    // best-effort by design.
     const completedTransaction = transferred.transaction;
     const senderBalanceAfter = transferred.senderBalanceAfter;
+    const settlement = transferred.settlement;
 
-    // Cross-border settlement — best-effort, same as the AssetSeed planting
-    // step below: the payment already succeeded, so this can only add a
-    // Settlement/pool audit trail on top of it, never affect the payment
-    // itself. Returns null for the common today case (both accounts default
-    // to countryIso 'IN', so there is no currency mismatch to settle) — see
-    // lib/settlementEngine.js for what makes it actually run.
-    let settlement = null;
-
-    try {
-      settlement = await settleCrossBorderPayment({
-        transaction: completedTransaction,
-        sender,
-        receiver,
-        amount: numericAmount,
-      });
-    } catch (settlementError) {
-      // settleCrossBorderPayment already catches and logs internally; this
-      // is only a backstop against a bug in that catch itself.
-      console.error('Settlement step raised unexpectedly (non-fatal):', settlementError);
-    }
+    recordAudit({
+      userId: sender._id, action: 'transaction.send.success', status: 'success',
+      message: `Sent ${numericAmount} ${senderCurrency !== destinationCurrency ? `(${senderCurrency}->${destinationCurrency})` : destinationCurrency}`,
+      req,
+      metadata: {
+        transactionId: completedTransaction._id, referenceId: completedTransaction.referenceId,
+        symbolId: sender.symbolId, receiverSymbolId: receiver.symbolId,
+        amount: numericAmount, senderCurrency, destinationCurrency,
+        crossBorder: senderCurrency !== destinationCurrency, settlementId: settlement?.settlementId || null,
+      },
+    });
 
     // Plant a My Assets seed for cashback-earning payments. The rate is the
     // *payee's* own choice (User.cashbackRate, set via
@@ -3367,10 +3878,20 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
           symbolId: sender.symbolId,
           business: String(req.body?.business || req.body?.payeeName || receiver.fullName || cleanNote || 'Payment').trim().slice(0, 80),
           category: String(req.body?.category || 'General').trim().slice(0, 40),
-          amountPaid: numericAmount,
+          // This seed belongs to the sender and its whole purpose is
+          // tracking bonus interest on real balance already sitting in
+          // their account (see computeSeed) — so it has to be denominated
+          // in the sender's own currency, the same one cashbackCredit was
+          // actually credited in, not the receiver-currency face values.
+          amountPaid: debitAmount,
           cashbackRate: payeeCashbackRate,
-          cashback,
-          currency: cleanCurrency,
+          cashback: cashbackCredit,
+          currency: senderCurrency,
+          // Audit fix: links this seed back to the payment that earned it
+          // (see AssetSeed.js's transactionId comment and the schema's
+          // unique partial index — this also guarantees performTransfer
+          // itself can never double-plant for the same completedTransaction).
+          transactionId: completedTransaction._id,
         });
       } catch (seedError) {
         console.error('Seed planting error (non-fatal):', seedError);
@@ -3391,8 +3912,13 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
         sender,
         receiver,
         amount: numericAmount,
-        cashback,
-        currency: cleanCurrency,
+        currency: destinationCurrency,
+        // The share leg documents value moving back toward the payer, so
+        // it has to carry what the payer actually received — cashbackCredit
+        // in their own currency — not the receiver-currency cashback figure
+        // the payment leg above is quoted in.
+        cashback: cashbackCredit,
+        cashbackCurrency: senderCurrency,
         assetSeedId: plantedSeed?._id || null,
       }));
     } catch (receiptError) {
@@ -3406,9 +3932,20 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
       message: 'Prototype transaction completed successfully.',
       transaction: cleanTransactionPayload(completedTransaction, sender, receiver),
       newBalance: senderBalanceAfter,
-      cashback,
+      // In the sender's own currency — this is what actually landed back in
+      // their balance (see cashbackCredit above), matching the currency
+      // their own dashboard/toast already displays amounts in. `payeeReceives`
+      // below stays in the receiver's own currency, same as always.
+      cashback: cashbackCredit,
+      cashbackCurrency: senderCurrency,
       cashbackRate: payeeCashbackRate,
       payeeReceives,
+      // What actually left the sender's balance, in their own currency —
+      // for a same-currency payment this equals the typed amount exactly.
+      debitAmount,
+      senderCurrency,
+      destinationCurrency,
+      fxRate,
       assetSeed: plantedSeed ? computeSeed(plantedSeed) : null,
       settlement: settlement
         ? {
@@ -3416,9 +3953,17 @@ app.post('/api/transactions/send', writeLimit, requireAuth, requireSelf('senderS
             sourceCountryIso: settlement.sourceCountryIso,
             sourceCurrency: settlement.sourceCurrency,
             sourceAmount: settlement.sourceAmount,
+            // The two source-side ledger lines — the sender's full credit
+            // in, the cashback release back out — not just their net.
+            sourceCreditAmount: settlement.sourceCreditAmount,
+            sourceCashbackRelease: settlement.sourceCashbackRelease,
             destinationCountryIso: settlement.destinationCountryIso,
             destinationCurrency: settlement.destinationCurrency,
             destinationAmount: settlement.destinationAmount,
+            // The two destination-side ledger lines — the full release,
+            // the cashback return.
+            destinationReleaseAmount: settlement.destinationReleaseAmount,
+            destinationCashbackReturn: settlement.destinationCashbackReturn,
             rate: settlement.rate,
             rateSource: settlement.rateSource,
           }
@@ -4178,6 +4723,796 @@ app.post('/api/coin/send', writeLimit, requireAuth, requireSelf('senderSymbolId'
     }
     console.error('Coin send error:', error);
     return res.status(500).json({ success: false, message: 'Could not send Gloobal Coin.' });
+  }
+});
+
+// ===========================================================================
+// GEU (Gloobal Energy Unit) — see AUDIT_GEU_REPORT.md for the full design
+// rationale, invariant reasoning, and the list of UNRESOLVED GEU POLICY
+// QUESTIONS this implementation deliberately does not answer.
+//
+// Reference relationship (never a price-growth claim): 1 GEU = 1 INR at the
+// reference/accounting layer. GEU has exactly two creation reasons —
+// ENTRY_MINT (capital-backed, models/GeuEntryMint.js) and GROWTH (bounded,
+// models/GeuGrowthEvent.js) — and one destruction reason additional to
+// negative growth: REDEMPTION (models/GeuRedemption.js). Every route below
+// reuses this codebase's existing primitives (withMongoTransaction,
+// toMinorUnit/decimalsFor, getRate, CountryCurrencyPool, AuditLog,
+// requireAuth/requireSelf) rather than inventing parallel ones.
+// ===========================================================================
+
+const GEU_CURRENCY = 'GEU';
+const GEU_REFERENCE_CURRENCY = 'INR';
+// THE 0.3% RULE — a maximum, never a rate that is automatically applied.
+// See POST /api/geu/growth: this number only ever bounds a caller-supplied
+// actualGrowthAmount; nothing in this file multiplies a balance by it on a
+// schedule.
+const GEU_MAX_POSITIVE_GROWTH_RATE = 0.003;
+
+const GEU_ID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function createGeuId(prefix, length = 16) {
+  let id = prefix;
+  for (let i = 0; i < length; i += 1) {
+    id += GEU_ID_CHARS[crypto.randomInt(GEU_ID_CHARS.length)];
+  }
+  return id;
+}
+
+const geuBalanceOf = (user) => {
+  const raw = Number(user?.geuBalance);
+  return Number.isFinite(raw) ? raw : 0;
+};
+
+// The growth ceiling (brief section 6/10) is floored, never rounded, to
+// GEU's own minor unit — a CEILING must never be nudged upward by rounding.
+// toMinorUnit's round-half-up (used everywhere else in this codebase) would
+// occasionally let a request through at a hair over the true 0.3%; flooring
+// cannot.
+const floorToMinorUnit = (value, currencyCode) => {
+  const decimals = currencyCode ? decimalsFor(currencyCode) : 2;
+  const factor = 10 ** decimals;
+  return Math.floor(Number(value) * factor) / factor;
+};
+
+// Resolves an account's own currency the same never-trust-the-client way
+// every other money-moving route in this file already does (see
+// AUDIT_REPORT.md's Bugs Found #6) — GEU entry/redemption currency is
+// always the account's own Country.localCurrency, never a client-supplied
+// code.
+async function resolveOwnCurrency(user) {
+  const country = await Country.findOne({ iso: user.countryIso }).select('localCurrency').lean();
+  return country?.localCurrency || 'INR';
+}
+
+// GET /api/geu/supply — the GEU analogue of GET /api/coin/supply. MUST stay
+// declared above /api/geu/:symbolId for the same reason that route's own
+// comment gives: Express matches in declaration order, and behind the
+// parameterised route this would 404 with symbolId === 'supply'.
+app.get('/api/geu/supply', async (req, res) => {
+  try {
+    const supplyDoc = await GeuSupply.load();
+
+    const [held] = await User.aggregate([
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$geuBalance', 0] } }, holders: { $sum: { $cond: [{ $gt: [{ $ifNull: ['$geuBalance', 0] }, 0] }, 1, 0] } } } },
+    ]);
+
+    const createdFromEntry = toMinorUnit(supplyDoc?.createdFromEntry || 0, GEU_CURRENCY);
+    const createdFromGrowth = toMinorUnit(supplyDoc?.createdFromGrowth || 0, GEU_CURRENCY);
+    const destroyedFromRedemption = toMinorUnit(supplyDoc?.destroyedFromRedemption || 0, GEU_CURRENCY);
+    const destroyedFromNegativeGrowth = toMinorUnit(supplyDoc?.destroyedFromNegativeGrowth || 0, GEU_CURRENCY);
+    const circulating = toMinorUnit(GeuSupply.circulating(supplyDoc), GEU_CURRENCY);
+    const heldByAccounts = toMinorUnit(held?.total || 0, GEU_CURRENCY);
+
+    return res.json({
+      success: true,
+      referenceCurrency: supplyDoc?.referenceCurrency || GEU_REFERENCE_CURRENCY,
+      capitalBackingReferenceInr: toMinorUnit(supplyDoc?.capitalBackingReferenceInr || 0, GEU_REFERENCE_CURRENCY),
+      createdFromEntry,
+      createdFromGrowth,
+      destroyedFromRedemption,
+      destroyedFromNegativeGrowth,
+      reserved: toMinorUnit(supplyDoc?.reserved || 0, GEU_CURRENCY),
+      pending: toMinorUnit(supplyDoc?.pending || 0, GEU_CURRENCY),
+      totalCirculatingGeu: circulating,
+      heldByAccounts,
+      holders: held?.holders || 0,
+      // Independently-maintained reconciliation (Invariant 8), same
+      // reasoning as /api/coin/supply's own `backed` field — three numbers
+      // that are only equal because every route kept them equal.
+      reconciled: circulating === heldByAccounts,
+    });
+  } catch (error) {
+    console.error('GEU supply error:', error);
+    return res.status(500).json({ success: false, message: 'Could not load GEU supply.' });
+  }
+});
+
+// GET /api/geu/ledger/:symbolId — GEU-only ledger history for one account.
+// Declared before /api/geu/:symbolId is irrelevant to Express's matching
+// here (two path segments vs one — no collision either order), but kept in
+// reading order next to it.
+app.get('/api/geu/ledger/:symbolId', lookupLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
+  try {
+    const user = await User.findOne({ symbolId: String(req.params.symbolId || '').trim() });
+    if (!user) return res.status(404).json({ success: false, message: 'Secure ID not found.' });
+
+    const entries = await LedgerEntry.find({ userId: user._id, currency: GEU_CURRENCY })
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
+
+    return res.json({
+      success: true,
+      symbolId: user.symbolId,
+      count: entries.length,
+      ledger: entries.map((e) => ({
+        id: e._id,
+        transactionId: e.transactionId,
+        entryType: e.entryType,
+        amount: e.amount,
+        balanceBefore: e.balanceBefore,
+        balanceAfter: e.balanceAfter,
+        note: e.note,
+        metadata: e.metadata,
+        createdAt: e.createdAt,
+      })),
+    });
+  } catch (error) {
+    console.error('GEU ledger error:', error);
+    return res.status(500).json({ success: false, message: 'Could not load GEU ledger.' });
+  }
+});
+
+// GET /api/geu/:symbolId — one account's GEU position.
+app.get('/api/geu/:symbolId', lookupLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
+  try {
+    const user = await User.findOne({ symbolId: String(req.params.symbolId || '').trim() });
+    if (!user) return res.status(404).json({ success: false, message: 'Secure ID not found.' });
+
+    return res.json({
+      success: true,
+      symbolId: user.symbolId,
+      geuBalance: geuBalanceOf(user),
+      balance: accountBalanceOf(user),
+      geuCurrency: GEU_CURRENCY,
+      referenceCurrency: GEU_REFERENCE_CURRENCY,
+      // Ceiling for the NEXT growth event this account could post, informational
+      // only — GET has no side effect and creates no GeuGrowthEvent.
+      maxPositiveGrowthRate: GEU_MAX_POSITIVE_GROWTH_RATE,
+      maxPositiveGrowthIfAppliedNow: floorToMinorUnit(geuBalanceOf(user) * GEU_MAX_POSITIVE_GROWTH_RATE, GEU_CURRENCY),
+    });
+  } catch (error) {
+    console.error('GEU balance error:', error);
+    return res.status(500).json({ success: false, message: 'Could not load GEU balance.' });
+  }
+});
+
+// POST /api/geu/entry — capital entry -> GEU entry mint (brief sections 3/4).
+//
+// Mapped from Coin's mint route (see AUDIT_GEU_REPORT.md's Phase 2/3
+// mapping): the closest existing precedent for "fiat becomes a different
+// unit, 1:1 against a captured reference value" is exactly what
+// POST /api/coin/mint already does, so the qualifying capital this route
+// mints against is the account's own existing Gloobal balance (User.balance,
+// in the account's own currency) — the same "one update, both fields"
+// atomic swap Coin mint uses, not a new external capital-intake mechanism
+// this prototype has no real payment rail to support. This is a documented
+// mapping decision, not an assumption made silently — see UNRESOLVED GEU
+// POLICY QUESTIONS for the real-world alternative (genuinely external
+// capital, with no corresponding internal debit) this does NOT implement.
+app.post('/api/geu/entry', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
+  try {
+    const { symbolId, amount, idempotencyKey } = req.body || {};
+    const sourceAmount = toMinorUnit(Number(amount));
+    const cleanIdempotencyKey = String(idempotencyKey || '').trim().slice(0, 120);
+    const maxPrototypeAmount = Number(process.env.PROTOTYPE_TRANSACTION_MAX_AMOUNT || 5000);
+
+    if (!Number.isFinite(sourceAmount) || sourceAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'Valid amount greater than 0 is required.' });
+    }
+    if (Number.isFinite(maxPrototypeAmount) && maxPrototypeAmount > 0 && sourceAmount > maxPrototypeAmount) {
+      return res.status(400).json({ success: false, message: `Prototype GEU entry limit is ${maxPrototypeAmount} per operation.` });
+    }
+    if (!cleanIdempotencyKey) {
+      return res.status(400).json({ success: false, message: 'idempotencyKey is required for a GEU entry.' });
+    }
+
+    const user = await User.findOne({ symbolId: String(symbolId || '').trim() });
+    if (!user) return res.status(404).json({ success: false, message: 'Secure ID not found.' });
+
+    await materialiseBalance(user);
+
+    // Pre-check, same shape as /api/transactions/send's — the unique index
+    // on GeuEntryMint(userId, idempotencyKey) is what actually guarantees
+    // this under a race (see the E11000 handling below), this is only the
+    // fast, non-racing path.
+    const existingEntry = await GeuEntryMint.findOne({ userId: user._id, idempotencyKey: cleanIdempotencyKey });
+    if (existingEntry) {
+      return res.status(200).json({ success: true, duplicate: true, entry: existingEntry });
+    }
+
+    const sourceCurrency = await resolveOwnCurrency(user);
+    let exchangeRate = 1;
+    let rateSource = 'identity';
+    const rateTimestamp = new Date();
+
+    if (sourceCurrency !== GEU_REFERENCE_CURRENCY) {
+      try {
+        ({ rate: exchangeRate, source: rateSource } = await getRate(sourceCurrency, GEU_REFERENCE_CURRENCY));
+      } catch (fxError) {
+        console.error(`GEU entry FX lookup failed for ${sourceCurrency}->${GEU_REFERENCE_CURRENCY}:`, fxError);
+        return res.status(502).json({ success: false, message: 'Exchange rate is temporarily unavailable. Please try again in a moment.' });
+      }
+    }
+
+    const referenceAmount = toMinorUnit(sourceAmount * exchangeRate, GEU_REFERENCE_CURRENCY);
+    const geuAmount = toMinorUnit(referenceAmount, GEU_CURRENCY);
+    const entryId = createGeuId('GLOOBAL-GEU-ENTRY-');
+    const referenceId = await resolveTransactionReference(null);
+
+    let value;
+    let atomic;
+    try {
+      ({ value, atomic } = await withMongoTransaction(async (session) => {
+        const sessionOpt = session ? { session } : {};
+
+        // One update, both fields — the same "fiat leaving and GEU arriving
+        // are the same event" reasoning Coin mint's own comment gives.
+        const converted = await User.findOneAndUpdate(
+          { _id: user._id, balance: { $gte: sourceAmount } },
+          { $inc: { balance: -sourceAmount, geuBalance: geuAmount } },
+          { returnDocument: 'after', ...sessionOpt }
+        );
+
+        if (!converted) {
+          const current = await User.findById(user._id).select('balance').lean();
+          throw new InsufficientBalanceError(accountBalanceOf(current || {}));
+        }
+
+        await GeuSupply.findOneAndUpdate(
+          { key: 'global' },
+          { $inc: { capitalBackingReferenceInr: referenceAmount, createdFromEntry: geuAmount } },
+          { upsert: true, ...sessionOpt }
+        );
+
+        const balanceAfter = toMinorUnit(converted.balance, sourceCurrency);
+        const geuAfter = toMinorUnit(converted.geuBalance, GEU_CURRENCY);
+
+        const [transaction] = await Transaction.create(
+          [
+            {
+              fromUserId: user._id,
+              toUserId: null,
+              amount: geuAmount,
+              currency: GEU_CURRENCY,
+              type: 'geu_entry_mint',
+              status: 'success',
+              note: 'GEU entry mint',
+              referenceId,
+              metadata: { prototype: true, entryId, sourceCurrency, sourceAmount, referenceAmount, exchangeRate, rateSource },
+            },
+          ],
+          session ? { session } : {}
+        );
+
+        const [entry] = await GeuEntryMint.create(
+          [
+            {
+              entryId,
+              userId: user._id,
+              symbolId: user.symbolId,
+              sourceCurrency,
+              sourceAmount,
+              referenceCurrency: GEU_REFERENCE_CURRENCY,
+              referenceAmount,
+              exchangeRate,
+              rateSource,
+              rateTimestamp,
+              geuAmount,
+              transactionId: transaction._id,
+              idempotencyKey: cleanIdempotencyKey,
+              status: 'completed',
+            },
+          ],
+          session ? { session } : {}
+        );
+
+        await LedgerEntry.create(
+          [
+            {
+              transactionId: transaction._id,
+              userId: user._id,
+              entryType: 'debit',
+              amount: sourceAmount,
+              balanceBefore: toMinorUnit(balanceAfter + sourceAmount, sourceCurrency),
+              balanceAfter,
+              currency: sourceCurrency,
+              note: 'Capital moved into GEU entry mint',
+              metadata: { prototype: true, geuLeg: 'capital', entryId, transactionReferenceId: transaction.referenceId },
+            },
+            {
+              transactionId: transaction._id,
+              userId: user._id,
+              entryType: 'credit',
+              amount: geuAmount,
+              balanceBefore: toMinorUnit(geuAfter - geuAmount, GEU_CURRENCY),
+              balanceAfter: geuAfter,
+              currency: GEU_CURRENCY,
+              note: 'GEU entry-minted',
+              metadata: { prototype: true, geuLeg: 'geu', entryId, transactionReferenceId: transaction.referenceId },
+            },
+          ],
+          session ? { session, ordered: true } : {}
+        );
+
+        return { transaction, entry, balanceAfter, geuAfter };
+      }));
+    } catch (transferError) {
+      const isEntryCollision =
+        (transferError?.code === 11000 || transferError?.writeErrors?.[0]?.code === 11000) &&
+        /idempotencyKey/.test(String(transferError?.message || transferError?.writeErrors?.[0]?.errmsg || ''));
+
+      if (isEntryCollision) {
+        const winner = await GeuEntryMint.findOne({ userId: user._id, idempotencyKey: cleanIdempotencyKey });
+        if (winner) return res.status(200).json({ success: true, duplicate: true, entry: winner });
+      }
+      throw transferError;
+    }
+
+    recordAudit({
+      userId: user._id, action: 'geu.entry_mint', status: 'success', req,
+      metadata: { symbolId: user.symbolId, entryId, sourceCurrency, sourceAmount, referenceAmount, geuAmount, exchangeRate },
+    });
+
+    return res.status(201).json({
+      success: true,
+      entryId,
+      sourceCurrency,
+      sourceAmount,
+      referenceCurrency: GEU_REFERENCE_CURRENCY,
+      referenceAmount,
+      exchangeRate,
+      rateSource,
+      geuMinted: geuAmount,
+      balance: value.balanceAfter,
+      geuBalance: value.geuAfter,
+      referenceId: value.transaction.referenceId,
+    });
+  } catch (error) {
+    if (error instanceof InsufficientBalanceError) {
+      return res.status(400).json({ success: false, message: 'Not enough balance to enter that much capital.', balance: error.balance });
+    }
+    console.error('GEU entry error:', error);
+    return res.status(500).json({ success: false, message: 'Could not process GEU entry.' });
+  }
+});
+
+// POST /api/geu/growth — a bounded growth event (brief sections 6/7/10/11).
+//
+// UNRESOLVED GEU POLICY QUESTION, implemented around rather than guessed at
+// (see AUDIT_GEU_REPORT.md): nothing in the brief defines what determines
+// the actual growth amount for a period, or who/what is authorized to
+// apply one. This route enforces the one thing that IS mathematically
+// unambiguous — actualGrowthAmount can never exceed
+// opening_balance * 0.003, is idempotent per (account, period), and is
+// never automatic — and requires the caller to supply
+// requestedGrowthAmount explicitly rather than computing one from an
+// undefined rule. Gated behind the same requireAuth + requireSelf every
+// other account-owner action in this file uses, because no admin/system-role
+// concept exists anywhere in this codebase to gate it behind instead — this
+// means an account holder can currently request growth for their own
+// account up to the ceiling, which is almost certainly NOT the intended
+// real-world authorization model (the brief explicitly says 0.3% must never
+// function as guaranteed income, and a user who can always claim their own
+// maximum every period has effectively been given exactly that). Flagged
+// here, in the route's own response via `policyNote`, and in the final
+// report — not silently implemented as if it were settled.
+app.post('/api/geu/growth', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
+  try {
+    const { symbolId, growthPeriod, requestedGrowthAmount } = req.body || {};
+    const cleanPeriod = String(growthPeriod || '').trim().slice(0, 40);
+    const requested = toMinorUnit(Number(requestedGrowthAmount), GEU_CURRENCY);
+
+    if (!cleanPeriod) {
+      return res.status(400).json({ success: false, message: 'growthPeriod is required (e.g. an ISO date identifying the period this event is for).' });
+    }
+    if (!Number.isFinite(requested)) {
+      return res.status(400).json({ success: false, message: 'requestedGrowthAmount must be a finite number.' });
+    }
+
+    const user = await User.findOne({ symbolId: String(symbolId || '').trim() });
+    if (!user) return res.status(404).json({ success: false, message: 'Secure ID not found.' });
+
+    // Idempotency pre-check (brief sections 10/18/Invariant 9) — the unique
+    // index on GeuGrowthEvent(accountId, growthPeriod) is the real
+    // guarantee under a race; see the E11000 handling below.
+    const existingEvent = await GeuGrowthEvent.findOne({ accountId: user._id, growthPeriod: cleanPeriod });
+    if (existingEvent) {
+      return res.status(200).json({ success: true, duplicate: true, growthEvent: existingEvent });
+    }
+
+    const openingBalance = geuBalanceOf(user);
+    // Floored ceiling — never computed from a balance that already includes
+    // this same growth event (openingBalance is read fresh, before any
+    // write below, and the atomic $inc guard further down re-checks it
+    // against the actual document at write time).
+    const maxPositiveGrowth = floorToMinorUnit(openingBalance * GEU_MAX_POSITIVE_GROWTH_RATE, GEU_CURRENCY);
+
+    if (requested > maxPositiveGrowth) {
+      return res.status(400).json({
+        success: false,
+        message: `Requested growth ${requested} exceeds the maximum positive growth (${maxPositiveGrowth}) for this balance.`,
+        openingBalance,
+        maxPositiveGrowth,
+      });
+    }
+
+    const closingBalance = toMinorUnit(openingBalance + requested, GEU_CURRENCY);
+    if (closingBalance < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Requested negative adjustment would take the GEU balance below zero.',
+        openingBalance,
+      });
+    }
+
+    const reason = requested > 0 ? 'POSITIVE_ADJUSTMENT' : requested === 0 ? 'ZERO_ADJUSTMENT' : 'NEGATIVE_ADJUSTMENT';
+    const growthEventId = createGeuId('GLOOBAL-GEU-GROWTH-');
+    const referenceId = await resolveTransactionReference(null);
+
+    let value;
+    let atomic;
+    try {
+      ({ value, atomic } = await withMongoTransaction(async (session) => {
+        const sessionOpt = session ? { session } : {};
+
+        // Exact-match optimistic guard on geuBalance, not just an existence
+        // check: this is what makes the ceiling computed above actually
+        // apply to the balance being written, not a balance that changed
+        // (e.g. via a concurrent redemption) between the read above and
+        // this write. A mismatch means the account moved since
+        // openingBalance was read — the whole request is refused rather
+        // than silently applied against a stale ceiling.
+        const applied = await User.findOneAndUpdate(
+          { _id: user._id, geuBalance: openingBalance },
+          { $inc: { geuBalance: requested } },
+          { returnDocument: 'after', ...sessionOpt }
+        );
+
+        if (!applied) {
+          const raceError = new Error('GEU balance changed since this growth event was evaluated — please retry.');
+          raceError.name = 'GeuBalanceRaceError';
+          throw raceError;
+        }
+
+        if (requested > 0) {
+          await GeuSupply.findOneAndUpdate({ key: 'global' }, { $inc: { createdFromGrowth: requested } }, { upsert: true, ...sessionOpt });
+        } else if (requested < 0) {
+          await GeuSupply.findOneAndUpdate({ key: 'global' }, { $inc: { destroyedFromNegativeGrowth: -requested } }, { upsert: true, ...sessionOpt });
+        }
+
+        const [transaction] = await Transaction.create(
+          [
+            {
+              fromUserId: requested < 0 ? user._id : null,
+              toUserId: requested < 0 ? null : user._id,
+              amount: Math.abs(requested),
+              currency: GEU_CURRENCY,
+              type: 'geu_growth',
+              status: 'success',
+              note: `GEU growth event (${reason})`,
+              referenceId,
+              metadata: { prototype: true, growthEventId, growthPeriod: cleanPeriod, openingBalance, maxPositiveGrowth, requested, reason },
+            },
+          ],
+          session ? { session } : {}
+        );
+
+        const [growthEvent] = await GeuGrowthEvent.create(
+          [
+            {
+              growthEventId,
+              accountId: user._id,
+              symbolId: user.symbolId,
+              growthPeriod: cleanPeriod,
+              openingBalance,
+              maxPositiveGrowth,
+              requestedGrowthAmount: requested,
+              actualGrowthAmount: requested,
+              closingBalance,
+              actualGrowthRate: openingBalance > 0 ? requested / openingBalance : 0,
+              reason,
+              status: 'applied',
+              transactionId: transaction._id,
+            },
+          ],
+          session ? { session } : {}
+        );
+
+        if (requested !== 0) {
+          await LedgerEntry.create(
+            [
+              {
+                transactionId: transaction._id,
+                userId: user._id,
+                entryType: requested > 0 ? 'credit' : 'debit',
+                amount: Math.abs(requested),
+                balanceBefore: openingBalance,
+                balanceAfter: closingBalance,
+                currency: GEU_CURRENCY,
+                note: `GEU growth (${reason})`,
+                metadata: { prototype: true, growthEventId, transactionReferenceId: transaction.referenceId },
+              },
+            ],
+            session ? { session } : {}
+          );
+        }
+
+        return { transaction, growthEvent };
+      }));
+    } catch (growthError) {
+      if (growthError?.name === 'GeuBalanceRaceError') {
+        return res.status(409).json({ success: false, message: growthError.message });
+      }
+      const isGrowthCollision =
+        (growthError?.code === 11000 || growthError?.writeErrors?.[0]?.code === 11000) &&
+        /growthPeriod/.test(String(growthError?.message || growthError?.writeErrors?.[0]?.errmsg || ''));
+
+      if (isGrowthCollision) {
+        const winner = await GeuGrowthEvent.findOne({ accountId: user._id, growthPeriod: cleanPeriod });
+        if (winner) return res.status(200).json({ success: true, duplicate: true, growthEvent: winner });
+      }
+      throw growthError;
+    }
+
+    recordAudit({
+      userId: user._id, action: 'geu.growth', status: 'success', req,
+      metadata: { symbolId: user.symbolId, growthEventId, growthPeriod: cleanPeriod, openingBalance, maxPositiveGrowth, actualGrowthAmount: requested, reason },
+    });
+
+    return res.status(201).json({
+      success: true,
+      growthEventId,
+      growthPeriod: cleanPeriod,
+      openingBalance,
+      maxPositiveGrowthRate: GEU_MAX_POSITIVE_GROWTH_RATE,
+      maxPositiveGrowth,
+      requestedGrowthAmount: requested,
+      actualGrowthAmount: requested,
+      closingBalance,
+      reason,
+      referenceId: value.transaction.referenceId,
+      policyNote: 'UNRESOLVED GEU POLICY QUESTION: this endpoint currently trusts the account owner\'s own request for the actual growth amount (subject to the 0.3% ceiling) because no admin/system-authorization concept exists in this codebase yet. See AUDIT_GEU_REPORT.md.',
+    });
+  } catch (error) {
+    console.error('GEU growth error:', error);
+    return res.status(500).json({ success: false, message: 'Could not process GEU growth event.' });
+  }
+});
+
+// POST /api/geu/redeem — GEU exit, same-currency or cross-border (brief
+// sections 14/15/16).
+app.post('/api/geu/redeem', writeLimit, requireAuth, requireSelf('symbolId'), async (req, res) => {
+  try {
+    const { symbolId, amount, idempotencyKey } = req.body || {};
+    const geuAmount = toMinorUnit(Number(amount), GEU_CURRENCY);
+    const cleanIdempotencyKey = String(idempotencyKey || '').trim().slice(0, 120);
+
+    if (!Number.isFinite(geuAmount) || geuAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'Valid GEU amount greater than 0 is required.' });
+    }
+    if (!cleanIdempotencyKey) {
+      return res.status(400).json({ success: false, message: 'idempotencyKey is required for a GEU redemption.' });
+    }
+
+    const user = await User.findOne({ symbolId: String(symbolId || '').trim() });
+    if (!user) return res.status(404).json({ success: false, message: 'Secure ID not found.' });
+
+    const existingRedemption = await GeuRedemption.findOne({ userId: user._id, idempotencyKey: cleanIdempotencyKey });
+    if (existingRedemption) {
+      return res.status(200).json({ success: true, duplicate: true, redemption: existingRedemption });
+    }
+
+    await materialiseBalance(user);
+
+    const destinationCurrency = await resolveOwnCurrency(user);
+    const referenceAmount = toMinorUnit(geuAmount, GEU_REFERENCE_CURRENCY);
+    let exchangeRate = 1;
+    let rateSource = 'identity';
+    const rateTimestamp = new Date();
+    let localCurrencyAmount = referenceAmount;
+    const crossBorder = destinationCurrency !== GEU_REFERENCE_CURRENCY;
+
+    if (crossBorder) {
+      try {
+        ({ rate: exchangeRate, source: rateSource } = await getRate(GEU_REFERENCE_CURRENCY, destinationCurrency));
+      } catch (fxError) {
+        console.error(`GEU redemption FX lookup failed for ${GEU_REFERENCE_CURRENCY}->${destinationCurrency}:`, fxError);
+        return res.status(502).json({ success: false, message: 'Exchange rate is temporarily unavailable. Please try again in a moment.' });
+      }
+      localCurrencyAmount = toMinorUnit(referenceAmount * exchangeRate, destinationCurrency);
+    }
+
+    const redemptionId = createGeuId('GLOOBAL-GEU-REDEEM-');
+    const referenceId = await resolveTransactionReference(null);
+
+    let value;
+    let atomic;
+    try {
+      ({ value, atomic } = await withMongoTransaction(async (session) => {
+        const sessionOpt = session ? { session } : {};
+
+        const debited = await User.findOneAndUpdate(
+          { _id: user._id, geuBalance: { $gte: geuAmount } },
+          { $inc: { geuBalance: -geuAmount } },
+          { returnDocument: 'after', ...sessionOpt }
+        );
+
+        if (!debited) {
+          const current = await User.findById(user._id).select('geuBalance').lean();
+          const shortfall = new Error('Not enough GEU to redeem that much.');
+          shortfall.name = 'InsufficientGeuError';
+          shortfall.geuBalance = geuBalanceOf(current || {});
+          throw shortfall;
+        }
+
+        let pool = null;
+
+        if (crossBorder) {
+          // Reuses the SAME model and the SAME atomic conditional-release
+          // liquidity gate lib/settlementEngine.js's destination leg already
+          // uses for a real cross-border payment (brief section 16) — not a
+          // second reserve system, the account's own-country pool for the
+          // reference-currency (INR) corridor. One-sided by construction: a
+          // redemption has no "sender" whose fiat enters a mirror pool the
+          // way a payment's source side does — the value already existed as
+          // GEU backing (GeuSupply.capitalBackingReferenceInr) before this
+          // redemption started.
+          pool = await CountryCurrencyPool.loadOrCreate(user.countryIso, GEU_REFERENCE_CURRENCY, destinationCurrency, session);
+
+          const releasedPool = await CountryCurrencyPool.findOneAndUpdate(
+            { _id: pool._id, availableBalance: { $gte: localCurrencyAmount } },
+            { $inc: { availableBalance: -localCurrencyAmount, totalBalance: -localCurrencyAmount } },
+            { returnDocument: 'after', ...sessionOpt }
+          );
+
+          if (!releasedPool) {
+            throw new InsufficientPoolLiquidityError(pool.countryIso, pool.counterCurrency, pool.availableBalance, localCurrencyAmount);
+          }
+          pool = releasedPool;
+        }
+
+        const credited = await User.findOneAndUpdate(
+          { _id: user._id },
+          { $inc: { balance: localCurrencyAmount } },
+          { returnDocument: 'after', ...sessionOpt }
+        );
+
+        await GeuSupply.findOneAndUpdate(
+          { key: 'global' },
+          { $inc: { destroyedFromRedemption: geuAmount, capitalBackingReferenceInr: -referenceAmount } },
+          { upsert: true, ...sessionOpt }
+        );
+
+        const geuAfter = toMinorUnit(debited.geuBalance, GEU_CURRENCY);
+        const balanceAfter = toMinorUnit(credited.balance, destinationCurrency);
+
+        const [transaction] = await Transaction.create(
+          [
+            {
+              fromUserId: user._id,
+              toUserId: null,
+              amount: geuAmount,
+              currency: GEU_CURRENCY,
+              type: 'geu_redeem',
+              status: 'success',
+              note: 'GEU redeemed',
+              referenceId,
+              metadata: { prototype: true, redemptionId, destinationCurrency, referenceAmount, localCurrencyAmount, exchangeRate, rateSource, crossBorder },
+            },
+          ],
+          session ? { session } : {}
+        );
+
+        const [redemption] = await GeuRedemption.create(
+          [
+            {
+              redemptionId,
+              userId: user._id,
+              symbolId: user.symbolId,
+              geuAmountRedeemed: geuAmount,
+              referenceCurrency: GEU_REFERENCE_CURRENCY,
+              referenceAmount,
+              destinationCurrency,
+              localCurrencyAmount,
+              exchangeRate,
+              rateSource,
+              rateTimestamp,
+              poolId: pool?._id || null,
+              status: 'settled',
+              idempotencyKey: cleanIdempotencyKey,
+              transactionId: transaction._id,
+            },
+          ],
+          session ? { session } : {}
+        );
+
+        await LedgerEntry.create(
+          [
+            {
+              transactionId: transaction._id,
+              userId: user._id,
+              entryType: 'debit',
+              amount: geuAmount,
+              balanceBefore: toMinorUnit(geuAfter + geuAmount, GEU_CURRENCY),
+              balanceAfter: geuAfter,
+              currency: GEU_CURRENCY,
+              note: 'GEU redeemed',
+              metadata: { prototype: true, geuLeg: 'geu', redemptionId, transactionReferenceId: transaction.referenceId },
+            },
+            {
+              transactionId: transaction._id,
+              userId: user._id,
+              entryType: 'credit',
+              amount: localCurrencyAmount,
+              balanceBefore: toMinorUnit(balanceAfter - localCurrencyAmount, destinationCurrency),
+              balanceAfter,
+              currency: destinationCurrency,
+              note: 'Local currency settled from GEU redemption',
+              metadata: { prototype: true, geuLeg: 'capital', redemptionId, transactionReferenceId: transaction.referenceId },
+            },
+          ],
+          session ? { session, ordered: true } : {}
+        );
+
+        return { transaction, redemption, geuAfter, balanceAfter };
+      }));
+    } catch (redeemError) {
+      if (redeemError instanceof InsufficientPoolLiquidityError) throw redeemError;
+      if (redeemError?.name === 'InsufficientGeuError') throw redeemError;
+
+      const isRedeemCollision =
+        (redeemError?.code === 11000 || redeemError?.writeErrors?.[0]?.code === 11000) &&
+        /idempotencyKey/.test(String(redeemError?.message || redeemError?.writeErrors?.[0]?.errmsg || ''));
+
+      if (isRedeemCollision) {
+        const winner = await GeuRedemption.findOne({ userId: user._id, idempotencyKey: cleanIdempotencyKey });
+        if (winner) return res.status(200).json({ success: true, duplicate: true, redemption: winner });
+      }
+      throw redeemError;
+    }
+
+    recordAudit({
+      userId: user._id, action: 'geu.redeem', status: 'success', req,
+      metadata: { symbolId: user.symbolId, redemptionId, geuAmount, destinationCurrency, localCurrencyAmount, exchangeRate, crossBorder },
+    });
+
+    return res.status(201).json({
+      success: true,
+      redemptionId,
+      geuRedeemed: geuAmount,
+      referenceCurrency: GEU_REFERENCE_CURRENCY,
+      referenceAmount,
+      destinationCurrency,
+      localCurrencyAmount,
+      exchangeRate,
+      rateSource,
+      geuBalance: value.geuAfter,
+      balance: value.balanceAfter,
+      referenceId: value.transaction.referenceId,
+    });
+  } catch (error) {
+    if (error?.name === 'InsufficientGeuError') {
+      return res.status(400).json({ success: false, message: error.message, geuBalance: error.geuBalance });
+    }
+    if (error instanceof InsufficientPoolLiquidityError) {
+      return res.status(503).json({
+        success: false,
+        message: `This redemption corridor (${error.countryIso}/${error.counterCurrency}) doesn't have enough settlement liquidity right now. Please try again later.`,
+      });
+    }
+    console.error('GEU redeem error:', error);
+    return res.status(500).json({ success: false, message: 'Could not process GEU redemption.' });
   }
 });
 
