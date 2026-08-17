@@ -101,6 +101,26 @@ async function resolveRegistrationCountryIso(rawIso) {
   return match ? match.iso : 'IN';
 }
 
+// Real registered-user count per country, grouped in Mongo (not pulled
+// across the wire and counted in JS) so this stays cheap as the user
+// collection grows. Every User document carries countryIso (see
+// models/User.js — resolveRegistrationCountryIso above is what sets it at
+// registration, defaulting to 'IN'), so grouping on that field directly
+// gives each country's actual signed-up total, and the values sum to
+// exactly User.countDocuments() with no separate bookkeeping to drift.
+async function countUsersByCountry() {
+  const rows = await User.aggregate([
+    { $group: { _id: '$countryIso', count: { $sum: 1 } } }
+  ]);
+  const byCountry = {};
+  for (const row of rows) {
+    const iso = String(row._id || 'IN').trim().toUpperCase();
+    if (!iso) continue;
+    byCountry[iso] = (byCountry[iso] || 0) + row.count;
+  }
+  return byCountry;
+}
+
 const app = express();
 
 // Middleware
@@ -949,7 +969,25 @@ app.post('/api/register-symbol', registerLimit, async (req, res) => {
     const { fullName, mobileNumber, symbolId, referredBy, countryIso } = req.body;
 
     const cleanMobileNumber = normalizeMobileNumber(mobileNumber || fullName);
-    const cleanFullName = cleanMobileNumber;
+    // The name the person actually typed on the profile step, not the phone
+    // number. This used to be `cleanFullName = cleanMobileNumber` outright —
+    // whatever `fullName` the client sent was read out of req.body above and
+    // then never looked at again, so every account this route created was
+    // named after its own mobile number regardless of what the registration
+    // screen collected. The frontend's PUT /api/profile/:symbolId call right
+    // after registration was the only thing that ever fixed it — a second
+    // network round trip papering over this route silently discarding the
+    // first one, and if that second call failed (a dropped connection, a
+    // cold start) the account was stuck with its phone number as its name
+    // until the next successful sign-in retried it. Honouring a real name
+    // here means the account is correct from the moment it is created.
+    // Falls back to the phone number only when no real name was sent at
+    // all, which keeps old/other clients that never collected a name
+    // working exactly as before.
+    const cleanFullNameInput = String(fullName || '').trim();
+    const cleanFullName = cleanFullNameInput && cleanFullNameInput !== cleanMobileNumber
+      ? cleanFullNameInput
+      : cleanMobileNumber;
     const cleanSymbolId = String(symbolId || '').trim();
     const cleanReferrer = String(referredBy || '').trim();
     // The country the person actually picked on the phone-code screen —
@@ -1252,11 +1290,15 @@ app.post('/api/login', credentialLimit, async (req, res) => {
 // pulling every user document across the wire to measure an array.
 app.get('/api/profile/count', async (req, res) => {
   try {
-    const total = await User.countDocuments();
+    const [total, byCountry] = await Promise.all([
+      User.countDocuments(),
+      countUsersByCountry()
+    ]);
 
     return res.status(200).json({
       message: 'User count loaded successfully.',
-      total
+      total,
+      byCountry
     });
   } catch (error) {
     console.error('User Count Error:', error);
@@ -1272,11 +1314,26 @@ app.get('/api/profile/count', async (req, res) => {
 // for, so a caller does not have to know that the only platform statistic
 // this server keeps happens to live under the profile prefix. Kept as its own
 // route rather than a redirect: this is where a second figure would go.
+//
+// byCountry is the real per-country breakdown, keyed by the same countryIso
+// every user was registered with (see models/User.js). Coverage previously
+// had no source for this at all — the per-country "Total users" figure on
+// that screen was quietly derived from this device's own Send Money history
+// instead (whether *this* account had ever sent to that country), so a
+// brand-new registration in India never moved India's number, no matter how
+// many people actually signed up from there. This aggregation is the fix:
+// it counts real User documents grouped by countryIso, so every country's
+// figure is that country's actual registered-user count, and totalUsers
+// (a straight countDocuments()) is always exactly the sum of byCountry's
+// values, by construction — one field can never drift from the other.
 app.get('/api/stats', async (req, res) => {
   try {
-    const totalUsers = await User.countDocuments();
+    const [totalUsers, byCountry] = await Promise.all([
+      User.countDocuments(),
+      countUsersByCountry()
+    ]);
 
-    return res.status(200).json({ totalUsers, total: totalUsers });
+    return res.status(200).json({ totalUsers, total: totalUsers, byCountry });
   } catch (error) {
     console.error('Stats Error:', error);
 
@@ -1802,14 +1859,23 @@ app.patch('/api/profile/change-symbol-id', writeLimit, requireAuth, requireSelf(
   }
 });
 
-// The public referral deep link: https://gloobal.id/r/<encoded Gloobal ID>.
+// The public referral deep link: https://gloobal-pay.onrender.com/r/<encoded Gloobal ID>.
 // The frontend builds the path with encodeURIComponent, so a Gloobal ID of
 // ■■■■■■■■■■□+ arrives here as %E2%96%A0…%E2%96%A1%2B. Express decodes
 // path params itself, but the decode is done again defensively below —
 // nothing in the symbol alphabet is a '%', so a second pass over an
 // already-decoded ID is a no-op, and the try/catch keeps a malformed
 // sequence from throwing a 500 instead of the 404 it deserves.
-const REFERRAL_APP_BASE_URL = process.env.APP_BASE_URL || 'https://gloobal.netlify.app';
+//
+// Bug fix: this used to default to https://gloobal.netlify.app — the
+// OLD frontend. Every referral link anyone followed landed them on a
+// different, no-longer-actively-used app instead of the one they were
+// actually invited to (gloobalv3.netlify.app), which is what "the
+// referral link doesn't work" looked like from the outside: it opened
+// *something*, just not the right something. Set the APP_BASE_URL env
+// var on Render if this ever needs to change without a redeploy; this
+// default is what ships until then.
+const REFERRAL_APP_BASE_URL = process.env.APP_BASE_URL || 'https://gloobalv3.netlify.app';
 
 const safeDecodeSymbolId = (raw) => {
   const value = String(raw || '');
