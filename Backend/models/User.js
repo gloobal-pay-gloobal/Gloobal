@@ -19,6 +19,19 @@ const userSchema = new mongoose.Schema({
     trim: true,
     default: null
   },
+  // ISO 3166-1 alpha-2 of the country picked on the registration dial-code
+  // screen (Country.iso). Nothing before the multi-currency pool work read
+  // this off a user, so it never had anywhere to live — every account's
+  // "local currency" was implicitly INR because the backend only ever spoke
+  // one currency. It now decides which CountryCurrencyPool a payment debits
+  // or credits from. `default: 'IN'` matches every account created before
+  // this field existed, which really were all India-registered.
+  countryIso: {
+    type: String,
+    uppercase: true,
+    trim: true,
+    default: 'IN'
+  },
   symbolId: {
     type: String,
     required: true,
@@ -91,6 +104,19 @@ const userSchema = new mongoose.Schema({
   // negative matches no document and writes nothing; this bound is the second
   // line of defence if a future write forgets that guard.
   coinBalance: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+  // Gloobal Energy Unit (GEU) balance, in GEU units — 1 GEU = INR1 at the
+  // reference layer (see models/GeuSupply.js and server.js's POST
+  // /api/geu/* routes). Same reasoning as coinBalance just above: never
+  // defaulted to a starting float, since every GEU either enters via a
+  // capital-backed entry mint or a bounded growth event, never by simply
+  // existing. `min: 0` is the same second line of defence coinBalance's own
+  // comment describes — the real guard is each route's conditional $inc,
+  // this is the backstop if one is ever missing.
+  geuBalance: {
     type: Number,
     default: 0,
     min: 0

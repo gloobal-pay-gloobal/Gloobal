@@ -47,6 +47,25 @@ const transactionSchema = new mongoose.Schema(
         'coin_mint',
         'coin_redeem',
         'coin_send',
+        // GEU (Gloobal Energy Unit) events — see models/GeuSupply.js and
+        // server.js's POST /api/geu/* routes. Three distinct types, not one
+        // generic 'geu' type, for the same reason GeuEntryMint and
+        // GeuGrowthEvent are separate collections: entry, growth, and
+        // redemption are economically distinct events that must never be
+        // merged (GEU brief section 7).
+        'geu_entry_mint',
+        'geu_growth',
+        'geu_redeem',
+        // The second leg of a merchant-share payment (lib/merchantShareFlow.js):
+        // records that a slice of a 'send' was diverted into the payer's
+        // AssetSeed rather than paid to the merchant. fromUserId is the
+        // merchant (whose cut this represents), toUserId is the payer (who
+        // the seed belongs to) — same direction AssetSeed.userId already
+        // uses. Deliberately never moves User.balance: the value it
+        // documents is the same value already reflected in the linked
+        // AssetSeed, so crediting it again would be inventing money, not
+        // recording it. See metadata.noBalanceMovement on rows of this type.
+        'share',
       ],
       required: true,
       index: true,
@@ -93,5 +112,32 @@ const transactionSchema = new mongoose.Schema(
 transactionSchema.index({ fromUserId: 1, createdAt: -1 });
 transactionSchema.index({ toUserId: 1, createdAt: -1 });
 transactionSchema.index({ status: 1, createdAt: -1 });
+
+// Audit fix: closes a TOCTOU gap in POST /api/transactions/send. That route
+// used to check for an existing transaction with the same
+// (fromUserId, metadata.idempotencyKey) via a plain findOne before writing —
+// two requests carrying the same client-generated idempotency key (the
+// ordinary case of a client retrying after a timed-out response) could both
+// read "no existing transaction" and both go on to create one, so the same
+// logical payment could be charged twice. The sender's balance itself was
+// never at risk (performTransfer's debit is already an atomic conditional
+// $inc — see its own comment), but idempotency itself — invariant F, "a
+// retried/duplicated request must not create a second real transaction" —
+// was not actually guaranteed, only usually true.
+//
+// This index makes the guarantee real: two concurrent Transaction.create
+// calls for the same (fromUserId, idempotencyKey) cannot both succeed at the
+// database level, regardless of what either request read beforehand. The
+// loser's error is caught in POST /api/transactions/send and turned into the
+// same "duplicate, here's the existing transaction" response the pre-check
+// already returns for the non-racing case.
+//
+// Partial on purpose: the vast majority of transactions (no idempotencyKey
+// supplied, or non-'send' types that never set this metadata field at all)
+// store null here, and null-vs-null must never collide with each other.
+transactionSchema.index(
+  { fromUserId: 1, 'metadata.idempotencyKey': 1 },
+  { unique: true, partialFilterExpression: { 'metadata.idempotencyKey': { $type: 'string' } } }
+);
 
 module.exports = mongoose.model('Transaction', transactionSchema);
