@@ -2511,6 +2511,17 @@ function cleanResolvedTransactionUserPayload(resolved) {
     // withholding it here is what made every recipient card read "0.00%"
     // regardless of what the account had actually set.
     cashbackRate: Number(resolved.user.cashbackRate) || 0,
+    // The country this account is registered in — the receiving side of a
+    // payment, and the only authority on it.
+    //
+    // This route is the sender's one and only lookup of the person they are
+    // paying, and it did not return a country. So the payment screen had
+    // nothing to show for the recipient and fell back to the country the
+    // SENDER had selected: paying a UK account from India displayed India and
+    // ₹ on both halves of the screen. A recipient's country cannot be derived
+    // from the payer's — it can only be read off the recipient's own account,
+    // which is here.
+    countryIso: resolved.user.countryIso || 'IN',
     matchedBy: resolved.matchedBy,
     normalizedIdentifier: resolved.normalizedIdentifier,
   };
