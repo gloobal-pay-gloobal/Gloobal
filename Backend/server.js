@@ -261,6 +261,15 @@ const publicUserPayload = async (user) => {
     email: user.email || '',
     mobileNumber: user.mobileNumber || user.fullName,
     symbolId: user.symbolId,
+    // The country this account registered from. It was stored from the very
+    // first version of this route but never handed back, so the client had
+    // no way to learn it and fell back to a hardcoded India on every load —
+    // which is why a Kenyan or British account showed an Indian flag on its
+    // own dashboard. Every response that carries a user goes through this
+    // helper, so returning it here covers login, profile and registration
+    // alike. Defaulted rather than left undefined: documents written before
+    // the field existed have no value, and the schema's own default is 'IN'.
+    countryIso: user.countryIso || 'IN',
     referredBy: user.referredBy || null,
     referralCount: user.referralCount || 0,
     cashbackRate: Number(user.cashbackRate) || 0,
