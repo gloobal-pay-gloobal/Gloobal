@@ -94,11 +94,42 @@ const toMinorUnit = (value, currencyCode) => {
 // from. Never trusts an unseeded/malformed code: falls back to 'IN', the
 // same default every account already carried before this field was wired
 // up, rather than writing something that later crashes a currency lookup.
+// Cached across requests. Only ever flips false -> true — seeding adds
+// documents and nothing removes them — so a stale `true` cannot happen, and a
+// stale `false` self-corrects on the next lookup that misses.
+let countryCollectionSeeded = null;
+
 async function resolveRegistrationCountryIso(rawIso) {
   const candidate = String(rawIso || '').trim().toUpperCase();
-  if (candidate.length !== 2) return 'IN';
+  // Was `candidate.length !== 2`, which accepted any two characters. A real
+  // ISO 3166-1 alpha-2 code is two letters.
+  if (!/^[A-Z]{2}$/.test(candidate)) return 'IN';
+
   const match = await Country.findOne({ iso: candidate }).select('iso').lean();
-  return match ? match.iso : 'IN';
+  if (match) return match.iso;
+
+  // A miss means one of two very different things, and treating them the same
+  // is what silently made every account Indian: either the client sent a code
+  // that genuinely isn't a country, or the Country collection was never
+  // seeded. In production it is the second — the collection holds zero
+  // documents, so this lookup could never match anything and every
+  // registration on earth fell through to 'IN'. That is not validation, it is
+  // data loss with a validation-shaped comment on it.
+  //
+  // So: keep validating against the collection whenever it has data, and when
+  // it is empty accept a well-formed code rather than overwriting the person's
+  // actual country with a default. Loudly, because an unseeded collection is
+  // a deployment problem worth fixing, not a state to settle into.
+  if (countryCollectionSeeded !== true) {
+    countryCollectionSeeded = (await Country.estimatedDocumentCount()) > 0;
+  }
+  if (countryCollectionSeeded) return 'IN';
+
+  console.warn(
+    `[country] countries collection is empty — accepting "${candidate}" without validation. ` +
+    'Run scripts/seed-countries-currencies.mjs to restore the allow-list.'
+  );
+  return candidate;
 }
 
 // Real registered-user count per country, grouped in Mongo (not pulled
@@ -261,6 +292,19 @@ const publicUserPayload = async (user) => {
     email: user.email || '',
     mobileNumber: user.mobileNumber || user.fullName,
     symbolId: user.symbolId,
+    // The account's permanent identity — the _id every transaction, ledger
+    // entry, receipt and asset seed is actually keyed on.
+    //
+    // symbolId is NOT an identity: it is a chosen, user-changeable handle, and
+    // the client had no other identifier to work with. That is why renaming an
+    // ID wiped the local ledger and the Pay Later / Assets history on screen —
+    // the account-scoped React tree is keyed on "who is signed in", and with
+    // only symbolId available a rename was indistinguishable from a different
+    // person signing in, which is exactly the case that key exists to reset.
+    //
+    // Exposed as a string because it is only ever compared for equality on the
+    // client; nothing there should be constructing ObjectIds.
+    accountId: String(user._id),
     // The country this account registered from. It was stored from the very
     // first version of this route but never handed back, so the client had
     // no way to learn it and fell back to a hardcoded India on every load —
@@ -1770,6 +1814,37 @@ const isValidSymbolId = (value) => {
 // knows an ID can rename it. Recorded plainly rather than dressed up —
 // this route inherits the codebase-wide missing auth layer and must be put
 // behind real session checks along with the rest of them.
+// Every collection that stores a Gloobal ID as a plain string, and the field
+// holding it. Transactions, ledger entries, receipts, pins and face templates
+// all key off ObjectIds and survive a rename untouched — these are the ones
+// that do not.
+//
+// This is a table rather than a hand-written list of update calls because the
+// hand-written list was wrong. It covered Referral and User.referredBy while
+// asserting in a comment that those were "the only symbolId-valued references
+// in the schema". They were not: AssetSeed, Interest, GeuEntryMint,
+// GeuGrowthEvent and GeuRedemption all carry one, and every one of them was
+// left pointing at an ID its owner no longer held.
+//
+// Interest is the reference that actually broke a feature rather than merely
+// going stale: GET /api/interest/status/:symbolId queries BY symbolId, so a
+// rename silently lost the account's "I am IN" record. Its unique index on
+// { symbolId, product } also means an orphaned row keeps squatting the freed
+// ID, and the next person to claim that ID cannot register interest at all.
+//
+// Adding a model with a symbolId column means adding a line here. Keep it that
+// way: forgetting produces silent orphaned data, never an error.
+const SYMBOL_ID_REFERENCE_FIELDS = [
+  { model: AssetSeed, field: 'symbolId' },
+  { model: Interest, field: 'symbolId' },
+  { model: GeuEntryMint, field: 'symbolId' },
+  { model: GeuGrowthEvent, field: 'symbolId' },
+  { model: GeuRedemption, field: 'symbolId' },
+  { model: Referral, field: 'referrerSymbolId' },
+  { model: Referral, field: 'referredSymbolId' },
+  { model: User, field: 'referredBy' }
+];
+
 app.patch('/api/profile/change-symbol-id', writeLimit, requireAuth, requireSelf('currentSymbolId'), async (req, res) => {
   try {
     const currentSymbolId = String(req.body.currentSymbolId || '').trim();
@@ -1830,21 +1905,38 @@ app.patch('/api/profile/change-symbol-id', writeLimit, requireAuth, requireSelf(
     user.symbolId = newSymbolId;
     // fullName mirrors the mobile number for these prototype accounts, so
     // it is deliberately left alone — only the ID changes.
-    await user.save();
 
-    // Re-point every place the old ID was written down. Transactions and
-    // ledger entries key off ObjectIds, so they need no rewrite; these
-    // three are the only symbolId-valued references in the schema.
-    await Promise.all([
-      Referral.updateMany({ referrerSymbolId: currentSymbolId }, { $set: { referrerSymbolId: newSymbolId } }),
-      Referral.updateMany({ referredSymbolId: currentSymbolId }, { $set: { referredSymbolId: newSymbolId } }),
-      User.updateMany({ referredBy: currentSymbolId }, { $set: { referredBy: newSymbolId } }),
-      User.updateMany(
+    // The rename and every reference rewrite now commit together or not at
+    // all. Previously user.save() ran first and the rewrites followed in a
+    // separate Promise.all: any failure in between — a dropped connection, a
+    // cold-start timeout — left the account renamed while its rows still
+    // pointed at an ID it no longer held. And because the old ID is freed for
+    // anyone to claim the moment it is released, those orphaned rows could
+    // later read as belonging to a different person entirely.
+    await withMongoTransaction(async (session) => {
+      const opts = session ? { session } : {};
+
+      await user.save(opts);
+
+      for (const ref of SYMBOL_ID_REFERENCE_FIELDS) {
+        await ref.model.updateMany(
+          { [ref.field]: currentSymbolId },
+          { $set: { [ref.field]: newSymbolId } },
+          opts
+        );
+      }
+
+      // referralChain is an array of IDs, so it needs a positional filter
+      // rather than a whole-field $set — it is the one reference that cannot
+      // be expressed in the table above.
+      await User.updateMany(
         { referralChain: currentSymbolId },
         { $set: { 'referralChain.$[entry]': newSymbolId } },
-        { arrayFilters: [{ entry: currentSymbolId }] }
-      )
-    ]);
+        { arrayFilters: [{ entry: currentSymbolId }], ...opts }
+      );
+
+      return true;
+    });
 
     return res.status(200).json({
       message: 'Gloobal ID updated.',
